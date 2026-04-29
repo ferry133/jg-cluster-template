@@ -40,7 +40,7 @@ bootstrap/                      ← gitignored; used by task bootstrap:apps
 
     ```sh
     export REPONAME="home-ops"
-    gh repo create $REPONAME --template onedr0p/cluster-template --public --clone
+    gh repo create $REPONAME --template ferry133/jg-cluster-template --public --clone
     cd $REPONAME
     ```
 
@@ -90,18 +90,17 @@ This creates `cloudflare-tunnel.json` in the repo root (gitignored). The tunnel 
 
 ## Setup Steps
 
-### 1. Install tools
-
-```sh
-mise trust && mise install
-```
-
-### 2. Configure
+### 1. Setup target env. variable keys
 
 ```sh
 cp cluster.yaml.sample cluster.yaml
 # Fill in cluster.yaml
 # Reference kubernetes/components/sops/cluster-secrets.sample.yaml in jg-base for all variable keys
+```
+
+### 2. Configure
+
+```sh
 task configure
 ```
 
