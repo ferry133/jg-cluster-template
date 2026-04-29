@@ -31,6 +31,27 @@ bootstrap/                      ← gitignored; used by task bootstrap:apps
 .sops.yaml                      ← gitignored; generated per cluster
 ```
 
+## Cloudflare Configuration
+
+### 1. Create API token
+
+Go to Cloudflare dashboard → My Profile → API Tokens → Create Token.
+
+- Use the **Edit zone DNS** template
+- Name the token `kubernetes`
+- Under **Permissions**, add `Zone - DNS - Edit` and `Account - Cloudflare Tunnel - Read`
+- Limit to your specific account and zone, then create the token
+- Save the token — you will need it in `cluster.yaml` as `cloudflare_token`
+
+### 2. Create Cloudflare Tunnel
+
+```sh
+cloudflared tunnel login
+cloudflared tunnel create --credentials-file cloudflare-tunnel.json kubernetes
+```
+
+This creates `cloudflare-tunnel.json` in the repo root (gitignored). The tunnel token inside is embedded into the cluster secrets by `task configure`.
+
 ## Setup Steps
 
 ### 1. Install tools
