@@ -6,7 +6,6 @@ vars:
   TEMPLATE_DIR: '{{.ROOT_DIR}}/templates'
   TEMPLATE_RESOURCES_DIR: '{{.ROOT_DIR}}/.taskfiles/template/resources'
   TEMPLATE_CONFIG_FILE: '{{.ROOT_DIR}}/cluster.yaml'
-  TEMPLATE_NODE_CONFIG_FILE: '{{.ROOT_DIR}}/nodes.yaml'
 
 tasks:
 
@@ -22,10 +21,8 @@ tasks:
     internal: true
     cmds:
       - mv {{.TEMPLATE_CONFIG_FILE | replace ".yaml" ".sample.yaml"}} {{.TEMPLATE_CONFIG_FILE}}
-      - mv {{.TEMPLATE_NODE_CONFIG_FILE | replace ".yaml" ".sample.yaml"}} {{.TEMPLATE_NODE_CONFIG_FILE}}
     status:
       - test -f {{.TEMPLATE_CONFIG_FILE}}
-      - test -f {{.TEMPLATE_NODE_CONFIG_FILE}}
 
   generate-age-key:
     internal: true
@@ -57,23 +54,18 @@ tasks:
       - task: render-configs
       - task: encrypt-secrets
       - task: validate-kubernetes-config
-      - task: validate-talos-config
     preconditions:
       - msg: An existing Age key interferes with the age key in this repository, rename or delete ~/.config/sops/age/keys.txt
         sh: '! test -f ~/.config/sops/age/keys.txt'
       - msg: File cluster.yaml not found, did you run `task init`?
         sh: test -f {{.TEMPLATE_CONFIG_FILE}}
-      - msg: File nodes.yaml not found, did you run `task init`?
-        sh: test -f {{.TEMPLATE_NODE_CONFIG_FILE}}
 
   validate-schemas:
     internal: true
     cmds:
       - cue vet {{.TEMPLATE_CONFIG_FILE}} {{.TEMPLATE_RESOURCES_DIR}}/cluster.schema.cue
-      - cue vet {{.TEMPLATE_NODE_CONFIG_FILE}} {{.TEMPLATE_RESOURCES_DIR}}/nodes.schema.cue
     preconditions:
       - test -f {{.TEMPLATE_RESOURCES_DIR}}/cluster.schema.cue
-      - test -f {{.TEMPLATE_RESOURCES_DIR}}/nodes.schema.cue
       - which cue
 
   render-configs:
@@ -98,7 +90,7 @@ tasks:
           fi
     vars:
       SECRET_FILES:
-        sh: find "{{.BOOTSTRAP_DIR}}" "{{.KUBERNETES_DIR}}" "{{.TALOS_DIR}}" -type f -name "*.sops.*" -print
+        sh: find "{{.BOOTSTRAP_DIR}}" "{{.KUBERNETES_DIR}}" -type f -name "*.sops.*" -print
     preconditions:
       - test -f {{.SOPS_AGE_KEY_FILE}}
       - test -f {{.ROOT_DIR}}/.sops.yaml
@@ -110,14 +102,6 @@ tasks:
     preconditions:
       - test -f {{.TEMPLATE_RESOURCES_DIR}}/kubeconform.sh
       - which kubeconform
-
-  validate-talos-config:
-    internal: true
-    dir: '{{.TALOS_DIR}}'
-    cmd: talhelper validate talconfig {{.TALOS_DIR}}/talconfig.yaml
-    preconditions:
-      - test -f {{.TALOS_DIR}}/talconfig.yaml
-      - which talhelper
 
   debug:
     desc: Gather common resources in your cluster
@@ -169,5 +153,4 @@ tasks:
     cmds:
       - rm -rf {{.BOOTSTRAP_DIR}}
       - rm -rf {{.KUBERNETES_DIR}}
-      - rm -rf {{.TALOS_DIR}}
       - rm -rf {{.ROOT_DIR}}/.sops.yaml

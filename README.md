@@ -11,8 +11,15 @@ This repo is the **tooling layer** for a three-repo system:
 | Repo | Role |
 |------|------|
 | [`ferry133/jg-base`](https://github.com/ferry133/jg-base) | Golden Kubernetes manifests, watched by all clusters via Flux |
-| `ferry133/jg-cluster-template` (this repo) | Tooling to bootstrap a new cluster |
+| `ferry133/jg-cluster-template` (this repo) | Tooling to configure and bootstrap a cluster |
 | `user-X-cluster` (generated from this template) | Per-cluster secrets + Flux entry point |
+
+## Prerequisites
+
+- Kubernetes cluster already running and accessible
+- `kubectl` works with the correct `kubeconfig` (place it at `kubeconfig` in repo root, or set `KUBECONFIG` env)
+- Cloudflare account with domain and API token
+- (Optional) NAS with NFS exports for `nfs-subdir` and `claude-code` extras
 
 ## What `task configure` Produces
 
@@ -20,7 +27,6 @@ This repo is the **tooling layer** for a three-repo system:
 kubernetes/
   components/sops/
     cluster-secrets.sops.yaml   ← commit this to per-user repo
-talos/                          ← gitignored; used by task bootstrap:talos
 bootstrap/                      ← gitignored; used by task bootstrap:apps
 .sops.yaml                      ← gitignored; generated per cluster
 ```
@@ -37,9 +43,8 @@ mise trust && mise install
 
 ```sh
 cp cluster.yaml.sample cluster.yaml
-cp nodes.yaml.sample   nodes.yaml
-# Fill in cluster.yaml and nodes.yaml
-# Reference per-user-repo.sample.yaml for all available variables
+# Fill in cluster.yaml
+# Reference kubernetes/components/sops/cluster-secrets.sample.yaml in jg-base for all variable keys
 task configure
 ```
 
@@ -52,16 +57,15 @@ Uncomment the extras your cluster needs.
 
 ```sh
 git add kubernetes/components/sops/cluster-secrets.sops.yaml
-git add flux/cluster/ks.yaml cluster.yaml nodes.yaml
+git add flux/cluster/ks.yaml cluster.yaml
 git commit -m "chore: initial cluster configuration"
 git push
 ```
 
-### 5. Bootstrap
+### 5. Bootstrap Flux
 
 ```sh
-task bootstrap:talos   # bootstrap Talos cluster
-task bootstrap:apps    # install Flux and sync to git state
+task bootstrap:apps   # install Flux and sync to git state
 ```
 
 ```sh
@@ -78,13 +82,4 @@ flux get hr -A
 
 ```sh
 task reconcile   # force Flux sync
-```
-
-## Maintenance
-
-```sh
-task talos:apply-node IP=<ip>     # apply config change to a node
-task talos:upgrade-node IP=<ip>   # upgrade Talos on a node
-task talos:upgrade-k8s            # upgrade Kubernetes version
-task talos:reset                  # wipe cluster (DESTRUCTIVE)
 ```
