@@ -90,26 +90,33 @@ This creates `cloudflare-tunnel.json` in the repo root (gitignored). The tunnel 
 
 ## Setup Steps
 
-### 1. Setup target env. variable keys
+### 1. Initialize
 
 ```sh
-cp cluster.yaml.sample cluster.yaml
-# Fill in cluster.yaml
-# Reference kubernetes/components/sops/cluster-secrets.sample.yaml in jg-base for all variable keys
+task init
 ```
 
-### 2. Configure
+This generates: `cluster.yaml` (from sample), `age.key` (SOPS encryption key), `github-deploy.key`, `github-push-token.txt`.
+
+### 2. Fill in cluster.yaml
+
+```sh
+# Edit cluster.yaml — fill in all required values
+# Reference kubernetes/components/sops/cluster-secrets.sample.yaml in jg-base for variable keys
+```
+
+### 3. Configure
 
 ```sh
 task configure
 ```
 
-### 3. Add Flux entry point
+### 4. Add Flux entry point
 
 Create `flux/cluster/ks.yaml` using `per-user-repo.sample.yaml` as reference.
 Uncomment the extras your cluster needs.
 
-### 4. Commit and push
+### 5. Commit and push
 
 ```sh
 git add kubernetes/components/sops/cluster-secrets.sops.yaml
@@ -118,7 +125,7 @@ git commit -m "chore: initial cluster configuration"
 git push
 ```
 
-### 5. Bootstrap Flux
+### 6. Bootstrap Flux
 
 ```sh
 task bootstrap:apps   # install Flux and sync to git state
