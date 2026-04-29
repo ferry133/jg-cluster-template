@@ -31,6 +31,42 @@ bootstrap/                      ← gitignored; used by task bootstrap:apps
 .sops.yaml                      ← gitignored; generated per cluster
 ```
 
+### Local Workstation
+
+> [!TIP]
+> It is recommended to set the visibility of your repository to `Public` so you can easily request help if you get stuck.
+
+1. Create a new repository by clicking the green `Use this template` button at the top of this page, then clone the new repo you just created and `cd` into it. Alternatively you can use the [GitHub CLI](https://cli.github.com/) ...
+
+    ```sh
+    export REPONAME="home-ops"
+    gh repo create $REPONAME --template onedr0p/cluster-template --public --clone
+    cd $REPONAME
+    ```
+
+2. **Install** the [Mise CLI](https://mise.jdx.dev/getting-started.html#installing-mise-cli) on your local workstation.
+
+3. **Activate** Mise in your shell by following the [activation guide](https://mise.jdx.dev/getting-started.html#activate-mise).
+
+4. Use `mise` to install the **required** CLI tools:
+
+    ```sh
+    mise trust
+    pip install pipx
+    mise install
+    ```
+
+   📍 _**Having trouble installing the tools?** Try unsetting the `GITHUB_TOKEN` env var and then run these commands again_
+
+   📍 _**Having trouble compiling Python?** Try running `mise settings python.compile=0` and then run these commands again_
+
+5. Logout of the GitHub Container Registry as this may cause authorization problems in future steps when using the public registry:
+
+    ```sh
+    docker logout ghcr.io
+    helm registry logout ghcr.io
+    ```
+
 ## Cloudflare Configuration
 
 ### 1. Create API token
