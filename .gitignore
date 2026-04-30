@@ -11,8 +11,8 @@ cloudflare-tunnel.json
 kubeconfig
 trello-notifier.yaml
 .venv/
+.claude/
 
 # Per-cluster config (non-sensitive but not part of template)
 cluster.yaml
-cluster.yaml.bak
 nodes.yaml
