@@ -105,9 +105,10 @@ This generates: `cluster.yaml` (from sample), `age.key` (SOPS encryption key), `
 # Reference kubernetes/components/sops/cluster-secrets.sample.yaml in jg-base for variable keys
 ```
 
-### 3. Configure
+### 3. Generate age.key & Configure
 
 ```sh
+age-keygen -o age.key
 task configure
 ```
 
@@ -120,7 +121,7 @@ Uncomment the extras your cluster needs.
 
 ```sh
 git add kubernetes/components/sops/cluster-secrets.sops.yaml
-git add flux/cluster/ks.yaml cluster.yaml
+git add flux/cluster/ks.yaml
 git commit -m "chore: initial cluster configuration"
 git push
 ```
