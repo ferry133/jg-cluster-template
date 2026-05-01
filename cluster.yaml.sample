@@ -87,6 +87,10 @@ cloudflare_token: ""                 # API token (DNS edit permission)
 
 
 # ── Repository ────────────────────────────────────────────────────────────────
+# -- Your per-user GitHub repo name (owner/repo).
+#    The FluxInstance will sync from this repo (kubernetes/flux/cluster).
+#    This value is also used to generate FLUX_SYNC_URL in cluster-secrets.
+#    (REQUIRED) / (e.g. "ferry133/jgu2")
 repository_name: "ferry133/jg-base"
 # repository_branch: "main"
 # repository_visibility: "public"
