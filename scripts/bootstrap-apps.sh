@@ -27,15 +27,11 @@ function wait_for_nodes() {
 function apply_namespaces() {
     log debug "Applying namespaces"
 
-    local -r apps_dir="${ROOT_DIR}/kubernetes/apps"
+    # Base namespaces from jg-base/kubernetes/apps/base/ — not present in per-user repo.
+    # Extras namespaces (e.g. claude-code) are created by Flux on first reconcile.
+    local -ra namespaces=(cert-manager default flux-system kube-system network storage)
 
-    if [[ ! -d "${apps_dir}" ]]; then
-        log error "Directory does not exist" "directory=${apps_dir}"
-    fi
-
-    for app in "${apps_dir}"/*/; do
-        namespace=$(basename "${app}")
-
+    for namespace in "${namespaces[@]}"; do
         # Check if the namespace resources are up-to-date
         if kubectl get namespace "${namespace}" &>/dev/null; then
             log info "Namespace resource is up-to-date" "resource=${namespace}"
