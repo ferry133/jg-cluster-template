@@ -67,6 +67,16 @@ cloudflare_domain: "example.com"
 #    (REQUIRED) (NOTE: See the README for information on creating this)
 cloudflare_token: ""                 # API token (DNS edit permission)
 
+# -- Cloudflare Tunnel token for cloudflared.
+#    Run: cloudflared tunnel create <name> && cloudflared tunnel token <name>
+#    (REQUIRED)
+cloudflare_tunnel_token: ""
+
+# -- Random token for GitHub webhook receiver (Flux Receiver).
+#    Run: python3 -c "import secrets; print(secrets.token_hex(32))"
+#    (REQUIRED)
+github_webhook_token: ""
+
 
 # ── cilium ────────────────────────────────────────────────────────────────
 # -- The load balancer mode for cilium.
