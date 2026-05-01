@@ -124,10 +124,9 @@ This generates: `cluster.yaml` (from sample), `age.key` (SOPS encryption key), `
 
 ### 2. Fill in cluster.yaml
 
-```sh
 # Edit cluster.yaml — fill in all required values
 # Reference kubernetes/components/sops/cluster-secrets.sample.yaml in jg-base for variable keys
-```
+
 
 ### 3. Task Configure
 
@@ -135,12 +134,7 @@ This generates: `cluster.yaml` (from sample), `age.key` (SOPS encryption key), `
 task configure
 ```
 
-### 4. Add Flux entry point
-
-Create `flux/cluster/ks.yaml` using `per-user-repo.sample.yaml` as reference.
-Uncomment the extras your cluster needs.
-
-### 5. Commit and push
+### 4. Commit and push
 
 ```sh
 git add kubernetes/components/sops/cluster-secrets.sops.yaml
@@ -149,12 +143,37 @@ git commit -m "chore: initial cluster configuration"
 git push
 ```
 
-### 6. Bootstrap Flux
+### 5. Bootstrap Flux
 
 ```sh
 task bootstrap:apps   # install Flux and sync to git state
 ```
+** Above command might not able to be executed repeatly. **
 
+The alternative:  Once bootstrapped, everything goes through Flux reconcile:
+
+```sh
+  # Force re-sync git source
+  flux reconcile source git flux-system -n flux-system
+```
+
+```sh
+  # Force re-apply a specific KS
+  flux reconcile ks <ks-name> -n flux-system
+```
+
+  # After changing cluster.yaml — re-apply cluster-secrets
+```sh
+  sops -d kubernetes/components/sops/cluster-secrets.sops.yaml \
+    | kubectl apply -n flux-system -f - --server-side
+```sh
+
+  One-liner rule: bootstrap once, then all changes go through git → Flux → cluster.
+
+
+
+
+May keep watching the deployment progress:
 ```sh
 kubectl get pods --all-namespaces --watch
 ```

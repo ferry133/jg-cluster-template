@@ -6,7 +6,7 @@
 # ── Network ───────────────────────────────────────────────────────────────────
 # -- The network CIDR for the nodes.
 # (REQUIRED) / (e.g. 192.168.1.0/24)
-node_cidr: "10.x.x.0/24"            # subnet for node IPs
+node_cidr: "10.9.9.0/24"            # subnet for node IPs
 
 # -- The default gateway for the nodes.
 #    (OPTIONAL) / (DEFAULT: the first IP in the node_cidr)
@@ -98,13 +98,18 @@ github_webhook_token: ""
 # (OPTIONAL) / (e.g. "64514")
 # cilium_bgp_node_asn: ""
 
+# ── NAS (optional, required for storage/nfs-subdir and claude-code/claude-code) ──
+# nas_server: "10.x.x.x"
+# nas_path: "/volume/path"          # NFS export for storage provisioner (sc-nas)
+# nas_coding_path: "/volume/coding" # NFS export for claude-code coding workspace
+
 
 # ── Repository ────────────────────────────────────────────────────────────────
 # -- Your per-user GitHub repo name (owner/repo).
 #    The FluxInstance will sync from this repo (kubernetes/flux/cluster).
 #    This value is also used to generate FLUX_SYNC_URL in cluster-secrets.
 #    (REQUIRED) / (e.g. "ferry133/jgu2")
-repository_name: "ferry133/jg-base"
+repository_name: "ferry133/xxxxxx"
 # repository_branch: "main"
 # repository_visibility: "public"
 
@@ -121,16 +126,9 @@ repository_name: "ferry133/jg-base"
 #   ingress-nginx/ingress-nginx   — Nginx ingress controller
 #   network/cloudflare-tunnel-lan — Cloudflare Tunnel (LAN exposure)
 #   omni/omni                     — Sidero Omni
-#   storage/nfs-subdir            — NFS subdir storage provisioner (requires nas_*)
 # extras:
 #   - claude-code/claude-code
 #   - default/trello-notifier
-#   - storage/nfs-subdir
-
-# ── NAS (optional, required for storage/nfs-subdir and claude-code/claude-code) ──
-# nas_server: "10.x.x.x"
-# nas_path: "/volume/path"          # NFS export for storage provisioner (sc-nas)
-# nas_coding_path: "/volume/coding" # NFS export for claude-code coding workspace
 
 # ── Claude Code (optional, required when extras includes claude-code/claude-code) ──
 # claude_instances:

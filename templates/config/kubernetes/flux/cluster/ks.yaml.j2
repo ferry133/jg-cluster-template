@@ -76,12 +76,14 @@ spec:
         group: kustomize.toolkit.fluxcd.io
         kind: Kustomization
 #% for extra in extras | default([]) %#
+#% set _ns, _app = extra.split('/') %#
+#% set _ks_name = 'extras-' + _ns + '-' + _app if _ns != _app else 'extras-' + _app %#
 ---
 # ── extras/#{extra}# ─────────────────────────────────────────────────────────
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: extras-#{extra | replace('/', '-')}#
+  name: #{_ks_name}#
   namespace: flux-system
 spec:
   decryption:

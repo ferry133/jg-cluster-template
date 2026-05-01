@@ -16,7 +16,7 @@ import (
 	cluster_api_tls_sans?: [...net.FQDN]
 	cluster_gateway_addr: net.IPv4 & !=cluster_api_addr & !=cluster_dns_gateway_addr & !=cloudflare_gateway_addr
 	cluster_dns_gateway_addr: net.IPv4 & !=cluster_api_addr & !=cluster_gateway_addr & !=cloudflare_gateway_addr
-	repository_name: string
+	repository_name: string & !="" & !="ferry133/xxxxxx" & !="ferry133/jg-base"
 	repository_branch?: string & !=""
 	repository_visibility?: *"public" | "private"
 	cloudflare_domain: net.FQDN
