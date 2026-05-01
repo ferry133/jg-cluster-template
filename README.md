@@ -88,7 +88,9 @@ cloudflared tunnel create --credentials-file cloudflare-tunnel.json kubernetes
 
 This creates `cloudflare-tunnel.json` in the repo root (gitignored). The tunnel token inside is embedded into the cluster secrets by `task configure`.
 
-### 3. GitHub Webhook
+## Flux reconcile
+
+### 1. GitHub Webhook
 
 By default Flux will periodically check your git repository for changes. In-order to have Flux reconcile on `git push` you must configure GitHub to send `push` events to Flux.
 
@@ -127,10 +129,9 @@ This generates: `cluster.yaml` (from sample), `age.key` (SOPS encryption key), `
 # Reference kubernetes/components/sops/cluster-secrets.sample.yaml in jg-base for variable keys
 ```
 
-### 3. Generate age.key & Configure
+### 3. Task Configure
 
 ```sh
-age-keygen -o age.key
 task configure
 ```
 

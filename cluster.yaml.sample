@@ -72,8 +72,11 @@ cloudflare_token: ""                 # API token (DNS edit permission)
 #    (REQUIRED)
 cloudflare_tunnel_token: ""
 
+
+# ── github webhook ────────────────────────────────────────────────────────────────
 # -- Random token for GitHub webhook receiver (Flux Receiver).
 #    Run: python3 -c "import secrets; print(secrets.token_hex(32))"
+#    Run: kubectl -n flux-system get receiver github-webhook --output=jsonpath='{.status.webhookPath}'
 #    (REQUIRED)
 github_webhook_token: ""
 
