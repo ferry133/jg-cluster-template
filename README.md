@@ -88,6 +88,28 @@ cloudflared tunnel create --credentials-file cloudflare-tunnel.json kubernetes
 
 This creates `cloudflare-tunnel.json` in the repo root (gitignored). The tunnel token inside is embedded into the cluster secrets by `task configure`.
 
+### 3. GitHub Webhook
+
+By default Flux will periodically check your git repository for changes. In-order to have Flux reconcile on `git push` you must configure GitHub to send `push` events to Flux.
+
+1. Obtain the webhook path:
+
+   📍 _Hook id and path should look like `/hook/12ebd1e363c641dc3c2e430ecf3cee2b3c7a5ac9e1234506f6f5f3ce1230e123`_
+
+    ```sh
+    kubectl -n flux-system get receiver github-webhook --output=jsonpath='{.status.webhookPath}'
+    ```
+
+2. Piece together the full URL with the webhook path appended:
+
+    ```text
+    https://flux-webhook.${cloudflare_domain}/hook/12ebd1e363c641dc3c2e430ecf3cee2b3c7a5ac9e1234506f6f5f3ce1230e123
+    ```
+
+3. Navigate to the settings of your repository on GitHub, under "Settings/Webhooks" press the "Add webhook" button. Fill in the webhook URL and your token from `github-push-token.txt`, Content type: `application/json`, Events: Choose Just the push event, and save.
+
+
+
 ## Setup Steps
 
 ### 1. Initialize
