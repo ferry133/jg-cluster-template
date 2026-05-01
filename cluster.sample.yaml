@@ -108,21 +108,32 @@ repository_name: "ferry133/jg-base"
 # repository_branch: "main"
 # repository_visibility: "public"
 
-# ── NAS (optional, required for extras/storage/nfs-subdir and extras/claude-code) ──
+# ── Extras (optional) ────────────────────────────────────────────────────────
+# List the extras to deploy. Format: namespace/app
+# Available extras:
+#   claude-code/claude-code       — Claude Code web IDE (requires nas_* + claude_instances)
+#   default/echo                  — simple echo server (for testing)
+#   default/homebridge            — Homebridge smart home bridge
+#   default/mariadb               — MariaDB database
+#   default/mqtt                  — MQTT broker
+#   default/trello-notifier       — Trello LINE notification bot
+#   default/ttyd                  — web terminal
+#   ingress-nginx/ingress-nginx   — Nginx ingress controller
+#   network/cloudflare-tunnel-lan — Cloudflare Tunnel (LAN exposure)
+#   omni/omni                     — Sidero Omni
+#   storage/nfs-subdir            — NFS subdir storage provisioner (requires nas_*)
+# extras:
+#   - claude-code/claude-code
+#   - default/trello-notifier
+#   - storage/nfs-subdir
+
+# ── NAS (optional, required for storage/nfs-subdir and claude-code/claude-code) ──
 # nas_server: "10.x.x.x"
 # nas_path: "/volume/path"          # NFS export for storage provisioner (sc-nas)
 # nas_coding_path: "/volume/coding" # NFS export for claude-code coding workspace
-nas_server: "10.9.1.12"
-nas_path: "/volume2/claudecode"
-nas_coding_path: "/volume2/coding"
 
-# ── Claude Code (optional, required for extras/claude-code) ───────────────────
+# ── Claude Code (optional, required when extras includes claude-code/claude-code) ──
 # claude_instances:
 #   - "cc"
 #   - "trello"
 # ttyd_credential: "user:password"  # ttyd basic auth
-claude_instances:
-  - trello
-#  - line
-  - cc
-ttyd_credential: "admin:120120cla"

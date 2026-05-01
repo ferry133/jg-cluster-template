@@ -31,6 +31,7 @@ import (
 	nas_server?: net.IPv4 & !=""
 	nas_path?: string & !=""
 	nas_coding_path?: string & !=""
+	extras?: [...string]
 	claude_instances?: [...string]
 	ttyd_credential?: string & !=""
 }

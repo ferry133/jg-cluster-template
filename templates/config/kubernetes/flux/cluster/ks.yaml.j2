@@ -75,20 +75,20 @@ spec:
       target:
         group: kustomize.toolkit.fluxcd.io
         kind: Kustomization
-#% if claude_instances is defined and claude_instances | length > 0 %#
+#% for extra in extras | default([]) %#
 ---
-# ── extras/claude-code ────────────────────────────────────────────────────────
+# ── extras/#{extra}# ─────────────────────────────────────────────────────────
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: extras-claude-code
+  name: extras-#{extra | replace('/', '-')}#
   namespace: flux-system
 spec:
   decryption:
     provider: sops
   deletionPolicy: WaitForTermination
   interval: 1h
-  path: ./kubernetes/apps/extras/claude-code
+  path: ./kubernetes/apps/extras/#{extra}#
   prune: true
   sourceRef:
     kind: GitRepository
@@ -100,30 +100,4 @@ spec:
         kind: Secret
   dependsOn:
     - name: cluster-apps-base
-#% endif %#
-#% if trello_notifier is defined and trello_notifier.enabled %#
----
-# ── extras/trello-notifier ────────────────────────────────────────────────────
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: extras-trello-notifier
-  namespace: flux-system
-spec:
-  decryption:
-    provider: sops
-  deletionPolicy: WaitForTermination
-  interval: 1h
-  path: ./kubernetes/apps/extras/trello-notifier
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: jg-base
-    namespace: flux-system
-  postBuild:
-    substituteFrom:
-      - name: cluster-secrets
-        kind: Secret
-  dependsOn:
-    - name: cluster-apps-base
-#% endif %#
+#% endfor %#
