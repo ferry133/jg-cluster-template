@@ -98,7 +98,7 @@ github_webhook_token: ""
 # (OPTIONAL) / (e.g. "64514")
 # cilium_bgp_node_asn: ""
 
-# ── NAS (optional, required for storage/nfs-subdir and claude-code/claude-code) ──
+# ── NAS (optional, required for storage/nfs-subdir and claudecode/claude-code) ──
 # nas_server: "10.x.x.x"
 # nas_path: "/volume/path"          # NFS export for storage provisioner (sc-nas)
 # nas_coding_path: "/volume/coding" # NFS export for claude-code coding workspace
@@ -116,7 +116,7 @@ repository_name: "ferry133/xxxxxx"
 # ── Extras (optional) ────────────────────────────────────────────────────────
 # List the extras to deploy. Format: namespace/app
 # Available extras:
-#   claude-code/claude-code       — Claude Code web IDE (requires nas_* + claude_instances)
+#   claudecode/claude-code       — Claude Code web IDE (requires nas_* + claude_instances)
 #   default/echo                  — simple echo server (for testing)
 #   default/homebridge            — Homebridge smart home bridge
 #   default/mariadb               — MariaDB database
@@ -127,10 +127,10 @@ repository_name: "ferry133/xxxxxx"
 #   network/cloudflare-tunnel-lan — Cloudflare Tunnel (LAN exposure)
 #   omni/omni                     — Sidero Omni
 # extras:
-#   - claude-code/claude-code
+#   - claudecode/claude-code
 #   - default/trello-notifier
 
-# ── Claude Code (optional, required when extras includes claude-code/claude-code) ──
+# ── Claude Code (optional, required when extras includes claudecode/claude-code) ──
 # claude_instances:
 #   - "cc"
 #   - "trello"
