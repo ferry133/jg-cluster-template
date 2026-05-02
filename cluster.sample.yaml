@@ -121,6 +121,7 @@ repository_name: "ferry133/xxxxxx"
 #   default/homebridge            — Homebridge smart home bridge
 #   default/mariadb               — MariaDB database
 #   default/mqtt                  — MQTT broker
+#   default/postgres              — shared PostgreSQL (agent memory + linebot)
 #   default/trello-notifier       — Trello LINE notification bot
 #   default/ttyd                  — web terminal
 #   ingress-nginx/ingress-nginx   — Nginx ingress controller
