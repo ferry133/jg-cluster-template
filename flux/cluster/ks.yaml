@@ -86,94 +86,140 @@ spec:
 ---
 # ── Extras — uncomment as needed ──────────────────────────────────────────────
 
+# extras/mqtt — Mosquitto MQTT broker for agent inter-communication
+# apiVersion: kustomize.toolkit.fluxcd.io/v1
+# kind: Kustomization
+# metadata:
+#   name: extras-mqtt
+#   namespace: flux-system
+# spec:
+#   decryption:
+#     provider: sops
+#   interval: 1h
+#   path: ./kubernetes/apps/extras/default/mqtt
+#   prune: true
+#   sourceRef:
+#     kind: GitRepository
+#     name: jg-base
+#     namespace: flux-system
+#   postBuild:
+#     substituteFrom:
+#       - name: cluster-secrets
+#         kind: Secret
+#   dependsOn:
+#     - name: cluster-apps-base
+# ---
+# extras/postgres — shared PostgreSQL for linebot agents + k8scc MCP memory
+# apiVersion: kustomize.toolkit.fluxcd.io/v1
+# kind: Kustomization
+# metadata:
+#   name: extras-postgres
+#   namespace: flux-system
+# spec:
+#   decryption:
+#     provider: sops
+#   interval: 1h
+#   path: ./kubernetes/apps/extras/default/postgres
+#   prune: true
+#   sourceRef:
+#     kind: GitRepository
+#     name: jg-base
+#     namespace: flux-system
+#   postBuild:
+#     substituteFrom:
+#       - name: cluster-secrets
+#         kind: Secret
+#   dependsOn:
+#     - name: cluster-apps-base
+# ---
 # extras/claude-code — Claude Code web IDE (requires NAS)
 # apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: extras-claude-code
-  namespace: flux-system
-spec:
-  decryption:
-    provider: sops
-  interval: 1h
-  path: ./kubernetes/apps/extras/claude-code
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: jg-base
-    namespace: flux-system
-  postBuild:
-    substituteFrom:
-      - name: cluster-secrets
-        kind: Secret
-  dependsOn:
-    - name: cluster-apps-base
----
+# kind: Kustomization
+# metadata:
+#   name: extras-claude-code
+#   namespace: flux-system
+# spec:
+#   decryption:
+#     provider: sops
+#   interval: 1h
+#   path: ./kubernetes/apps/extras/claudecode
+#   prune: true
+#   sourceRef:
+#     kind: GitRepository
+#     name: jg-base
+#     namespace: flux-system
+#   postBuild:
+#     substituteFrom:
+#       - name: cluster-secrets
+#         kind: Secret
+#   dependsOn:
+#     - name: cluster-apps-base
+# ---
 # extras/storage/nfs-subdir — NFS storage provisioner (requires NAS)
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: extras-storage-nfs-subdir
-  namespace: flux-system
-spec:
-  decryption:
-    provider: sops
-  interval: 1h
-  path: ./kubernetes/apps/extras/storage/nfs-subdir
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: jg-base
-    namespace: flux-system
-  postBuild:
-    substituteFrom:
-      - name: cluster-secrets
-        kind: Secret
-  dependsOn:
-    - name: cluster-apps-base
----
+# apiVersion: kustomize.toolkit.fluxcd.io/v1
+# kind: Kustomization
+# metadata:
+#   name: extras-storage-nfs-subdir
+#   namespace: flux-system
+# spec:
+#   decryption:
+#     provider: sops
+#   interval: 1h
+#   path: ./kubernetes/apps/extras/storage/nfs-subdir
+#   prune: true
+#   sourceRef:
+#     kind: GitRepository
+#     name: jg-base
+#     namespace: flux-system
+#   postBuild:
+#     substituteFrom:
+#       - name: cluster-secrets
+#         kind: Secret
+#   dependsOn:
+#     - name: cluster-apps-base
+# ---
 # extras/trello-notifier — Trello LINE notification bot
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: extras-trello-notifier
-  namespace: flux-system
-spec:
-  decryption:
-    provider: sops
-  interval: 1h
-  path: ./kubernetes/apps/extras/trello-notifier
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: jg-base
-    namespace: flux-system
-  postBuild:
-    substituteFrom:
-      - name: cluster-secrets
-        kind: Secret
-  dependsOn:
-    - name: cluster-apps-base
----
+# apiVersion: kustomize.toolkit.fluxcd.io/v1
+# kind: Kustomization
+# metadata:
+#   name: extras-trello-notifier
+#   namespace: flux-system
+# spec:
+#   decryption:
+#     provider: sops
+#   interval: 1h
+#   path: ./kubernetes/apps/extras/default/trello-notifier
+#   prune: true
+#   sourceRef:
+#     kind: GitRepository
+#     name: jg-base
+#     namespace: flux-system
+#   postBuild:
+#     substituteFrom:
+#       - name: cluster-secrets
+#         kind: Secret
+#   dependsOn:
+#     - name: cluster-apps-base
+# ---
 # extras/cloudflare-tunnel-lan — Cloudflare tunnel for LAN-only access
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: extras-cloudflare-tunnel-lan
-  namespace: flux-system
-spec:
-  decryption:
-    provider: sops
-  interval: 1h
-  path: ./kubernetes/apps/extras/cloudflare-tunnel-lan
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: jg-base
-    namespace: flux-system
-  postBuild:
-    substituteFrom:
-      - name: cluster-secrets
-        kind: Secret
-  dependsOn:
-    - name: cluster-apps-base
+# apiVersion: kustomize.toolkit.fluxcd.io/v1
+# kind: Kustomization
+# metadata:
+#   name: extras-cloudflare-tunnel-lan
+#   namespace: flux-system
+# spec:
+#   decryption:
+#     provider: sops
+#   interval: 1h
+#   path: ./kubernetes/apps/extras/cloudflare-tunnel-lan
+#   prune: true
+#   sourceRef:
+#     kind: GitRepository
+#     name: jg-base
+#     namespace: flux-system
+#   postBuild:
+#     substituteFrom:
+#       - name: cluster-secrets
+#         kind: Secret
+#   dependsOn:
+#     - name: cluster-apps-base
