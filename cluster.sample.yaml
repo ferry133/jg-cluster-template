@@ -123,6 +123,7 @@ repository_name: "ferry133/xxxxxx"
 #   default/mqtt                  — MQTT broker
 #   default/postgres              — shared PostgreSQL (agent memory + linebot)
 #   default/trello-notifier       — Trello LINE notification bot
+# postgres_password: ""           # required when extras includes default/postgres
 #   default/ttyd                  — web terminal
 #   ingress-nginx/ingress-nginx   — Nginx ingress controller
 #   network/cloudflare-tunnel-lan — Cloudflare Tunnel (LAN exposure)
