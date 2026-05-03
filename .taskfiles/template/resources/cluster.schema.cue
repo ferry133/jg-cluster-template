@@ -34,6 +34,15 @@ import (
 	extras?: [...string]
 	claude_instances?: [...string]
 	ttyd_credential?: string & !=""
+	postgres_password?: string & !=""
+	trello_api_key?: string
+	trello_api_token?: string
+	trello_board_id?: string
+	line_channel_access_token?: string
+	line_channel_secret?: string
+	line_notify_group_id?: string
+	anthropic_api_key?: string
+	database_url?: string
 }
 
 #Config
