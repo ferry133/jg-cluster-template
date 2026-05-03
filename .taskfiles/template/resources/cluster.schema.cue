@@ -37,7 +37,7 @@ import (
 	postgres_password?: string & !=""
 	trello_api_key?: string
 	trello_api_token?: string
-	trello_board_id?: string
+	trello_board_ids?: string
 	line_channel_access_token?: string
 	line_channel_secret?: string
 	line_notify_group_id?: string
