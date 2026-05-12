@@ -31,7 +31,10 @@ import (
 	nas_server?: net.IPv4 & !=""
 	nas_path?: string & !=""
 	nas_coding_path?: string & !=""
+	cluster_name: string & !=""
 	extras?: [...string]
+	freepbx_mysql_root_password?: string & !=""
+	freepbx_mysql_password?: string & !=""
 	claude_instances?: [...string]
 	ttyd_credential?: string & !=""
 	postgres_password?: string & !=""

@@ -110,6 +110,10 @@ github_webhook_token: ""
 #    This value is also used to generate FLUX_SYNC_URL in cluster-secrets.
 #    (REQUIRED) / (e.g. "ferry133/jgu2")
 repository_name: "ferry133/xxxxxx"
+
+# -- Short cluster identifier used as NFS directory prefix: <cluster_name>-<namespace>-<pvc>
+#    (REQUIRED) / (e.g. "jgu5")
+cluster_name: "xxxxxx"
 # repository_branch: "main"
 # repository_visibility: "public"
 
@@ -129,6 +133,8 @@ repository_name: "ferry133/xxxxxx"
 #   ingress-nginx/ingress-nginx   — Nginx ingress controller
 #   network/cloudflare-tunnel-lan — Cloudflare Tunnel (LAN exposure)
 #   omni/omni                     — Sidero Omni
+#   kube-system/cilium            — Cilium CNI (requires Omni cniConfig:none MachineConfigPatch or Talos cniConfig:none)
+#   freepbx/freepbx               — FreePBX / Asterisk PBX (requires freepbx_mysql_*)
 # extras:
 #   - claudecode/claude-code
 #   - default/trello-notifier
@@ -148,3 +154,7 @@ repository_name: "ferry133/xxxxxx"
 # synophoto_auth0_client_secret: ""
 # synophoto_allowed_emails: ""      # comma-separated, e.g. "alice@example.com,bob@example.com"
 # synophoto_flask_secret_key: ""    # generate with: python3 -c "import secrets; print(secrets.token_hex(32))"
+
+# ── FreePBX (optional, required when extras includes freepbx/freepbx) ─────────
+# freepbx_mysql_root_password: ""
+# freepbx_mysql_password: ""
