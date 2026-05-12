@@ -122,6 +122,7 @@ repository_name: "ferry133/xxxxxx"
 #   default/mariadb               — MariaDB database
 #   default/mqtt                  — MQTT broker
 #   default/postgres              — shared PostgreSQL (agent memory + linebot)
+#   default/synophoto             — Synology Photo Tagger web UI (GPS tag + backup)
 #   default/trello-notifier       — Trello LINE notification bot
 # postgres_password: ""           # required when extras includes default/postgres
 #   default/ttyd                  — web terminal
@@ -137,3 +138,13 @@ repository_name: "ferry133/xxxxxx"
 #   - "cc"
 #   - "trello"
 # ttyd_credential: "user:password"  # ttyd basic auth
+
+# ── Synology Photo Tagger (optional, required when extras includes default/synophoto) ──
+# Auth0: create a Regular Web App at manage.auth0.com
+#   Allowed Callback URLs: https://synophoto.<your-domain>/callback
+#   Allowed Logout URLs: https://synophoto.<your-domain>
+# synophoto_auth0_domain: ""        # e.g. "your-tenant.us.auth0.com"
+# synophoto_auth0_client_id: ""
+# synophoto_auth0_client_secret: ""
+# synophoto_allowed_emails: ""      # comma-separated, e.g. "alice@example.com,bob@example.com"
+# synophoto_flask_secret_key: ""    # generate with: python3 -c "import secrets; print(secrets.token_hex(32))"
