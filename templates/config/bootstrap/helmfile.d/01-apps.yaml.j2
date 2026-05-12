@@ -6,12 +6,6 @@ helmDefaults:
   waitForJobs: true
 
 releases:
-#  - name: cilium                                             # Larry: adopt the default cni, flannel, of OMNI kubernetes.
-#    namespace: kube-system
-#    chart: oci://quay.io/cilium/charts/cilium
-#    version: 1.19.1
-#    values: ['./templates/values.yaml.gotmpl']
-
 #  - name: coredns                                          # Larry: adopt omni's default coredns.
 #    namespace: kube-system
 #    chart: oci://ghcr.io/coredns/charts/coredns
@@ -19,13 +13,12 @@ releases:
 #    values: ['./templates/values.yaml.gotmpl']
 #    needs: ['kube-system/cilium']
 
-  #% if spegel_enabled %#
-  - name: spegel
+  #% if 'kube-system/cilium' in (extras | default([])) %#
+  - name: cilium
     namespace: kube-system
-    chart: oci://ghcr.io/spegel-org/helm-charts/spegel
-    version: 0.6.0
+    chart: oci://quay.io/cilium/charts/cilium
+    version: 1.19.1
     values: ['./templates/values.yaml.gotmpl']
-#    needs: ['kube-system/coredns']
   #% endif %#
 
   - name: cert-manager
@@ -33,10 +26,8 @@ releases:
     chart: oci://quay.io/jetstack/charts/cert-manager
     version: v1.19.4
     values: ['./templates/values.yaml.gotmpl']
-    #% if spegel_enabled %#
-    needs: ['kube-system/spegel']
-    #% else %#
-#    needs: ['kube-system/coredns']
+    #% if 'kube-system/cilium' in (extras | default([])) %#
+    needs: ['kube-system/cilium']
     #% endif %#
 
   - name: flux-operator
