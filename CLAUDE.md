@@ -46,6 +46,45 @@ kubectl --kubeconfig ~/coding/<repo>/kubeconfig-sa <command>
 
 ---
 
+## Troubleshooting
+
+### `cloudflare-tunnel` CrashLoopBackOff — QUIC blocked
+
+**症狀**：cloudflared pod 持續 CrashLoopBackOff，logs 顯示重複 `Failed to dial a quic connection: timeout: handshake did not complete in time`（連到 198.41.x.x），`/ready` 回 503。Cloudflare dashboard 顯示 tunnel `Down` / `Active replicas: 0`。
+
+**根因**：node 出口封鎖 UDP 7844（QUIC），但 TCP 443 正常。不是 token 過期、不是 Cloudflare 端問題、token rotate 救不了。
+
+**修復**：在 user repo 的 `templates/config/kubernetes/flux/cluster/ks.yaml.j2` 的 `cluster-apps-base` Kustomization 的 nested patches 內，加一段 patch 強制改 protocol：
+
+```yaml
+- patch: |-
+    apiVersion: helm.toolkit.fluxcd.io/v2
+    kind: HelmRelease
+    metadata:
+      name: cloudflare-tunnel
+    spec:
+      values:
+        controllers:
+          cloudflare-tunnel:
+            containers:
+              app:
+                env:
+                  TUNNEL_POST_QUANTUM: false
+                  TUNNEL_TRANSPORT_PROTOCOL: http2
+  target:
+    group: helm.toolkit.fluxcd.io
+    kind: HelmRelease
+    name: cloudflare-tunnel
+```
+
+然後 `task configure --yes` → commit & push。約 1 分鐘後 cloudflared 應 `1/1 Running`。
+
+**為什麼不改 jg-base？** 其他 cluster（jg-jiahd 等）QUIC 正常，default 保留 QUIC 較好。這是 per-cluster workaround。
+
+**參考**：jgu5 commit `ac1c818`（2026-05-13）。
+
+---
+
 ## Omni Service Account 建立 / 更新流程
 
 適用情境：Omni 升級後 SA key 失效、第一次建立新 user repo。
