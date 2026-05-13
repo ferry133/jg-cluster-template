@@ -154,6 +154,8 @@ cluster_name: "xxxxxx"
 # synophoto_auth0_client_secret: ""
 # synophoto_allowed_emails: ""      # comma-separated, e.g. "alice@example.com,bob@example.com"
 # synophoto_flask_secret_key: ""    # generate with: python3 -c "import secrets; print(secrets.token_hex(32))"
+# synophoto_nas_username: ""        # NAS service account (needs FileStation + target share write + photo team-space access)
+# synophoto_nas_password: ""
 
 # ── FreePBX (optional, required when extras includes freepbx/freepbx) ─────────
 # freepbx_mysql_root_password: ""

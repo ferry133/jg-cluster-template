@@ -50,6 +50,8 @@ import (
 	synophoto_auth0_client_secret?: string
 	synophoto_allowed_emails?: string
 	synophoto_flask_secret_key?: string
+	synophoto_nas_username?: string
+	synophoto_nas_password?: string
 	omni_gpg_key?: string
 }
 
