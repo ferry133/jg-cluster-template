@@ -132,8 +132,9 @@ cluster_name: "xxxxxx"
 #   default/ttyd                  — web terminal
 #   ingress-nginx/ingress-nginx   — Nginx ingress controller
 #   network/cloudflare-tunnel-lan — Cloudflare Tunnel (LAN exposure)
-#   omni/omni                     — Sidero Omni
+#   omni/omni                     — Sidero Omni (requires omni_gpg_key + storage/local-path-provisioner)
 #   kube-system/cilium            — Cilium CNI (requires Omni cniConfig:none MachineConfigPatch or Talos cniConfig:none)
+#   storage/local-path-provisioner — local-path storage class (needed by omni/omni)
 #   freepbx/freepbx               — FreePBX / Asterisk PBX (requires freepbx_mysql_*)
 # extras:
 #   - claudecode/claude-code
@@ -158,3 +159,13 @@ cluster_name: "xxxxxx"
 # ── FreePBX (optional, required when extras includes freepbx/freepbx) ─────────
 # freepbx_mysql_root_password: ""
 # freepbx_mysql_password: ""
+
+# ── Omni (optional, required when extras includes omni/omni) ─────────────────
+# GPG private key for omni etcd encryption. Generate with:
+#   (export GNUPGHOME=$(mktemp -d); gpg --batch --passphrase '' --quick-gen-key x; \
+#    gpg -a --export-secret-key; rm -rf $GNUPGHOME)
+# Paste the full multiline PGP key including BEGIN/END lines.
+# omni_gpg_key: |
+#   -----BEGIN PGP PRIVATE KEY BLOCK-----
+#   ...
+#   -----END PGP PRIVATE KEY BLOCK-----

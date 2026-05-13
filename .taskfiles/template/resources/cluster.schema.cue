@@ -50,6 +50,7 @@ import (
 	synophoto_auth0_client_secret?: string
 	synophoto_allowed_emails?: string
 	synophoto_flask_secret_key?: string
+	omni_gpg_key?: string
 }
 
 #Config
