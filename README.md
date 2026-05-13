@@ -111,6 +111,39 @@ By default Flux will periodically check your git repository for changes. In-orde
 3. Navigate to the settings of your repository on GitHub, under "Settings/Webhooks" press the "Add webhook" button. Fill in the webhook URL and your token from `github-push-token.txt`, Content type: `application/json`, Events: Choose Just the push event, and save.
 
 
+## OMNI Cluster create
+** How to create omni cluster without CNI (flanel) **
+在 omni.janncot.com 建立叢集時，步驟如下：
+
+### 1. 建立 Cluster
+Omni UI → Clusters → Create Cluster
+
+填入：
+
+Cluster Name: jgu5
+Talos Version: 選最新
+Kubernetes Version: 選對應版本
+### 2. 加入 MachineConfigPatch（關鍵）
+在建立畫面找 Patches 或 Machine Config 區塊，加入一個新 patch：
+
+```sh
+cluster:
+  network:
+    cni:
+      name: none
+```
+這告訴 Talos 不要裝任何內建 CNI，讓 Cilium 接管。
+
+### 3. 加入節點
+選擇你的 machines 並指定 control plane / worker 角色。
+
+### 4. 確認並建立
+建立後，節點會是 NotReady 狀態（正常，因為沒有 CNI），等 Flux 部署 Cilium 後才會變 Ready。
+
+⚠️ Patch 必須在叢集第一次 boot 前設好。 如果先建立叢集再加 patch，flannel 已經裝上去了，需要重建才能換掉。
+
+建好後回來接著跑 task bootstrap:apps，它會裝 Cilium → nodes 變 Ready → Flux 接手同步其餘 apps。
+
 
 ## Setup Steps
 
@@ -124,8 +157,8 @@ This generates: `cluster.yaml` (from sample), `age.key` (SOPS encryption key), `
 
 ### 2. Fill in cluster.yaml
 
-# Edit cluster.yaml — fill in all required values
-# Reference kubernetes/components/sops/cluster-secrets.sample.yaml in jg-base for variable keys
+Edit cluster.yaml — fill in all required values
+Reference kubernetes/components/sops/cluster-secrets.sample.yaml in jg-base for variable keys
 
 
 ### 3. Task Configure
@@ -142,6 +175,7 @@ git add flux/cluster/ks.yaml
 git commit -m "chore: initial cluster configuration"
 git push
 ```
+
 
 ### 5. Bootstrap Flux
 
