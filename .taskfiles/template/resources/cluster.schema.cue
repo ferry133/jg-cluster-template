@@ -36,6 +36,8 @@ import (
 	extras?: [...string]
 	freepbx_mysql_root_password?: string & !=""
 	freepbx_mysql_password?: string & !=""
+	claudecode_postgres_password?: string & !=""
+	claude_code_database_url?: string
 	claude_instances?: [...string]
 	ttyd_credential?: string & !=""
 	postgres_password?: string & !=""

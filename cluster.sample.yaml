@@ -125,7 +125,8 @@ cluster_name: "xxxxxx"
 # ── Extras (optional) ────────────────────────────────────────────────────────
 # List the extras to deploy. Format: namespace/app
 # Available extras:
-#   claudecode/claude-code       — Claude Code web IDE (requires nas_* + claude_instances)
+#   claudecode/claude-code       — Claude Code web IDE (requires nas_* + claude_instances; optionally claudecode/postgres)
+#   claudecode/postgres          — dedicated PostgreSQL for claude-code (requires claudecode_postgres_password + claude_code_database_url)
 #   default/echo                  — simple echo server (for testing)
 #   default/homebridge            — Homebridge smart home bridge
 #   default/mariadb               — MariaDB database
@@ -149,6 +150,8 @@ cluster_name: "xxxxxx"
 #   - "cc"
 #   - "trello"
 # ttyd_credential: "user:password"  # ttyd basic auth
+# claudecode_postgres_password: ""    # required when extras includes claudecode/postgres
+# claude_code_database_url: ""        # e.g. postgresql://claudecode:<pw>@postgres.claudecode.svc/claudecode
 
 # ── Synology Photo Tagger (optional, required when extras includes default/synophoto) ──
 # Auth0: create a Regular Web App at manage.auth0.com
