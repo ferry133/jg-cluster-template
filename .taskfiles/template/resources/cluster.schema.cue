@@ -32,6 +32,7 @@ import (
 	nas_path?: string & !=""
 	nas_coding_path?: string & !=""
 	cluster_name: string & !=""
+	coredns_cluster_ip?: net.IPv4
 	extras?: [...string]
 	freepbx_mysql_root_password?: string & !=""
 	freepbx_mysql_password?: string & !=""

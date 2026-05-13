@@ -42,11 +42,13 @@ cluster:
   network:
     cni:
       name: none
+  coreDNS:
+    disabled: true
 ```
 
-This tells Talos to skip the built-in CNI. Cilium will be installed in step 5.
+This tells Talos to skip the built-in CNI **and** built-in coredns. Cilium + coredns will be installed from `jg-base` in step 5.
 
-⚠️ This patch **must** be applied before the cluster first boots. If flannel is already installed, you must recreate the cluster.
+⚠️ This patch **must** be applied before the cluster first boots. If flannel or Omni's coredns is already installed, you must recreate the cluster.
 
 ### 3. Assign Nodes and Create
 
