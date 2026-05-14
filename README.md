@@ -56,19 +56,30 @@ Add machines, assign control-plane / worker roles, then create. Nodes will be `N
 
 ### 4. Generate kubeconfig
 
+ferry133's Omni instance is self-hosted inside the `jcom` cluster (not exposed publicly). To use `omnictl` you must port-forward to it first and have a valid Service Account token in `~/.config/omni/env`.
+
 ```sh
-# Install omnictl if not already installed
-omnictl get clusters   # verify Omni access
+# 1. Port-forward to the Omni service (requires jcom kubeconfig)
+KUBECONFIG=~/coding/jcom/kubeconfig kubectl port-forward -n omni svc/omni 18080:8080 &
 
-# Download SA-based kubeconfig (TTL 1 year)
-omnictl kubeconfig --service-account --user ferry133 --ttl 8760h \
-  --cluster <cluster-name> kubeconfig-sa
+# 2. Load OMNI_ENDPOINT + OMNI_SERVICE_ACCOUNT_KEY
+source ~/.config/omni/env
+omnictl get clusters   # verify access
 
-# Copy to kubeconfig (mise.toml reads KUBECONFIG=kubeconfig)
-cp kubeconfig-sa kubeconfig
+# 3. Generate a SA-based kubeconfig for the new cluster (positional output path)
+omnictl kubeconfig ~/coding/<repo>/kubeconfig-sa \
+  --cluster <cluster-name> \
+  --service-account \
+  --user ferry133 \
+  --ttl 8760h
+
+# 4. Place it where mise expects it (KUBECONFIG=./kubeconfig)
+cp ~/coding/<repo>/kubeconfig-sa ~/coding/<repo>/kubeconfig
 ```
 
-See `CLAUDE.md` for how to create an Omni Service Account if you don't have one.
+If you don't yet have an Omni Service Account or its token has expired, see `CLAUDE.md` ("Omni Service Account 設定") for the full SA-rotation procedure.
+
+> jcom is Talos-from-scratch (not Omni-provisioned) and uses a Talos client-cert kubeconfig — it does **not** need this step.
 
 ## Local Workstation Setup
 
