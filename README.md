@@ -189,6 +189,15 @@ Generates: `cluster.yaml` (from sample), `age.key` (SOPS key), `github-deploy.ke
     git push
     ```
 
+
+
+
+    ```sh
+    git add -A
+    git commit -m "chore: initial commit :rocket:"
+    git push
+    ```
+
 > [!TIP]
 > Using a **private repository**? Make sure to paste the public key from `github-deploy.key.pub` into the deploy keys section of your GitHub repository settings. This will make sure Flux has read/write access to your repository.
 
