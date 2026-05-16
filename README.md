@@ -42,7 +42,7 @@ These guidelines provide a strong baseline, but there are always exceptions and 
 ##
 ## 2 types of Baby k8s Clusters sources ---(A) Talos ---(B) Omni
 ##
-## ---(A) Talos Babt Cluster Setup
+## ---(A) Talos Baby Cluster Setup
 1. Head over to the [Talos Linux Image Factory](https://factory.talos.dev) and follow the instructions. Be sure to only choose the **bare-minimum system extensions** as some might require additional configuration and prevent Talos from booting without it. Depending on your CPU start with the Intel/AMD system extensions (`i915`, `intel-ucode` & `mei` **or** `amdgpu` & `amd-ucode`), you can always add system extensions after Talos is installed and working.
 
 2. This will eventually lead you to download a Talos Linux ISO (or for SBCs a RAW) image. Make sure to note the **schematic ID** you will need this later on.
@@ -56,13 +56,13 @@ These guidelines provide a strong baseline, but there are always exceptions and 
     ```
 
 
-## ---(B) Omni Babt Cluster Setup
+## ---(B) Omni Baby Cluster Setup
 
 All clusters use **Cilium** as CNI (installed automatically by `task bootstrap:apps`). You must disable Omni's built-in flannel CNI before first boot.
 
-### 1. Create Cluster in Omni UI
+### 1. Create Installatoin ISO in Omni UI
 
-Omni UI → Clusters → Create Cluster
+Omni UI → Download Installation Media → Create New.    (If havn't create yet.)
 
 - **Cluster Name**: e.g. `jgu5`
 - **Talos Version**: latest
@@ -85,9 +85,7 @@ This tells Talos to skip the built-in CNI **and** built-in coredns. Cilium + cor
 
 ⚠️ This patch **must** be applied before the cluster first boots. If flannel or Omni's coredns is already installed, you must recreate the cluster.
 
-### 3. Assign Nodes and Create
 
-Add machines, assign control-plane / worker roles, then create. Nodes will be `NotReady` (no CNI yet) — this is expected.
 
 
 ### Stage 3: Local Workstation
