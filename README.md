@@ -191,7 +191,7 @@ Generates: `cluster.yaml` (from sample), `age.key` (SOPS key), `github-deploy.ke
 
 
 
-### Stage 6: Bootstrap Talos, Kubernetes, and Flux
+### Stage 6: Bootstrap Talos, Omni smallest Kubernetes baby cluster
 
 ## ---(A) Talos baby cluster
 > [!WARNING]
@@ -258,7 +258,9 @@ If you don't yet have an Omni Service Account or its token has expired, see `CLA
 ### Below now, both (A) Talos & (B) operation are the same.
 ###
 
-### 3 Install cilium, coredns, spegel, flux and sync the cluster to the repository state:
+### Stage 7: Bootstrap base and selective extra Kubernetes apps 
+
+### 1 Install cilium, coredns, spegel, flux and sync the cluster to the repository state:
 
 Installs Cilium → cert-manager → flux-operator → flux-instance in order:
 
@@ -270,6 +272,7 @@ After this, Flux takes over and syncs all base apps and selected extras from `jg
 Nodes will become `Ready` once Cilium is deployed.
 
 ⚠️ Run this only once. After bootstrap, all changes go through Flux (see below).
+
 
 ## Post-Bootstrap Operations
 
