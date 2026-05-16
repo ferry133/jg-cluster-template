@@ -179,9 +179,20 @@ Generates: `cluster.yaml` (from sample), `age.key` (SOPS key), `github-deploy.ke
     ```
 
 4. Push your changes to git:
-### 4. Commit and Push
-
    📍 _**Verify** all the `./kubernetes/**/*.sops.*` files are **encrypted** with SOPS_
+
+
+
+
+    ```sh
+    git add -A
+    git commit -m "chore: add talhelper encrypted secret :lock:"
+    git push
+    ```
+
+    ```sh
+    task configure
+    ```
 
     ```sh
     git add -A
