@@ -6,25 +6,25 @@ helmDefaults:
   waitForJobs: true
 
 releases:
-#  - name: coredns                                          # Larry: adopt omni's default coredns.
-#    namespace: kube-system
-#    chart: oci://ghcr.io/coredns/charts/coredns
-#    version: 1.45.2
-#    values: ['./templates/values.yaml.gotmpl']
-#    needs: ['kube-system/cilium']
-
   - name: cilium
     namespace: kube-system
     chart: oci://quay.io/cilium/charts/cilium
     version: 1.19.1
     values: ['./templates/values.yaml.gotmpl']
 
+  - name: coredns
+    namespace: kube-system
+    chart: oci://ghcr.io/coredns/charts/coredns
+    version: 1.45.2
+    values: ['./templates/values.yaml.gotmpl']
+    needs: ['kube-system/cilium']
+
   - name: cert-manager
     namespace: cert-manager
     chart: oci://quay.io/jetstack/charts/cert-manager
     version: v1.19.4
     values: ['./templates/values.yaml.gotmpl']
-    needs: ['kube-system/cilium']
+    needs: ['kube-system/coredns']
 
   - name: flux-operator
     namespace: flux-system
