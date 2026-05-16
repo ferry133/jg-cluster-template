@@ -2,174 +2,173 @@
 # cluster.yaml.sample — per-cluster configuration
 # Copy to cluster.yaml, fill in values, then run: task configure
 # cluster.yaml is gitignored and never committed.
+#
+# Organization:
+#   §1 Base — always required (network, cloudflare API, repo)
+#   §2 Extras — only required when listed in `extras:`. Each subsection
+#               states which extras it's needed for.
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# §1. BASE (always required)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Network ───────────────────────────────────────────────────────────────────
-# -- The network CIDR for the nodes.
-# (REQUIRED) / (e.g. 192.168.1.0/24)
-node_cidr: "10.9.9.0/24"            # subnet for node IPs
+# (REQUIRED) network CIDR for the nodes (e.g. 192.168.1.0/24)
+node_cidr: "10.9.9.0/24"
 
-# -- The default gateway for the nodes.
-#    (OPTIONAL) / (DEFAULT: the first IP in the node_cidr)
-# node_default_gateway: "10.x.x.1"    # router IP
+# (REQUIRED) Choose unused IPs in node_cidr for these LB / VIP addresses:
+cluster_api_addr: "10.9.9.2"          # Kube API VIP / first controller IP
+cluster_dns_gateway_addr: "10.9.9.3"  # k8s-gateway (DNS) LB IP
+cluster_gateway_addr: "10.9.9.4"      # envoy-internal LB IP
+cloudflare_gateway_addr: "10.9.9.5"   # envoy-external LB IP
 
-# -- DNS servers to use for the cluster.
-#    (OPTIONAL) / (DEFAULT: ["1.1.1.1", "1.0.0.1"]) / (Cloudflare DNS)
-# node_dns_servers: []
+# Optional network overrides:
+# node_default_gateway: "10.9.9.1"
+# node_dns_servers: ["1.1.1.1", "1.0.0.1"]            # default: Cloudflare DNS
+# node_ntp_servers: ["162.159.200.1", "162.159.200.123"]
+# node_vlan_tag: ""                                    # https://www.talos.dev/latest/advanced/advanced-networking/#vlans
+# cluster_api_tls_sans: ["mycluster.example.com"]
+# cluster_pod_cidr: "10.42.0.0/16"
 
-# -- NTP servers to use for the cluster.
-#    (OPTIONAL) / (DEFAULT: ["162.159.200.1", "162.159.200.123"]) / (Cloudflare NTP)
-# node_ntp_servers: []
-
-# -- Attach a vlan tag to the Talos nodes. Not needed if ports on your switch are tagged or you are not using VLANs.
-#    (OPTIONAL) / (REF: https://www.talos.dev/latest/advanced/advanced-networking/#vlans)
-# node_vlan_tag: ""
-
-# -- Additional SANs to add to the Kube API cert. This is useful if you want to call the Kube API by hostname rather than IP
-#    (OPTIONAL) / (e.g. ["mycluster.example.com"])
-# cluster_api_tls_sans: []
-
-# -- The pod CIDR for the cluster, this must NOT overlap with any existing networks and should be a /16 (64K IPs).
-#    (OPTIONAL) / (DEFAULT: "10.42.0.0/16")
-# cluster_pod_cidr: ""
-
-# -- The service CIDR for the cluster, this must NOT overlap with any existing networks and should be a /16 (64K IPs).
-#    Omni-provisioned clusters default to 10.96.0.0/16. Talos-from-scratch defaults to 10.43.0.0/16.
-#    Pick whatever fits — just keep coredns_cluster_ip aligned (the .10 of this CIDR).
-#    (OPTIONAL) / (DEFAULT: "10.43.0.0/16")
-# cluster_svc_cidr: ""
-
-# -- CoreDNS Service clusterIP. Must be the .10 address of cluster_svc_cidr.
-#    (OPTIONAL) / (DEFAULT: "10.96.0.10")
+# Cluster Service CIDR:
+#   Omni-provisioned clusters default to 10.96.0.0/16.
+#   Talos-from-scratch defaults to 10.43.0.0/16.
+#   Keep coredns_cluster_ip aligned (.10 of this CIDR).
+# cluster_svc_cidr: "10.96.0.0/16"
 # coredns_cluster_ip: "10.96.0.10"
 
-# -- The IP address of the Kube API.
-#    (REQUIRED) / (NOTE: Choose an unused IP in node_cidr)
-#cluster_api_addr: "10.x.x.x"               # VIP or first controller IP
-cluster_api_addr: 10.9.9.2
-
-# -- The Load balancer IP for k8s_gateway, this provides DNS to all your gateways when split DNS is configured on your internal DNS server (Dnsmasq, Pi-hole, etc)
-#    (REQUIRED) / (NOTE: Choose an unused IP in node_cidr)
-#cluster_dns_gateway_addr: "10.x.x.x"       # k8s-gateway (DNS) LB IP
-cluster_dns_gateway_addr: 10.9.9.3
-
-# -- The Load balancer IP for the internal gateway
-#    (REQUIRED) / (NOTE: Choose an unused IP in node_cidr)
-#cluster_gateway_addr: "10.x.x.x"           # envoy-internal LB IP
-cluster_gateway_addr: 10.9.9.4
-
-# -- The Load balancer IP for the external gateway
-#    (REQUIRED) / (NOTE: Choose an unused IP in node_cidr)
-#cloudflare_gateway_addr: "10.x.x.x"        # envoy-external LB IP
-cloudflare_gateway_addr: 10.9.9.5
-
-
-# ── Cloudflare ────────────────────────────────────────────────────────────────
-# -- Domain you wish to use from your Cloudflare account
-#    (REQUIRED) / (e.g. "example.com")
+# ── Cloudflare API + Tunnel ───────────────────────────────────────────────────
+# (REQUIRED) Domain you wish to use from your Cloudflare account
 cloudflare_domain: "example.com"
 
-# -- API Token for Cloudflare with the 'Zone:DNS:Edit' and 'Account:Cloudflare Tunnel:Read' permissions
-#    (REQUIRED) (NOTE: See the README for information on creating this)
-cloudflare_token: ""                 # API token (DNS edit permission)
+# (REQUIRED) API Token: Zone:DNS:Edit + Account:Cloudflare Tunnel:Read
+cloudflare_token: ""
 
-# -- Cloudflare Tunnel token for cloudflared.
-#    Run: cloudflared tunnel create <name> && cloudflared tunnel token <name>
-#    (REQUIRED)
-cloudflare_tunnel_token: ""
+# Main Cloudflare Tunnel:
+#   TOKEN + ID are read from `cloudflare-tunnel.json` (local, gitignored).
+#   Generate:
+#     cloudflared tunnel create --credentials-file cloudflare-tunnel.json kubernetes
+#   Or reconstruct from existing tunnel token (see templates/scripts/plugin.py).
 
-
-# ── github webhook ────────────────────────────────────────────────────────────────
-# -- Random token for GitHub webhook receiver (Flux Receiver).
-#    Run: python3 -c "import secrets; print(secrets.token_hex(32))"
-#    Run: kubectl -n flux-system get receiver github-webhook --output=jsonpath='{.status.webhookPath}'
-#    (REQUIRED)
+# ── GitHub webhook receiver (Flux) ────────────────────────────────────────────
+# (REQUIRED) Random token for Flux GitHub receiver.
+#   Generate: python3 -c "import secrets; print(secrets.token_hex(32))"
 github_webhook_token: ""
 
-
-# ── cilium ────────────────────────────────────────────────────────────────
-# -- The load balancer mode for cilium.
-#    (OPTIONAL) / (DEFAULT: "dsr") / (NOTE: accepted values are 'dsr' or 'snat') / (REF: https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/)
-# cilium_loadbalancer_mode: ""
-
-# -- The IP address of the BGP router, to keep things simple, node network will be used for BGP peering.
-# (OPTIONAL) / (e.g. "192.168.1.1") / (REF: https://docs.cilium.io/en/latest/network/bgp-control-plane/bgp-control-plane/)
-# cilium_bgp_router_addr: ""
-
-# -- The BGP router ASN
-# (OPTIONAL) / (e.g. "64513")
-# cilium_bgp_router_asn: ""
-
-# -- The BGP node ASN
-# (OPTIONAL) / (e.g. "64514")
-# cilium_bgp_node_asn: ""
-
-# ── NAS (optional, required for storage/nfs-subdir and claudecode/claude-code) ──
-# nas_server: "10.x.x.x"
-# nas_path: "/volume/path"          # NFS export for storage provisioner (sc-nas)
-# nas_coding_path: "/volume/coding" # NFS export for claude-code coding workspace
-
-
 # ── Repository ────────────────────────────────────────────────────────────────
-# -- Your per-user GitHub repo name (owner/repo).
-#    The FluxInstance will sync from this repo (kubernetes/flux/cluster).
-#    This value is also used to generate FLUX_SYNC_URL in cluster-secrets.
-#    (REQUIRED) / (e.g. "ferry133/jgu2")
+# (REQUIRED) Per-user GitHub repo (owner/repo). FluxInstance syncs from here.
 repository_name: "ferry133/xxxxxx"
 
-# -- Short cluster identifier used as NFS directory prefix: <cluster_name>-<namespace>-<pvc>
-#    (REQUIRED) / (e.g. "jgu5")
+# (REQUIRED) Short cluster identifier — used as NFS dir prefix.
 cluster_name: "xxxxxx"
 # repository_branch: "main"
 # repository_visibility: "public"
 
-# ── Extras (optional) ────────────────────────────────────────────────────────
-# List the extras to deploy. Format: namespace/app
-# Available extras:
-#   claudecode/claude-code       — Claude Code web IDE (requires nas_* + claude_instances; optionally claudecode/postgres)
-#   claudecode/postgres          — dedicated PostgreSQL for claude-code (requires claudecode_postgres_password + claude_code_database_url)
-#   default/echo                  — simple echo server (for testing)
-#   default/homebridge            — Homebridge smart home bridge
-#   default/mariadb               — MariaDB database
-#   default/mqtt                  — MQTT broker
-#   default/postgres              — shared PostgreSQL (agent memory + linebot)
-#   default/synophoto             — Synology Photo Tagger web UI (GPS tag + backup)
-#   default/trello-notifier       — Trello LINE notification bot
-# postgres_password: ""           # required when extras includes default/postgres
-#   default/ttyd                  — web terminal
-#   ingress-nginx/ingress-nginx   — Nginx ingress controller
-#   network/cloudflare-tunnel-lan — Cloudflare Tunnel (LAN exposure)
-#   omni/omni                     — Sidero Omni (requires omni_gpg_key + storage/local-path-provisioner)
-#   storage/local-path-provisioner — local-path storage class (needed by omni/omni)
-#   freepbx/freepbx               — FreePBX / Asterisk PBX (requires freepbx_mysql_*)
+# ── NAS (required if base storage/nfs-subdir or any NAS-backed extra is used) ─
+# Used by base storage class (sc-nas) and several extras.
+# nas_server: "10.x.x.x"
+# nas_path: "/volume/path"            # NFS export for storage provisioner (sc-nas)
+
+# ── Cilium BGP (optional) ─────────────────────────────────────────────────────
+# cilium_loadbalancer_mode: "dsr"     # or "snat" — https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/
+# cilium_bgp_router_addr: "192.168.1.1"
+# cilium_bgp_router_asn: "64513"
+# cilium_bgp_node_asn: "64514"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# §2. EXTRAS — pick which optional apps to deploy
+# ═══════════════════════════════════════════════════════════════════════════════
+# Available extras and the params each one needs:
+#
+#   claudecode/claude-code       → nas_server, nas_coding_path,
+#                                  claude_instances, ttyd_credential
+#   claudecode/postgres          → claudecode_postgres_password, claude_code_database_url
+#   default/echo                 → (no extra params)
+#   default/homebridge           → (no extra params)
+#   default/linebot              → anthropic_api_key, database_url,
+#                                  line_channel_access_token, line_channel_secret, line_notify_group_id,
+#                                  trello_api_key, trello_api_token
+#   default/mariadb              → (no extra params)
+#   default/mqtt                 → mqtt_lb_ip
+#   default/postgres             → postgres_password
+#   default/synophoto            → synophoto_auth0_* (3),
+#                                  synophoto_allowed_emails, synophoto_flask_secret_key,
+#                                  synophoto_nas_username, synophoto_nas_password
+#   default/trello-notifier      → trello_api_key, trello_api_token, trello_board_id,
+#                                  line_channel_access_token, line_notify_group_id
+#   default/ttyd                 → ttyd_credential
+#   freepbx/freepbx              → freepbx_mysql_root_password, freepbx_mysql_password
+#   ingress-nginx/ingress-nginx  → ingress_nginx_lb_ip
+#   kube-system/cilium           → (requires Omni cniConfig:none MachineConfigPatch)
+#   network/cloudflare-tunnel-lan→ cloudflare_lan_tunnel_token
+#   omni/omni                    → omni_gpg_key (+ storage/local-path-provisioner)
+#   storage/local-path-provisioner → (no extra params; needed by omni/omni)
+# extras: []
+# Example:
 # extras:
 #   - claudecode/claude-code
 #   - default/trello-notifier
 
-# ── Claude Code (optional, required when extras includes claudecode/claude-code) ──
+# ── network/cloudflare-tunnel-lan ─────────────────────────────────────────────
+# cloudflare_lan_tunnel_token: ""     # `cloudflared tunnel token <name>` output
+
+# ── claudecode/claude-code ────────────────────────────────────────────────────
+# nas_coding_path: "/volume/coding"   # NFS export for claude-code coding workspace
 # claude_instances:
 #   - "cc"
 #   - "trello"
-# ttyd_credential: "user:password"  # ttyd basic auth
-# claudecode_postgres_password: ""    # required when extras includes claudecode/postgres
+# ttyd_credential: "user:password"    # ttyd basic auth (also default/ttyd)
+
+# ── claudecode/postgres ───────────────────────────────────────────────────────
+# claudecode_postgres_password: ""
 # claude_code_database_url: ""        # e.g. postgresql://claudecode:<pw>@postgres.claudecode.svc/claudecode
 
-# ── Synology Photo Tagger (optional, required when extras includes default/synophoto) ──
+# ── default/postgres ──────────────────────────────────────────────────────────
+# postgres_password: ""
+
+# ── default/mqtt ──────────────────────────────────────────────────────────────
+# mqtt_lb_ip: "10.9.x.x"              # LB IP for MQTT broker; must be in node_cidr LB pool
+
+# ── default/trello-notifier ───────────────────────────────────────────────────
+# trello_api_key: ""
+# trello_api_token: ""
+# trello_board_id: ""                 # monitored Trello board ID
+# line_channel_access_token: ""
+# line_notify_group_id: ""
+
+# ── default/linebot ───────────────────────────────────────────────────────────
+# anthropic_api_key: ""
+# database_url: ""                    # e.g. postgresql://linebot:<pw>@postgres.db.svc/linebot
+# line_channel_access_token: ""       # shared with trello-notifier if both enabled
+# line_channel_secret: ""
+# line_notify_group_id: ""            # shared with trello-notifier if both enabled
+# trello_api_key: ""                  # shared with trello-notifier if both enabled
+# trello_api_token: ""                # shared with trello-notifier if both enabled
+
+# ── default/synophoto ─────────────────────────────────────────────────────────
 # Auth0: create a Regular Web App at manage.auth0.com
-#   Allowed Callback URLs: https://synophoto.<your-domain>/callback
-#   Allowed Logout URLs: https://synophoto.<your-domain>
-# synophoto_auth0_domain: ""        # e.g. "your-tenant.us.auth0.com"
+#   Allowed Callback URLs: https://synophoto.<cloudflare_domain>/callback
+#   Allowed Logout URLs:   https://synophoto.<cloudflare_domain>
+# synophoto_auth0_domain: ""          # e.g. "your-tenant.us.auth0.com"
 # synophoto_auth0_client_id: ""
 # synophoto_auth0_client_secret: ""
-# synophoto_allowed_emails: ""      # comma-separated, e.g. "alice@example.com,bob@example.com"
-# synophoto_flask_secret_key: ""    # generate with: python3 -c "import secrets; print(secrets.token_hex(32))"
-# synophoto_nas_username: ""        # NAS service account (needs FileStation + target share write + photo team-space access)
+# synophoto_allowed_emails: ""        # comma-separated, e.g. "alice@example.com,bob@example.com"
+# synophoto_flask_secret_key: ""      # python3 -c "import secrets; print(secrets.token_hex(32))"
+# synophoto_nas_username: ""          # NAS SA: FileStation + target share write + photo team-space access
 # synophoto_nas_password: ""
 
-# ── FreePBX (optional, required when extras includes freepbx/freepbx) ─────────
+# ── default/ttyd ──────────────────────────────────────────────────────────────
+# ttyd_credential: "user:password"    # shared with claude-code if both enabled
+
+# ── ingress-nginx/ingress-nginx ───────────────────────────────────────────────
+# ingress_nginx_lb_ip: "10.9.x.x"
+
+# ── freepbx/freepbx ───────────────────────────────────────────────────────────
 # freepbx_mysql_root_password: ""
 # freepbx_mysql_password: ""
 
-# ── Omni (optional, required when extras includes omni/omni) ─────────────────
+# ── omni/omni ─────────────────────────────────────────────────────────────────
 # GPG private key for omni etcd encryption. Generate with:
 #   (export GNUPGHOME=$(mktemp -d); gpg --batch --passphrase '' --quick-gen-key x; \
 #    gpg -a --export-secret-key; rm -rf $GNUPGHOME)

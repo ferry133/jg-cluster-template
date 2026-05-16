@@ -181,34 +181,11 @@ Generates: `cluster.yaml` (from sample), `age.key` (SOPS key), `github-deploy.ke
 4. Push your changes to git:
    📍 _**Verify** all the `./kubernetes/**/*.sops.*` files are **encrypted** with SOPS_
 
-
-
-
     ```sh
     git add -A
     git commit -m "chore: add talhelper encrypted secret :lock:"
     git push
     ```
-
-    ```sh
-    task configure
-    ```
-
-    ```sh
-    git add -A
-    git commit -m "chore: initial commit :rocket:"
-    git push
-    ```
-
-
-
-
-    ```sh
-    git add -A
-    git commit -m "chore: initial commit :rocket:"
-    git push
-    ```
-
 > [!TIP]
 > Using a **private repository**? Make sure to paste the public key from `github-deploy.key.pub` into the deploy keys section of your GitHub repository settings. This will make sure Flux has read/write access to your repository.
 
