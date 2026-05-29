@@ -64,7 +64,7 @@ All clusters use **Cilium** as CNI (installed automatically by `task bootstrap:a
 
 Omni UI → Download Installation Media → Create New.    (If havn't create yet.)
 
-- **Cluster Name**: e.g. `jgu5`
+- **Cluster Name**: e.g. `jg-jiahd`
 - **Talos Version**: latest
 - **Kubernetes Version**: matching version
 

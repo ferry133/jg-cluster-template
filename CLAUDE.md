@@ -79,9 +79,9 @@ kubectl --kubeconfig ~/coding/<repo>/kubeconfig-sa <command>
 
 然後 `task configure --yes` → commit & push。約 1 分鐘後 cloudflared 應 `1/1 Running`。
 
-**為什麼不改 jg-base？** 其他 cluster（jg-jiahd 等）QUIC 正常，default 保留 QUIC 較好。這是 per-cluster workaround。
+**為什麼不改 jg-base？** 其他 cluster（jgu2、jcom 等）QUIC 正常，default 保留 QUIC 較好。這是 per-cluster workaround。
 
-**參考**：jgu5 commit `ac1c818`（2026-05-13）。
+**參考**：jg-jiahd commit `ac1c818`（2026-05-13；原 jgu5 repo 已於 2026-05-30 改名）。
 
 ---
 
@@ -125,17 +125,19 @@ omnictl kubeconfig ~/coding/<repo>/kubeconfig-sa \
   --service-account \
   --user ferry133 \
   --ttl 8760h
-
-# Omni-managed cluster（如 jgu5）：用 kubeconfig-sa 覆蓋 kubeconfig
-# （.mise.toml 的 KUBECONFIG 指向 kubeconfig）
-cp ~/coding/<repo>/kubeconfig-sa ~/coding/<repo>/kubeconfig
 ```
+
+**保留兩個檔案的慣例**：
+- `kubeconfig` — 原始 OIDC 版（需瀏覽器登入；mise 預設 `KUBECONFIG` 指這個）
+- `kubeconfig-sa` — 內嵌 SA token，非互動可用
+- 不要 `cp kubeconfig-sa kubeconfig` 覆蓋。所有自動化（CI、scripts、本機 kubectl）都應**明確帶 `--kubeconfig kubeconfig-sa`** 或 `export KUBECONFIG=<repo>/kubeconfig-sa`。
+- 留著 OIDC kubeconfig 可在 SA 過期時用瀏覽器登 Omni 救援。
 
 ### Step 5 — 驗證
 
 ```sh
 cd ~/coding/<repo>
-mise x -- kubectl get nodes
+kubectl --kubeconfig kubeconfig-sa get nodes
 ```
 
 ### 注意事項
