@@ -100,9 +100,8 @@ spec:
       labels:
         hostnetwork-group: claude-code
       # hostNetwork pods all bind :7681 on the node -- hard-require spreading
-      # across nodes so this and any other claude-code/instance never collide
-      # (including the base claude-code app and multiple claude_instances on
-      # the same client).
+      # across nodes so multiple claude_instances on the same client never
+      # collide.
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
