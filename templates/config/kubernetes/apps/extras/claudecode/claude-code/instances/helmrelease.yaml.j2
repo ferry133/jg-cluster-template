@@ -14,11 +14,16 @@ spec:
     controllers:
       #{instance}#:
         strategy: Recreate
+        # Client remote-support terminal: off by default. Scale to 1 only
+        # while actively supporting this client, to minimize the standing
+        # exposure window of a LAN-facing shell with network-scanning
+        # capability (see securityContext.capabilities below).
+        replicas: 0
         containers:
           app:
             image:
               repository: ghcr.io/ferry133/claude-code
-              tag: latest
+              tag: 8328b34
             env:
               TTYD_CREDENTIAL:
                 valueFrom:
@@ -48,7 +53,9 @@ spec:
                   failureThreshold: 3
             securityContext:
               allowPrivilegeEscalation: false
-              capabilities: { drop: ["ALL"] }
+              capabilities:
+                drop: ["ALL"]
+                add: ["NET_RAW"] # nmap/masscan/arp-scan/tcpdump/fping raw sockets
             resources:
               requests:
                 cpu: 100m

@@ -122,6 +122,16 @@ cluster_name: "xxxxxx"
 #   - "cc"
 #   - "trello"
 # ttyd_credential: "user:password"    # ttyd basic auth (also default/ttyd)
+#
+# Each instance runs hostNetwork + a network-diagnostics toolkit (nmap,
+# masscan, arp-scan, tcpdump, fping, ...) with CAP_NET_RAW, for remotely
+# supporting a non-technical client's LAN/router. Deployed with
+# replicas: 0 — scale to 1 only while actively supporting that client
+# by editing controllers.<instance>.replicas in the client's rendered
+# kubernetes/apps/extras/claudecode/claude-code/instances/helmrelease.yaml
+# and pushing (GitOps-tracked; Flux reconciles it back to 0 otherwise).
+# A live `kubectl scale deploy/<instance> --replicas=1` also works for
+# an immediate one-off, but Flux will reset it on the next reconcile.
 
 # ── claudecode/postgres ───────────────────────────────────────────────────────
 # claudecode_postgres_password: ""
