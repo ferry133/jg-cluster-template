@@ -145,3 +145,19 @@ kubectl --kubeconfig kubeconfig-sa get nodes
 - `jcom` 使用 Talos client cert kubeconfig，**不需要** kubeconfig-sa
 - Omni UI 的 Edit User 對話框只有 Role，沒有 Public Keys 管理（v1.7.x 已移除）
 - PGP user key 有 lifetime 限制（Omni 限制從現在起約數小時），不適合長期使用，改用 SA
+
+---
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (`ferry133/jg-cluster-template`), operated via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
