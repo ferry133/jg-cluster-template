@@ -83,6 +83,8 @@ cluster_name: "xxxxxx"
 #
 #   claudecode/claude-code       → nas_server, nas_coding_path,
 #                                  claude_instances, ttyd_credential
+#                                  (optional Auth0 login: claudecode_auth0_*,
+#                                   claudecode_oauth2_cookie_secret, claudecode_allowed_emails)
 #   claudecode/postgres          → claudecode_postgres_password, claude_code_database_url
 #   default/echo                 → (no extra params)
 #   default/homebridge           → (no extra params)
@@ -123,6 +125,18 @@ cluster_name: "xxxxxx"
 #   - "trello"
 # ttyd_credential: "user:password"    # ttyd basic auth (also default/ttyd)
 #
+# Optional Auth0 login (replaces ttyd basic auth with an oauth2-proxy
+# sidecar). Setting claudecode_auth0_domain switches every instance to
+# OIDC mode: ttyd binds loopback only, the route goes through oauth2-proxy
+# on :4180, and only claudecode_allowed_emails may log in. In the Auth0
+# app (Regular Web Application) add per instance:
+#   Allowed Callback URLs: https://<instance>.<domain>/oauth2/callback
+#   Allowed Logout URLs / Web Origins: https://<instance>.<domain>
+# claudecode_auth0_domain: "your-tenant.us.auth0.com"
+# claudecode_auth0_client_id: ""
+# claudecode_auth0_client_secret: ""
+# claudecode_oauth2_cookie_secret: ""  # 32-byte base64, e.g. `openssl rand -base64 32`
+# claudecode_allowed_emails: "a@example.com,b@example.com"
 # Each instance runs hostNetwork + a network-diagnostics toolkit (nmap,
 # masscan, arp-scan, tcpdump, fping, ...) with CAP_NET_RAW, for remotely
 # supporting a non-technical client's LAN/router. Deployed with
