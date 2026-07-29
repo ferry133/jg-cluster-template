@@ -85,6 +85,7 @@ cluster_name: "xxxxxx"
 #                                  claude_instances, ttyd_credential
 #                                  (optional Auth0 login: claudecode_auth0_*,
 #                                   claudecode_oauth2_cookie_secret, claudecode_allowed_emails)
+#                                  (optional talos-mcp sidecar: talos_mcp_config)
 #   claudecode/postgres          → claudecode_postgres_password, claude_code_database_url
 #   default/echo                 → (no extra params)
 #   default/homebridge           → (no extra params)
@@ -146,6 +147,22 @@ cluster_name: "xxxxxx"
 # and pushing (GitOps-tracked; Flux reconciles it back to 0 otherwise).
 # A live `kubectl scale deploy/<instance> --replicas=1` also works for
 # an immediate one-off, but Flux will reset it on the next reconcile.
+#
+# Optional talos-mcp sidecar: gives the agent isolated, read-only Talos
+# diagnostics (node status, etcd members, network link state, service logs)
+# for THIS client's cluster, without any credential crossing the remote-
+# operator boundary. Requires an os:reader-scoped Talos credential, minted
+# once per client from an existing admin-capable talosconfig for that
+# cluster (needs os:admin -- NOT the operator-level role some break-glass
+# configs carry):
+#   talosctl config new <output-path> --roles=os:reader \
+#     --talosconfig=<admin-capable talosconfig> --nodes=<any node IP in the cluster>
+# Paste the resulting file's full contents (multi-line YAML) as-is below;
+# task configure base64-wraps it before encrypting.
+# talos_mcp_config: |
+#   context: ...
+#   contexts:
+#     ...
 
 # ── claudecode/postgres ───────────────────────────────────────────────────────
 # claudecode_postgres_password: ""
