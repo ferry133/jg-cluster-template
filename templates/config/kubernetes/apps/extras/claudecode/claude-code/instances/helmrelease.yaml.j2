@@ -120,6 +120,23 @@ spec:
             command: ["python3", "/usr/local/bin/talos_mcp_server.py"]
             env:
               TALOSCONFIG: /etc/talos-mcp/talosconfig
+              # The talosconfig above carries no key material (Omni's siderov1
+              # auth needs either a locally-registered PGP key -- which a
+              # fresh container never has -- or these two env vars, read
+              # directly by talosctl's own auth library). Endpoint must be a
+              # direct, non-Cloudflare-Tunnel gRPC path (see talos-mcp-secret
+              # in jg-base) -- confirmed 2026-07-30 against jg-jiahd that the
+              # Tunnel breaks gRPC trailers the siderov1 proxy depends on.
+              OMNI_SERVICE_ACCOUNT_KEY:
+                valueFrom:
+                  secretKeyRef:
+                    name: talos-mcp-secret
+                    key: saKey
+              OMNI_ENDPOINT:
+                valueFrom:
+                  secretKeyRef:
+                    name: talos-mcp-secret
+                    key: omniEndpoint
             securityContext:
               allowPrivilegeEscalation: false
               capabilities: { drop: ["ALL"] }

@@ -85,7 +85,8 @@ cluster_name: "xxxxxx"
 #                                  claude_instances, ttyd_credential
 #                                  (optional Auth0 login: claudecode_auth0_*,
 #                                   claudecode_oauth2_cookie_secret, claudecode_allowed_emails)
-#                                  (optional talos-mcp sidecar: talos_mcp_config)
+#                                  (optional talos-mcp sidecar: talos_mcp_config,
+#                                   talos_mcp_sa_key, talos_mcp_omni_endpoint)
 #   claudecode/postgres          → claudecode_postgres_password, claude_code_database_url
 #   default/echo                 → (no extra params)
 #   default/homebridge           → (no extra params)
@@ -151,18 +152,38 @@ cluster_name: "xxxxxx"
 # Optional talos-mcp sidecar: gives the agent isolated, read-only Talos
 # diagnostics (node status, etcd members, network link state, service logs)
 # for THIS client's cluster, without any credential crossing the remote-
-# operator boundary. Requires an os:reader-scoped Talos credential, minted
-# once per client from an existing admin-capable talosconfig for that
-# cluster (needs os:admin -- NOT the operator-level role some break-glass
-# configs carry):
-#   talosctl config new <output-path> --roles=os:reader \
-#     --talosconfig=<admin-capable talosconfig> --nodes=<any node IP in the cluster>
-# Paste the resulting file's full contents (multi-line YAML) as-is below;
-# task configure base64-wraps it before encrypting.
+# operator boundary. Needs THREE values, all per-client, one-time setup:
+#
+# 1. In Omni's Web UI (Settings -> Service Accounts -> Create Service
+#    Account), create a NEW service account scoped to Omni Role "Reader"
+#    (NOT Admin/Operator -- Reader is what actually caps it at os:reader
+#    when proxied to Talos; there is no `--roles`/`--scope` flag on any
+#    CLI path, the *identity's own Omni Role* is the only scoping lever).
+#    Name it e.g. talos-mcp-<cluster>, pick an expiry, copy the displayed
+#    `OMNI_SERVICE_ACCOUNT_KEY` -> talos_mcp_sa_key below.
+# 2. Generate that identity's talosconfig:
+#      OMNI_ENDPOINT=<see step 3> OMNI_SERVICE_ACCOUNT_KEY=<from step 1> \
+#      omnictl talosconfig -c <cluster> -f <output-path>
+#    Paste the resulting file's full contents (multi-line YAML) as-is into
+#    talos_mcp_config below; task configure base64-wraps it before
+#    encrypting. (The file itself carries no key material -- it's routing
+#    metadata only. Auth happens via talos_mcp_sa_key at runtime, read
+#    directly by talosctl's own auth library from OMNI_SERVICE_ACCOUNT_KEY.)
+# 3. talos_mcp_omni_endpoint MUST be a *direct* gRPC path to this client's
+#    Omni instance, bypassing any Cloudflare Tunnel in front of it --
+#    confirmed 2026-07-30 that Cloudflare Tunnel breaks gRPC trailers,
+#    which the Talos siderov1 proxy's streaming calls depend on (symptom:
+#    "server closed the stream without sending trailers"). Use (or add) a
+#    nginx-ingress Ingress with annotation
+#    `nginx.ingress.kubernetes.io/backend-protocol: GRPC` pointed at the
+#    Omni service's control-plane port (jcom's precedent: omni-grpc-ing ->
+#    svc/omni:8080), and use ITS hostname here, not the Tunnel-fronted one.
 # talos_mcp_config: |
 #   context: ...
 #   contexts:
 #     ...
+# talos_mcp_sa_key: ""            # OMNI_SERVICE_ACCOUNT_KEY from step 1
+# talos_mcp_omni_endpoint: ""     # e.g. https://omni-grpc.<client-host>, from step 3
 
 # ── claudecode/postgres ───────────────────────────────────────────────────────
 # claudecode_postgres_password: ""
