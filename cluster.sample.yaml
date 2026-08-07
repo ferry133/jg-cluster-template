@@ -64,10 +64,12 @@ cluster_name: "xxxxxx"
 # repository_branch: "main"
 # repository_visibility: "public"
 
-# ── NAS (required if base storage/nfs-subdir or any NAS-backed extra is used) ─
-# Used by base storage class (sc-nas) and several extras.
-# nas_server: "10.x.x.x"
-# nas_path: "/volume/path"            # NFS export for storage provisioner (sc-nas)
+# ── NAS (REQUIRED) ────────────────────────────────────────────────────────────
+# Base apps storage/nfs-subdir (sc-nas) and claudecode/claude-code both need
+# it, so every cluster must have a NAS with these exports.
+nas_server: "10.x.x.x"
+nas_path: "/volume/path"              # NFS export for storage provisioner (sc-nas)
+nas_coding_path: "/volume/coding"     # NFS export for the claude-code coding workspace
 
 # ── Cilium BGP (optional) ─────────────────────────────────────────────────────
 # cilium_loadbalancer_mode: "dsr"     # or "snat" — https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/
@@ -75,57 +77,16 @@ cluster_name: "xxxxxx"
 # cilium_bgp_router_asn: "64513"
 # cilium_bgp_node_asn: "64514"
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# §2. EXTRAS — pick which optional apps to deploy
-# ═══════════════════════════════════════════════════════════════════════════════
-# Available extras and the params each one needs:
-#
-#   claudecode/claude-code       → nas_server, nas_coding_path,
-#                                  claude_instances, ttyd_credential
-#                                  (optional Auth0 login: claudecode_auth0_*,
-#                                   claudecode_oauth2_cookie_secret, claudecode_allowed_emails)
-#                                  (optional talos-mcp sidecar: talos_mcp_config,
-#                                   talos_mcp_sa_key, talos_mcp_omni_endpoint)
-#   claudecode/postgres          → claudecode_postgres_password, claude_code_database_url
-#   default/echo                 → (no extra params)
-#   default/homebridge           → (no extra params)
-#   default/linebot              → anthropic_api_key, database_url,
-#                                  line_channel_access_token, line_channel_secret, line_notify_group_id,
-#                                  trello_api_key, trello_api_token
-#   default/mariadb              → (no extra params)
-#   default/mqtt                 → mqtt_lb_ip
-#   default/postgres             → postgres_password
-#   default/synophoto            → synophoto_auth0_* (3),
-#                                  synophoto_allowed_emails, synophoto_flask_secret_key,
-#                                  synophoto_nas_username, synophoto_nas_password
-#   default/trello-notifier      → trello_api_key, trello_api_token, trello_board_id,
-#                                  line_channel_access_token, line_notify_group_id
-#   default/ttyd                 → ttyd_credential
-#   freepbx/freepbx              → freepbx_mysql_root_password, freepbx_mysql_password
-#   ingress-nginx/ingress-nginx  → ingress_nginx_lb_ip
-#   kube-system/cilium           → (requires Omni cniConfig:none MachineConfigPatch)
-#   monitoring/daily-check       → daily_check_smtp_*, daily_check_notify_email_to,
-#                                  daily_check_healthchecks_ping_url (optional),
-#                                  daily_check_endpoints (optional)
-#   network/cloudflare-tunnel-lan→ cloudflare_lan_tunnel_token
-#   omni/omni                    → omni_gpg_key (+ storage/local-path-provisioner)
-#   storage/local-path-provisioner → (no extra params; needed by omni/omni)
-# extras: []
-# Example:
-# extras:
-#   - claudecode/claude-code
-#   - default/trello-notifier
-
-# ── network/cloudflare-tunnel-lan ─────────────────────────────────────────────
-# cloudflare_lan_tunnel_token: ""     # `cloudflared tunnel token <name>` output
-
-# ── claudecode/claude-code ────────────────────────────────────────────────────
-# nas_coding_path: "/volume/coding"   # NFS export for claude-code coding workspace
+# ── claudecode/claude-code (base app — deployed on every cluster) ─────────────
+# One instance named "im" is created by default, reachable at
+# im.<cloudflare_domain>. Override the list to rename it or add more
+# (jg-jiahd sets ["cc"], i.e. cc.jiahd.cc):
 # claude_instances:
-#   - "cc"
+#   - "im"
 #   - "trello"
-# ttyd_credential: "user:password"    # ttyd basic auth (also default/ttyd)
+#
+# (REQUIRED unless Auth0 login is configured below) ttyd basic auth.
+ttyd_credential: "user:password"      # also used by the default/ttyd extra
 #
 # Optional Auth0 login (replaces ttyd basic auth with an oauth2-proxy
 # sidecar). Setting claudecode_auth0_domain switches every instance to
@@ -144,7 +105,7 @@ cluster_name: "xxxxxx"
 # supporting a non-technical client's LAN/router. Deployed with
 # replicas: 0 — scale to 1 only while actively supporting that client
 # by editing controllers.<instance>.replicas in the client's rendered
-# kubernetes/apps/extras/claudecode/claude-code/instances/helmrelease.yaml
+# kubernetes/apps/base/claudecode/claude-code/instances/helmrelease.yaml
 # and pushing (GitOps-tracked; Flux reconciles it back to 0 otherwise).
 # A live `kubectl scale deploy/<instance> --replicas=1` also works for
 # an immediate one-off, but Flux will reset it on the next reconcile.
@@ -184,6 +145,66 @@ cluster_name: "xxxxxx"
 #     ...
 # talos_mcp_sa_key: ""            # OMNI_SERVICE_ACCOUNT_KEY from step 1
 # talos_mcp_omni_endpoint: ""     # e.g. https://omni-grpc.<client-host>, from step 3
+
+
+# ── monitoring/daily-check (base app — deployed on every cluster) ─────────────
+# Daily cluster health check CronJob → emails report via Gmail SMTP and pings
+# healthchecks.io for dead-man-switch coverage.
+#
+# The CronJob ships on every cluster; these fields only decide where the report
+# goes. Leave them unset and each run exits 0 with a "not configured" log line —
+# no failing Jobs, but also no health reporting, so fill them in.
+#
+# Setup:
+# 1. Enable 2FA on your Gmail account
+# 2. Generate an App Password: https://myaccount.google.com/apppasswords
+# 3. Sign up at https://healthchecks.io (free tier 20 checks); create one check
+#    per cluster with expected interval = 1d + grace 6h; copy the ping URL
+# daily_check_smtp_host: "smtp.gmail.com"      # default if omitted
+# daily_check_smtp_port: "587"                  # default if omitted
+# daily_check_smtp_username: ""                 # Gmail address used to send
+# daily_check_smtp_password: ""                 # 16-char Gmail App Password
+# daily_check_smtp_from: ""                     # usually same as username, or "Name <addr@gmail.com>"
+# daily_check_notify_email_to: ""               # comma-separated, e.g. "you@gmail.com,backup@gmail.com"
+# daily_check_healthchecks_ping_url: ""         # https://hc-ping.com/<uuid>
+# daily_check_endpoints: ""                     # space-separated, e.g. "https://app1.<domain> https://app2.<domain>"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# §2. EXTRAS — pick which optional apps to deploy
+# ═══════════════════════════════════════════════════════════════════════════════
+# Available extras and the params each one needs:
+#
+#   claudecode/postgres          → claudecode_postgres_password, claude_code_database_url
+#   (claudecode/claude-code and monitoring/daily-check are BASE apps now — see §1)
+#   default/echo                 → (no extra params)
+#   default/homebridge           → (no extra params)
+#   default/linebot              → anthropic_api_key, database_url,
+#                                  line_channel_access_token, line_channel_secret, line_notify_group_id,
+#                                  trello_api_key, trello_api_token
+#   default/mariadb              → (no extra params)
+#   default/mqtt                 → mqtt_lb_ip
+#   default/postgres             → postgres_password
+#   default/synophoto            → synophoto_auth0_* (3),
+#                                  synophoto_allowed_emails, synophoto_flask_secret_key,
+#                                  synophoto_nas_username, synophoto_nas_password
+#   default/trello-notifier      → trello_api_key, trello_api_token, trello_board_id,
+#                                  line_channel_access_token, line_notify_group_id
+#   default/ttyd                 → ttyd_credential
+#   freepbx/freepbx              → freepbx_mysql_root_password, freepbx_mysql_password
+#   ingress-nginx/ingress-nginx  → ingress_nginx_lb_ip
+#   kube-system/cilium           → (requires Omni cniConfig:none MachineConfigPatch)
+#   network/cloudflare-tunnel-lan→ cloudflare_lan_tunnel_token
+#   omni/omni                    → omni_gpg_key (+ storage/local-path-provisioner)
+#   storage/local-path-provisioner → (no extra params; needed by omni/omni)
+# extras: []
+# Example:
+# extras:
+#   - default/trello-notifier
+#   - default/mqtt
+
+# ── network/cloudflare-tunnel-lan ─────────────────────────────────────────────
+# cloudflare_lan_tunnel_token: ""     # `cloudflared tunnel token <name>` output
 
 # ── claudecode/postgres ───────────────────────────────────────────────────────
 # claudecode_postgres_password: ""
@@ -242,21 +263,3 @@ cluster_name: "xxxxxx"
 #   -----BEGIN PGP PRIVATE KEY BLOCK-----
 #   ...
 #   -----END PGP PRIVATE KEY BLOCK-----
-
-# ── monitoring/daily-check ────────────────────────────────────────────────────
-# Daily cluster health check CronJob → emails report via Gmail SMTP and pings
-# healthchecks.io for dead-man-switch coverage.
-#
-# Setup:
-# 1. Enable 2FA on your Gmail account
-# 2. Generate an App Password: https://myaccount.google.com/apppasswords
-# 3. Sign up at https://healthchecks.io (free tier 20 checks); create one check
-#    per cluster with expected interval = 1d + grace 6h; copy the ping URL
-# daily_check_smtp_host: "smtp.gmail.com"      # default if omitted
-# daily_check_smtp_port: "587"                  # default if omitted
-# daily_check_smtp_username: ""                 # Gmail address used to send
-# daily_check_smtp_password: ""                 # 16-char Gmail App Password
-# daily_check_smtp_from: ""                     # usually same as username, or "Name <addr@gmail.com>"
-# daily_check_notify_email_to: ""               # comma-separated, e.g. "you@gmail.com,backup@gmail.com"
-# daily_check_healthchecks_ping_url: ""         # https://hc-ping.com/<uuid>
-# daily_check_endpoints: ""                     # space-separated, e.g. "https://app1.<domain> https://app2.<domain>"

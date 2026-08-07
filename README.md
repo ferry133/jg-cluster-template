@@ -79,9 +79,11 @@ cluster:
       name: none
   coreDNS:
     disabled: true
+  proxy:
+    disabled: true
 ```
 
-This tells Talos to skip the built-in CNI **and** built-in coredns. Cilium + coredns will be installed from `jg-base` in step 5.
+This tells Talos to skip the built-in CNI flannel, coredns and kube-proxy. The replacements, Cilium + coredns, will be installed from `jg-base` in step 5.
 
 ⚠️ This patch **must** be applied before the cluster first boots. If flannel or Omni's coredns is already installed, you must recreate the cluster.
 
@@ -251,7 +253,8 @@ If you don't yet have an Omni Service Account or its token has expired, see `CLA
 - Kubernetes cluster provisioned via [Sidero Omni](https://omni.janncot.com) (see **Omni Setup** below)
 - `kubectl` works with the correct kubeconfig (placed at `kubeconfig` in repo root)
 - Cloudflare account with domain and API token
-- (Optional) NAS with NFS exports for `nfs-subdir` and `claude-code` extras
+- NAS with NFS exports for `storage/nfs-subdir` (`nas_path`) and `claudecode/claude-code`
+  (`nas_coding_path`) — both are base apps, so this is **not** optional
 
 
 ###

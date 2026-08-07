@@ -10,6 +10,35 @@
 | `ferry133/jg-cluster-template`（此 repo） | CUE schema、cluster-secrets 模板、cluster.sample.yaml 文件 |
 | 各 user repo（此 repo / jgu4 等） | cluster.yaml 填值 → task configure → push |
 
+## Base App vs Extra App
+
+`kubernetes/apps/base/`（jg-base）內的 app 每個叢集都會裝，**不列在 `extras:`**。
+目前 base 含 cert-manager、flux-system、kube-system、network、storage、
+**claudecode**、**monitoring**。
+
+`claudecode/claude-code` 自 2026-08-07 起改為 base app：每個叢集預設起一個名為 `im`
+的 Claude Code web terminal（`im.<cloudflare_domain>`），讓 ferry133 永遠有一條不依賴
+Omni/SideroLink 的遠端支援入口。參考部署是 jg-jiahd 的 `cc.jiahd.cc`——它在
+`cluster.yaml` 明寫 `claude_instances: ["cc"]`，不吃預設值。
+
+- 共用資源（namespace、cluster-admin SA、OCIRepository、secrets）在 jg-base
+  `kubernetes/apps/base/claudecode/`。
+- **每個 instance 的 HelmRelease 仍由 user repo 渲染**（`claude_instances`，預設
+  `["im"]`）：instance 名稱與 `oauth2-proxy` / `talos-mcp` sidecar 的有無屬於
+  template-time 結構，無法用 Flux `${VAR}` 表達。
+- 連帶影響：`nas_server` / `nas_path` / `nas_coding_path` 三個欄位在 CUE schema
+  已改為**必填**。
+- `claudecode/postgres`（MCP memory server 用的專屬 DB）仍是 opt-in extra。
+- **既有叢集要遷移**（Flux Kustomization 改名，直接 push 會被 prune 掉 PVC）：
+  步驟見 `jg-base/README.md` 的「Migration: claudecode/claude-code extra → base」。
+  `cluster.yaml` 的 `extras:` 若還留著 `claudecode/claude-code`，renderer 會自動略過。
+
+`monitoring/daily-check` 同日一併改為 base app：每叢集自己跑每日健檢 CronJob（08:00
+Asia/Taipei，Gmail SMTP + healthchecks.io dead-man switch）。`daily_check_*` 欄位維持
+optional——沒填的叢集 CronJob 會印一行 "not configured" 然後 exit 0，不會每天留下失敗
+Job，但也等於沒有健檢，實務上每個叢集都該填。遷移注意事項（`monitoring` namespace 從
+`app/` 上移，舊 Kustomization 的 inventory 仍含它）同樣見 `jg-base/README.md`。
+
 ## ⚠️ 新增或修改 Extra App 的完整 Checklist
 
 不論從哪個 repo 起頭，都必須同步完成以下所有步驟：
