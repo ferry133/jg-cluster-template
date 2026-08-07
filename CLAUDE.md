@@ -29,8 +29,9 @@ Omni/SideroLink 的遠端支援入口。參考部署是 jg-jiahd 的 `cc.jiahd.c
 - 連帶影響：`nas_server` / `nas_path` / `nas_coding_path` 三個欄位在 CUE schema
   已改為**必填**。
 - `claudecode/postgres`（MCP memory server 用的專屬 DB）仍是 opt-in extra。
-- **既有叢集要遷移**（Flux Kustomization 改名，直接 push 會被 prune 掉 PVC）：
-  步驟見 `jg-base/README.md` 的「Migration: claudecode/claude-code extra → base」。
+- **既有叢集要遷移**（Flux Kustomization 改名，直接 push 有 prune 掉 PVC 的時序風險）：
+  步驟見 `jg-base/README.md` 的「Migration: claude-code + daily-check extras → base」。
+  jg-jiahd 與 jcom 的 pre-push annotation 已於 2026-08-08 套用。
   `cluster.yaml` 的 `extras:` 若還留著 `claudecode/claude-code`，renderer 會自動略過。
 
 `monitoring/daily-check` 同日一併改為 base app：每叢集自己跑每日健檢 CronJob（08:00
