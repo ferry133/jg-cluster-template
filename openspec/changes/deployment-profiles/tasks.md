@@ -18,14 +18,16 @@
 - [x] 2.5 appliance ⇒ `provisioning_path: "omni"`（手動 Talos 需要零 IT 客戶給不出的節點資訊）
 - [x] 2.6 新增 `backup_r2_*` 四欄位；appliance 下必填（單節點本機碟無備援，不該渲染出資料無保護的叢集）
 - [x] 2.7 `plugin.py` 衍生 `default_storage_class`（nfs→sc-nas / 否則 local-path）與 `is_single_node`（appliance 恆真；talos 依節點數；其他 Omni 叢集無從判定故為 false）
-- [ ] 2.8 **實作不完整（2026-08-11 實測發現）**。已做：`ks.yaml.j2` 依 `storage_backend` 過濾 `extras:` 清單。但 `storage/nfs-subdir` 在 jg-base 是 **base app**（`apps/base/storage/nfs-subdir/ks.yaml`），不在 extras 裡——過濾器濾了一個不在那裡的東西，而當初的驗證用了一份「把它塞進 extras」的測試設定，所以測過了卻測錯對象。實測結果：`storage_backend: local-path` 的叢集仍部署 nfs-client-provisioner 並失敗。正確作法屬 Group 6（jg-base 側依 profile gating base app），與 Spegel 同構
+- [x] 2.8 base app 依 profile gating（**非** extras 過濾——初版誤判 `storage/nfs-subdir` 為 extra，2026-08-11 實測發現）：`ks.yaml.j2` 由 `cluster.yaml` 生成 `suspend: true` patch，目前涵蓋 `nfs-client-provisioner`（非 nfs backend）與 `spegel`（單節點）。詳見 `design.md` D11
 - [x] 2.9 `cluster-secrets.sops.yaml.j2` 加入 `BACKUP_R2_*`；並為改成 optional 的位址與 NAS 欄位補上顯式 `default()`（原本無防護，makejinja 的 chainable-undefined 會靜默渲染成空字串）
 - [x] 2.10 `cluster.sample.yaml` 重組：新增 §0 Profile 置頂，標註 `(appliance: n/a)` 的欄位，NAS 改為條件必填，新增備份區塊
 - [x] 2.11 三個 profile 各跑一次完整 `task configure` 皆通過，輸出符合預期（appliance 位址空/備份有值/extras 被過濾；full 位址與 NAS 齊全；prosumer+talos 的 coredns 推導為 10.43.0.10）
 
 ## 2c. 實測揭露的缺口（2026-08-11，jgt-omni 叢集）
 
-- [ ] 2c.1 base app 需依 profile gating，不能只濾 extras：`storage/nfs-subdir` 在 `local-path` 下仍被部署並失敗（與 Spegel 同一類：base app 在某 profile 下不可用卻無條件部署）
+- [x] 2c.1 已實作並在活叢集驗證：suspend patch 生成正確、Flux 已套用（`suspend=true`）、刪除後兩分鐘內未重建。`local-path` 叢集的失敗原因已精確佐證——`NAS_SERVER`/`NAS_PATH` 為空導致 Deployment `nfs.server: Required value`
+- [x] 2c.4 新增可選欄位 `single_node`（Omni 路徑渲染期無法得知節點數，`nodes` 恆為 `[]`）；未宣告時假設有 peer——猜錯只是多跑一個能用的元件，反向猜錯會靜默停掉需要的
+- [ ] 2c.5 遷移注意：suspend **不清理**既有資源，只防止重建。既有叢集套用後仍需手動刪除已部署的元件（jcom 的註解早已寫明，但當成既定知識而非遷移步驟）
 - [ ] 2c.2 模板無法表達「不部署任何 claude-code instance」：`claude_instances: []` 會讓 helmrelease 渲染為空並被 makejinja 略過，但 `instances/kustomization.yaml` 硬寫 `resources: [./helmrelease.yaml]`，kustomize build 隨即失敗
 - [ ] 2c.3 弱測試憑證 + 預設啟用的公開入口是危險組合：`ttyd_credential` 若為測試值，配上預設 `claude_instances: ["im"]` 與出站自動連通的 tunnel，會讓 hostname 進 CT log。（本次實測確認 `replicas: 0` 使其不至於真的可登入，但該防護不應是唯一一道）
 

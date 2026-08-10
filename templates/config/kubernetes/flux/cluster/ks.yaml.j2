@@ -92,6 +92,42 @@ spec:
       target:
         group: kustomize.toolkit.fluxcd.io
         kind: Kustomization
+#| Base apps that cannot function under this cluster's shape are suspended here.
+   jg-base lists every base app unconditionally — Flux cannot decline to create a
+   Kustomization from that side — so the decision has to be expressed from the
+   per-user repo. This is generated from cluster.yaml rather than hand-written
+   into the rendered file, so it stays visible as configuration instead of
+   becoming drift.
+
+   Scalar-only strategic merge: it sets `suspend` and nothing else, so the
+   generic HelmRelease-strategy patch above survives. A second patch that set
+   `spec.patches` would replace that list wholesale. #|
+#% set _disabled = [] %#
+#% if storage_backend != 'nfs' %#
+#|   nfs-subdir provisions from a NAS this cluster does not have. #|
+#% set _ = _disabled.append(('nfs-client-provisioner', 'storage_backend is ' ~ storage_backend ~ ', so there is no NAS to provision from')) %#
+#% endif %#
+#% if is_single_node %#
+#|   Spegel is a peer-to-peer image mirror; with no peers its router never
+     bootstraps, the pod never becomes ready, and it still rewrites every
+     registry to a local port that nothing answers. #|
+#% set _ = _disabled.append(('spegel', 'single-node cluster: a peer-to-peer image mirror has no peers')) %#
+#% endif %#
+#% for name, why in _disabled %#
+    # suspended: #{ why }#
+    - patch: |-
+        apiVersion: kustomize.toolkit.fluxcd.io/v1
+        kind: Kustomization
+        metadata:
+          name: #{ name }#
+          namespace: flux-system
+        spec:
+          suspend: true
+      target:
+        group: kustomize.toolkit.fluxcd.io
+        kind: Kustomization
+        name: #{ name }#
+#% endfor %#
 ---
 # ── claude-code instances (base; per-cluster rendered from claude_instances) ──
 # The shared pieces (namespace, SA/RBAC, OCIRepository, secrets) come from
@@ -125,12 +161,9 @@ spec:
    still lists either does not render a Kustomization pointing at a jg-base
    path that no longer exists. #|
 #% set _now_base = ['claudecode/claude-code', 'monitoring/daily-check'] %#
-#| Extras that cannot function under the active storage backend are skipped
-   rather than rendered and left failing: storage/nfs-subdir needs a NAS, and a
-   local-path cluster has none. #|
-#% set _needs_nfs = ['storage/nfs-subdir'] %#
-#% set _skip = _now_base + (_needs_nfs if storage_backend != 'nfs' else []) %#
-#% for extra in extras | default([]) if extra not in _skip %#
+#| storage/nfs-subdir is NOT filtered here: it is a base app in jg-base, not an
+   extra, so it is disabled by the suspend patch on cluster-apps-base above. #|
+#% for extra in extras | default([]) if extra not in _now_base %#
 #% set _app = extra.split('/')[1] %#
 ---
 # ── extras/#{extra}# ─────────────────────────────────────────────────────────

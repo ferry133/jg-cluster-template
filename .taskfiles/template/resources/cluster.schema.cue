@@ -22,6 +22,13 @@ import (
 		storage_backend: "local-path"
 	}
 
+	// Whether this cluster has exactly one node. Derived where it can be —
+	// appliance is single by definition, and the manual path has an authoritative
+	// node list — but an Omni-provisioned cluster renders `nodes: []`, so it must
+	// declare this or be treated as having peers. Components that need peers
+	// (a peer-to-peer image mirror, for one) are suspended when this is true.
+	single_node?: bool
+
 	// How this cluster's machines are provisioned. Declared rather than inferred:
 	// nodes.yaml is materialised automatically for every repo (makejinja aborts on
 	// a missing data file), so its presence proves nothing about the path.

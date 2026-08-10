@@ -139,6 +139,39 @@ PostgreSQL 跑在 NFS 在 fsync 與鎖語意上本來就不該做，改 local-pa
 
 手動 Talos 需要每節點的 IP、網卡與磁碟選擇器，零 IT 客戶給不出來。這個組合在驗證期就拒絕，而不是等到 bootstrap 才失敗。
 
+### D11. Base app 的 gating 由 per-user repo 生成 suspend patch
+
+`jg-base` 把每個 base app 無條件列在 `apps/base/*/kustomization.yaml` 裡，**Flux 無法從那一端拒絕建立 Kustomization**。所以「這個 profile 不要這個 base app」只能從 per-user repo 表達。
+
+機制沿用 jcom 已驗證可行的作法：在 `cluster-apps-base` 的 patches 內對子 Kustomization 設 `suspend: true`。差別在**來源**——jcom 是手寫進 `ks.yaml.j2`，這裡是**由 `cluster.yaml` 推導生成**。同樣的 YAML，但一個是漂移、一個是宣告式設定，正好是 `reconcile-jcom-lineage` 的 `per-cluster-override-contract` 要求的分野。
+
+patch 刻意只設 `suspend` 這一個純量欄位。jcom 的註解記錄過原因：**第二個 strategic merge 若設了 `spec.patches` 會整個取代該列表**，把上面通用的 HelmRelease 策略 patch 靜默吃掉。
+
+目前 gating 兩項：
+
+```
+nfs-client-provisioner   storage_backend != 'nfs'
+spegel                   is_single_node
+```
+
+#### 為什麼不是「從 extras 過濾」
+
+初版實作誤以為 `storage/nfs-subdir` 是 extra，於是在 extras 迴圈裡把它濾掉——但它在 jg-base 是 **base app**（`apps/base/storage/nfs-subdir/ks.yaml`），從來不在 extras 裡。過濾器濾了一個不存在的東西，而當初的測試用一份「把它塞進 extras」的設定，於是測過了卻測錯對象。2026-08-11 在真實叢集上才發現：`local-path` 叢集照樣部署它並失敗，錯誤訊息精確指出原因——`NAS_SERVER` / `NAS_PATH` 被渲染為空字串，Deployment 因 `nfs.server: Required value` 建不起來。
+
+#### suspend 不會清理既有資源
+
+實測確認的語意：`suspend: true` 讓 Flux **停止 reconcile**，但**不會移除已部署的資源**。在測試叢集上 suspend 生效後 spegel pod 仍在跑；手動刪除 HelmRelease 之後，Flux 兩分鐘內沒有重建。
+
+所以：
+- **新叢集**：suspend 從第一次同步就在，該元件從未被部署。
+- **既有叢集**：suspend 只防止重建，已部署的要手動刪除。
+
+jcom 的註解其實早就寫了這件事（「stops reconciling/**recreating** it」），只是把它當成既定知識而非遷移步驟。
+
+### D12. Omni 路徑無法在渲染期得知節點數
+
+`is_single_node` 在 appliance（定義上單節點）與手動路徑（節點清單具權威性）可以推導，但 Omni 叢集的 `nodes` 恆為 `[]`。新增可選欄位 `single_node`，明寫者優先；未宣告時**假設有 peer**——猜錯只是多跑一個本來能用的元件，反向猜錯則會靜默停掉需要的元件。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。

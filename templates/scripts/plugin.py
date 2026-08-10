@@ -152,11 +152,15 @@ class Plugin(makejinja.plugin.Plugin):
             'default_storage_class',
             'sc-nas' if data.get('storage_backend') == 'nfs' else 'local-path',
         )
-        # Single-node clusters must not run components that require peers. Known
-        # only where the node list is authoritative: the Omni path always renders
-        # `nodes: []`, so an appliance is asserted single-node by its profile and
-        # any other Omni cluster is left undetermined.
-        if data.get('deployment_profile') == 'appliance':
+        # Single-node clusters must not run components that require peers. The
+        # node list is only authoritative on the manual path — the Omni path
+        # always renders `nodes: []` — so an Omni cluster that is not an
+        # appliance has to say so with `single_node`, or it is assumed to have
+        # peers. Assuming wrongly here only costs a component that would have
+        # worked; assuming the other way silently disables one that was needed.
+        if 'single_node' in data:
+            data.setdefault('is_single_node', bool(data['single_node']))
+        elif data.get('deployment_profile') == 'appliance':
             data.setdefault('is_single_node', True)
         elif data.get('provisioning_path') == 'talos':
             data.setdefault('is_single_node', len(data.get('nodes') or []) <= 1)
