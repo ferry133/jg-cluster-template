@@ -83,9 +83,12 @@
 > `e755a600-e306-1208-904b-6e3ed1880a00` / 10.9.1.238，硬體資訊取自 Omni MachineStatus）。
 > 8.1–8.4 待機器改以純 Talos 映像開機、於 LAN 上開出 apid 後執行。
 
-- [ ] 8.1 在實機或 VM 上以手動路徑完成一次完整 bootstrap，取得可用 kubeconfig
-- [ ] 8.2 驗證手動路徑產出的叢集與 Omni 路徑一致（皆由 jg-base 提供 Cilium + CoreDNS，無 kube-proxy）
-- [ ] 8.3 測試節點層級操作：apply-node、upgrade-node、upgrade-k8s 各執行一次
-- [ ] 8.4 測試 reset 會要求確認且能把節點還原為 maintenance mode
+- [x] 8.1 實機 bootstrap 成功（jgt-cp-1 / 10.9.1.238）：`task bootstrap:talos` 完成 gensecret → genconfig → apply → etcd bootstrap → kubeconfig，Node 於約 90 秒後註冊
+- [x] 8.2 叢集形狀與 Omni 路徑一致：`kube-proxy` 與 `flannel` 皆 0 個；Cilium 2 pods、CoreDNS 2 pods、cert-manager 3 pods 由 bootstrap 提供；Node Ready。CNI 裝好前 NotReady 原因確為 `cni plugin not initialized`
+- [x] 8.3 `apply-node` ✓、`upgrade-node` ✓（完整重開機序列後 uncordon）、`upgrade-k8s` ✓（**但需節點 Ready，見下方順序約束**）
+- [x] 8.4 `reset` 未帶 `--yes` 時拒絕執行（確認機制有效）；帶 `--yes` 後節點回到 maintenance mode（apid 回應 v1.13.8），叢集消失
+- [x] 8.7 實機順序約束：`talos:upgrade-k8s` 會等節點 Ready，而沒有 CNI 的叢集永遠不會 Ready——k8s 升級必須排在 `bootstrap:apps` 之後。首次嘗試即以 `node is not ready / timeout` 失敗，裝好 Cilium 後重試成功
+- [x] 8.8 跨版本安裝驗證：開機 ISO 為 v1.13.2，安裝進磁碟的是 config 指定的 v1.13.8（`OS-IMAGE: Talos (v1.13.8)`），maintenance mode 版本不需與目標版本一致
+- [x] 8.9 `coredns_cluster_ip` 推導鏈端到端驗證：`cluster_svc_cidr: 10.43.0.0/16` → `nthhost(·,10)` → 實際 Service `kube-dns=10.43.0.10`；apiserver 的 `--service-cluster-ip-range` 亦為 `10.43.0.0/16`
 - [x] 8.5 節點 schema 負面測試全數通過：缺 name、缺 schematic_id、重複 name/address/mac_addr、保留字 `global`、格式錯誤的 mac_addr 與 schematic_id 皆被拒絕並指名欄位
 - [x] 8.6 所有 spike 結論已回寫 `proposal.md` / `design.md` / spec；proposal 的「待驗證」清單已改為結論並全數結案

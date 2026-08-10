@@ -240,6 +240,18 @@ Generates: `cluster.yaml` (from sample), `nodes.yaml` (from sample), `age.key` (
     `task talos:upgrade-node IP=<ip>`, `task talos:upgrade-k8s`,
     `task talos:reset`.
 
+    > [!IMPORTANT]
+    > `task talos:upgrade-k8s` waits for the node to become `Ready`, and a
+    > cluster with no CNI never will. Run it **after** Stage 7
+    > (`task bootstrap:apps`), not between here and there — otherwise it fails
+    > with `node is not ready / timeout` and looks broken when it is only early.
+
+    > [!TIP]
+    > The boot ISO's Talos version does not have to match `talosVersion` in
+    > `talos/talenv.yaml`. The installer image in the machine config decides what
+    > lands on disk, so bumping the pinned version does not mean re-flashing USB
+    > media.
+
 2. Push your changes to git:
 
     ```sh

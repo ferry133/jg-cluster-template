@@ -155,6 +155,29 @@ kind: HostnameConfig     hostname: jgt-cp-1
 
 `kubernetesVersion` 維持 `v1.35.1`：Talos 1.13.2 的預設是 1.36.0，但支援回推 6 個版本（1.31–1.36），且 1.35.1 與 `.mise.toml` 的 kubectl 1.35.2 對齊。
 
+### D8. 實機驗收結論（2026-08-10，jgt-cp-1 / 10.9.1.238）
+
+手動路徑在真實硬體上完整跑通：bootstrap → 叢集形狀 → 節點生命週期 → reset。三個值得記住的發現：
+
+**`upgrade-k8s` 有順序約束。** `talosctl upgrade-k8s` 會等節點 Ready 才繼續，而沒有 CNI 的叢集永遠不會 Ready。首次嘗試以 `node is not ready / timeout` 失敗，裝好 Cilium 後重試成功。所以 **k8s 升級必須排在 `bootstrap:apps` 之後**——這不是 task 的缺陷，但值得寫進文件，否則新手會以為升級壞了。
+
+**跨版本安裝可行。** 開機 ISO 是 v1.13.2，安裝進磁碟的是 config 指定的 v1.13.8（`OS-IMAGE: Talos (v1.13.8)`）。maintenance mode 的版本不必與目標版本一致，所以升 pin 之後不需要重燒 USB。
+
+**PATH 上的舊 talhelper 會蓋掉 pin 的版本。** 首次 `task bootstrap:talos` 以 `"v1.13.8" is not a supported Talos version` 失敗——`/usr/local/bin/talhelper` 是 mise 管不到的 3.1.5。改用 `mise exec -- task ...` 才解析到 3.1.16。① 把 talhelper 的最低版本推到 3.1.16，這個殘留檔案因此從無害變成會擋人，值得清掉。
+
+驗收數據：
+
+```
+Node        jgt-cp-1  Ready  control-plane  v1.35.1  10.9.1.238  Talos (v1.13.8)
+kube-proxy  0 pods        flannel  0 pods          ← 內建元件確實停用
+cilium      2 pods        coredns  2 pods          ← 由 bootstrap 提供
+service-cluster-ip-range = 10.43.0.0/16
+kube-dns clusterIP       = 10.43.0.10              ← 推導鏈端到端驗證
+reset 未帶 --yes → 拒絕；帶 --yes → 回 maintenance mode
+```
+
+倒數第二行是 ① 修掉的 `cluster_svc_cidr` 分歧預設的最終證明：宣告值 → `nthhost(·,10)` → cluster-secrets → bootstrap helmfile → 實際運行的 Service，整條鏈在真實叢集上一致。
+
 ## Risks / Trade-offs
 
 - **上游模板針對的 Talos 版本可能與本 repo pin 的不同**（`.mise.toml:27` talos 1.12.4、`:12` talhelper 3.1.5） → 列為 spike，移植前先確認相容性。
