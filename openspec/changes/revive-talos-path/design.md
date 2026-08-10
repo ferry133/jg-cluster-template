@@ -178,6 +178,10 @@ reset 未帶 --yes → 拒絕；帶 --yes → 回 maintenance mode
 
 倒數第二行是 ① 修掉的 `cluster_svc_cidr` 分歧預設的最終證明：宣告值 → `nthhost(·,10)` → cluster-secrets → bootstrap helmfile → 實際運行的 Service，整條鏈在真實叢集上一致。
 
+**驗證範圍的限制（重要）**：上表的 Cilium 與 CoreDNS 來自 **bootstrap helmfile**，不是 jg-base 經由 Flux。`task bootstrap:apps` 實際上是**失敗的**——前四個 release（cilium、coredns、cert-manager、flux-operator）安裝成功，第五個 `flux-instance` 因為 FluxInstance 指向丟棄測試的假 `repository_name`（`ferry133/jgt-talos-accept`，不存在）而永遠 `InProgress`，helm `--wait` 逾時後整個 task 以 exit 1 結束。
+
+所以「手動路徑產出的叢集與 Omni 路徑一致」只在 **bootstrap 層**成立；**Flux / jg-base 層未驗證**，需要真實 repo 與 Cloudflare 憑證才能補完。順帶一提，這也表示 jg-base 的 Spegel 從未被部署到這個測試叢集——現行模板的 `bootstrap/helmfile.d/01-apps.yaml` 不含 spegel（0 處），它只存在於 jg-base 的 Flux 路徑上，所以 `reconcile-jcom-lineage` 記錄的單節點 Spegel 風險在這次驗收中沒有被觸發，也沒有被排除。
+
 ## Risks / Trade-offs
 
 - **上游模板針對的 Talos 版本可能與本 repo pin 的不同**（`.mise.toml:27` talos 1.12.4、`:12` talhelper 3.1.5） → 列為 spike，移植前先確認相容性。
