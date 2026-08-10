@@ -158,10 +158,19 @@ The tunnel token is embedded into cluster secrets by `task configure`.
 task init
 ```
 
-Generates: `cluster.yaml` (from sample), `age.key` (SOPS key), `github-deploy.key`, `github-push-token.txt`.
+Generates: `cluster.yaml` (from sample), `nodes.yaml` (from sample), `age.key` (SOPS key), `github-deploy.key`, `github-push-token.txt`.
 
 2. Fill out the `cluster.yaml` configuration file using the comments in it as a guide. Select & un-comment for all available extras and optional fields.
-    ---(A) Talos baby cluster need to fill out the `nodes.yaml` as well
+
+    ---(A) Talos baby cluster: also fill out `nodes.yaml` — one entry per node,
+    with `name`, `address`, `controller`, `disk`, `mac_addr` and `schematic_id`.
+    Obtain the last three with `talosctl get disks -n <ip> --insecure`,
+    `talosctl get links -n <ip> --insecure`, and the schematic ID you noted from
+    the Image Factory. `nodes.sample.yaml` documents every field, and
+    `task configure` validates them against `nodes.schema.cue` before rendering.
+
+    ---(B) Omni baby cluster: leave `nodes.yaml` as `nodes: []`. Omni supplies
+    the machine configuration; nothing under `talos/` is used.
 
 
 3. Template out the kubernetes and talos configuration files, if any issues come up be sure to read the error and adjust your config files accordingly.
@@ -202,8 +211,16 @@ Generates: `cluster.yaml` (from sample), `age.key` (SOPS key), `github-deploy.ke
 1. Install Talos:
 
     ```sh
-    just bootstrap talos
+    task bootstrap:talos
     ```
+
+    Generates the Talos secret (encrypted with SOPS on first run), renders the
+    machine configs, applies them to every node in `nodes.yaml`, bootstraps
+    etcd, and writes `kubeconfig` to the repo root.
+
+    Per-node operations afterwards: `task talos:apply-node IP=<ip>`,
+    `task talos:upgrade-node IP=<ip>`, `task talos:upgrade-k8s`,
+    `task talos:reset`.
 
 2. Push your changes to git:
 

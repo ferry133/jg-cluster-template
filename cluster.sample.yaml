@@ -12,6 +12,16 @@
 # §1. BASE (always required)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# ── Provisioning path ─────────────────────────────────────────────────────────
+# (REQUIRED) How this cluster's machines are provisioned:
+#   "omni"   Machines register themselves with Omni over SideroLink. Omni supplies
+#            the machine config; leave nodes.yaml as `nodes: []`.
+#   "talos"  Manual Talos. Fill in nodes.yaml (one entry per machine) and run
+#            `task bootstrap:talos`.
+# Declared rather than inferred: nodes.yaml is created automatically for every
+# repo, so its presence cannot tell the two apart.
+provisioning_path: "omni"
+
 # ── Network ───────────────────────────────────────────────────────────────────
 # (REQUIRED) network CIDR for the nodes (e.g. 192.168.1.0/24)
 node_cidr: "10.9.9.0/24"
@@ -22,19 +32,23 @@ cluster_dns_gateway_addr: "10.9.9.3"  # k8s-gateway (DNS) LB IP
 cluster_gateway_addr: "10.9.9.4"      # envoy-internal LB IP
 cloudflare_gateway_addr: "10.9.9.5"   # envoy-external LB IP
 
-# Optional network overrides:
-# node_default_gateway: "10.9.9.1"
-# node_dns_servers: ["1.1.1.1", "1.0.0.1"]            # default: Cloudflare DNS
+# Optional network overrides (the commented value is the actual default):
+# node_default_gateway: "10.9.9.1"                     # default: .1 of node_cidr
+# node_dns_servers: ["1.1.1.1", "1.0.0.1"]             # default: Cloudflare DNS
 # node_ntp_servers: ["162.159.200.1", "162.159.200.123"]
 # node_vlan_tag: ""                                    # https://www.talos.dev/latest/advanced/advanced-networking/#vlans
 # cluster_api_tls_sans: ["mycluster.example.com"]
 # cluster_pod_cidr: "10.42.0.0/16"
 
-# Cluster Service CIDR:
-#   Omni-provisioned clusters default to 10.96.0.0/16.
-#   Talos-from-scratch defaults to 10.43.0.0/16.
-#   Keep coredns_cluster_ip aligned (.10 of this CIDR).
-# cluster_svc_cidr: "10.96.0.0/16"
+# (REQUIRED) Cluster Service CIDR. Deliberately has no default — the correct
+# value depends on how the cluster was provisioned, and getting it wrong only
+# shows up after the cluster is already running:
+#   Omni-provisioned:  "10.96.0.0/12"   (verified on jg-jiahd)
+#   Manual Talos:      "10.43.0.0/16"   (verified on jcom)
+cluster_svc_cidr: "10.96.0.0/12"
+
+# coredns_cluster_ip is derived as .10 of cluster_svc_cidr. Set it only to
+# override that — it must stay inside cluster_svc_cidr or the Service fails.
 # coredns_cluster_ip: "10.96.0.10"
 
 # ── Cloudflare API + Tunnel ───────────────────────────────────────────────────

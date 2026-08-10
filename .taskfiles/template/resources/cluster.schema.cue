@@ -2,16 +2,36 @@ package config
 
 import (
 	"net"
+	"list"
 )
 
 #Config: {
+	// How this cluster's machines are provisioned. Declared rather than inferred:
+	// nodes.yaml is materialised automatically for every repo (makejinja aborts on
+	// a missing data file), so its presence proves nothing about the path.
+	provisioning_path: "omni" | "talos"
+
+	// Omni supplies the machine config, so a node list there is meaningless and
+	// would silently render an unused talconfig. The manual path needs at least one.
+	if provisioning_path == "omni" {
+		nodes: []
+	}
+	if provisioning_path == "talos" {
+		nodes: list.MinItems(1)
+	}
+
 	node_cidr: net.IPCIDR & !=cluster_pod_cidr & !=cluster_svc_cidr
 	node_dns_servers?: [...net.IPv4]
 	node_ntp_servers?: [...net.IPv4]
 	node_default_gateway?: net.IPv4 & !=""
 	node_vlan_tag?: string & !=""
 	cluster_pod_cidr: *"10.42.0.0/16" | net.IPCIDR & !=node_cidr & !=cluster_svc_cidr
-	cluster_svc_cidr: *"10.43.0.0/16" | net.IPCIDR & !=node_cidr & !=cluster_pod_cidr
+	// No default: the correct value differs per provisioning path (manual Talos
+	// clusters use 10.43.0.0/16, Omni-provisioned clusters 10.96.0.0/12), and
+	// coredns_cluster_ip is derived from it. Guessing wrong yields a coredns
+	// clusterIP outside the service CIDR, which fails only after the cluster is
+	// up — so require it and fail in `cue vet` instead.
+	cluster_svc_cidr: net.IPCIDR & !=node_cidr & !=cluster_pod_cidr
 	cluster_api_addr: net.IPv4
 	cluster_api_tls_sans?: [...net.FQDN]
 	cluster_gateway_addr: net.IPv4 & !=cluster_api_addr & !=cluster_dns_gateway_addr & !=cloudflare_gateway_addr

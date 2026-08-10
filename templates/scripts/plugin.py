@@ -117,6 +117,14 @@ def github_push_token(file_path: str = 'github-push-token.txt') -> str:
         raise RuntimeError(f"Unexpected error while reading {file_path}: {e}")
 
 
+# Return a list of files in the talos patches directory
+def talos_patches(value: str) -> list[str]:
+    path = Path(f'templates/config/talos/patches/{value}')
+    if not path.is_dir():
+        return []
+    return [str(f) for f in sorted(path.glob('*.yaml.j2')) if f.is_file()]
+
+
 class Plugin(makejinja.plugin.Plugin):
     def __init__(self, data: dict[str, Any]):
         self._data = data
@@ -125,9 +133,18 @@ class Plugin(makejinja.plugin.Plugin):
     def data(self) -> makejinja.plugin.Data:
         data = self._data
 
-        # Set default values for optional fields
+        # Set default values for optional fields.
+        # These must match the defaults documented in cluster.sample.yaml —
+        # a documented default the code does not apply is a defect.
+        data.setdefault('node_default_gateway', nthhost(data.get('node_cidr'), 1))
+        data.setdefault('node_dns_servers', ['1.1.1.1', '1.0.0.1'])
+        data.setdefault('node_ntp_servers', ['162.159.200.1', '162.159.200.123'])
         data.setdefault('cluster_pod_cidr', '10.42.0.0/16')
-        data.setdefault('cluster_svc_cidr', '10.96.0.0/16')
+        # cluster_svc_cidr is required (no default) — see cluster.schema.cue.
+        # coredns must sit at .10 of whatever service CIDR the cluster actually
+        # uses, so derive it rather than hardcoding a value that is only correct
+        # for one provisioning path. An explicit coredns_cluster_ip still wins.
+        data.setdefault('coredns_cluster_ip', nthhost(data.get('cluster_svc_cidr'), 10))
         data.setdefault('repository_branch', 'main')
         data.setdefault('repository_visibility', 'public')
 
@@ -149,4 +166,5 @@ class Plugin(makejinja.plugin.Plugin):
             cloudflare_tunnel_secret,
             github_deploy_key,
             github_push_token,
+            talos_patches,
         ]

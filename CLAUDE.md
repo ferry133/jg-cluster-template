@@ -60,6 +60,31 @@ Job，但也等於沒有健檢，實務上每個叢集都該填。遷移注意�
 - [ ] `task configure --yes`：重新生成 `kubernetes/flux/cluster/ks.yaml` 和 `cluster-secrets.sops.yaml`
 - [ ] commit & push（三個 repo 依序：jg-base → jg-cluster-template → user repo）
 
+## 兩條供裝路徑
+
+| 路徑 | 適用 | 節點資訊來源 |
+|------|------|--------------|
+| **(B) Omni** | 預設。機器經 SideroLink 自行回連，遠端可見 | Omni |
+| **(A) 手動 Talos** | 進階使用者、無 Omni 時的逃生梯 | `nodes.yaml`（每節點需 name / address / controller / disk / mac_addr / schematic_id） |
+
+手動路徑的檔案（2026-08-09 自上游 `cluster-template` 移植回來）：
+
+- `templates/config/talos/` — talconfig、talenv、global 與 controller patches
+- `nodes.sample.yaml`、`.taskfiles/template/resources/nodes.schema.cue`
+- `task bootstrap:talos` 一次完成 secret → genconfig → apply → bootstrap → kubeconfig
+- 日常操作：`task talos:apply-node IP=<ip>` / `upgrade-node IP=<ip>` / `upgrade-k8s` / `reset`
+
+兩條路徑產出的叢集形狀相同：talconfig 設 `cniConfig: none`，controller patch 關掉
+coreDNS 與 kube-proxy——與 Omni 使用者要手貼的 MachineConfigPatch 一致，CNI / DNS
+一律由 jg-base 安裝。
+
+`nodes.yaml` 對 Omni 叢集是 `nodes: []`；`task configure` 會自動產生它（makejinja
+宣告的 data 檔缺一個就整個中止），所以既有 Omni repo 不需要手動補檔。
+
+> ⚠️ 上游的 `task template:tidy`（「從 template 畢業」）**已移除**。per-user repo 每次
+> 改 `cluster.yaml` 都要重跑 `task configure`，跑 tidy 會搬走 `templates/` 與
+> `makejinja.toml`，永久廢掉這個流程。不要從上游重新引入。
+
 ## 命名慣例
 
 - Secret 環境變數：以 app 名稱為 prefix，全大寫，e.g. `SYNOPHOTO_AUTH0_DOMAIN`

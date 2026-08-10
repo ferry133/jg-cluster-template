@@ -16,3 +16,4 @@ trello-notifier.yaml
 # Per-cluster config (non-sensitive but not part of template)
 cluster.yaml
 nodes.yaml
+__pycache__/
