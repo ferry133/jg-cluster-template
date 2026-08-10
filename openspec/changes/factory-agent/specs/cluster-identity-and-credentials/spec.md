@@ -28,6 +28,38 @@ Service identities SHALL be created only through an interface whose provider sup
 - **WHEN** provisioning requires a new service identity
 - **THEN** no automated consumer account signup flow is attempted
 
+### Requirement: The customer supplies no infrastructure credentials at onboarding
+
+Under the zero-input profile the customer SHALL NOT be asked for a DNS or CDN credential of any kind. Producing a correctly scoped token requires an account, a login, and an understanding of permission scopes — capability the profile exists precisely to avoid needing. Those values are supplied by the operator.
+
+#### Scenario: No credential is requested from the customer
+- **WHEN** a zero-input cluster is provisioned
+- **THEN** the customer is asked for no API token, no account credential, and no permission configuration
+
+#### Scenario: Operator-supplied values are still declared
+- **WHEN** such a cluster's configuration is rendered
+- **THEN** the DNS and CDN values are present, supplied by the operator, and validation passes without customer input
+
+#### Scenario: Account credentials are never accepted in place of a token
+- **WHEN** a customer offers an account login for an infrastructure provider
+- **THEN** it is declined in favour of a scoped credential, because an account grants everything the account can reach and cannot be narrowed after the fact
+
+### Requirement: The customer's domain is theirs from the first day
+
+The cluster's public hostnames SHALL be under a domain the customer owns, with DNS delegated to the operator's account for management. Hosting the cluster under an operator-owned domain would make handover a rename of every hostname, and the cost of a rename falls on whoever configured a client against it — bookmarks, device configurations, pairing records, OAuth callback registrations, certificate names.
+
+#### Scenario: Hostnames do not change at handover
+- **WHEN** a cluster is handed over to its customer
+- **THEN** every hostname it serves is unchanged, and no client needs reconfiguring
+
+#### Scenario: Delegation, not ownership, transfers
+- **WHEN** handover completes
+- **THEN** what changes is which account manages the domain's DNS, not which domain is used
+
+#### Scenario: Acquiring the domain is not a configuration task
+- **WHEN** a customer needs a domain and cannot configure one
+- **THEN** the operator may register it on the customer's behalf, so that the customer's only involvement is a purchase decision
+
 ### Requirement: The credential set per cluster is enumerated
 
 Handover and incident response both require knowing exactly what secrets exist for a cluster. The full set SHALL be enumerated and recorded: the SOPS age key, repository access, infrastructure management access, DNS and tunnel credentials, model API credentials, and cluster administrative access.

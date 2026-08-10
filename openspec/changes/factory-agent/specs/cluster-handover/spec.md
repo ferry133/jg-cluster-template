@@ -40,6 +40,22 @@ Handover SHALL produce a written bundle enumerating what the customer now holds,
 - **WHEN** the bundle is produced
 - **THEN** it states what will break if each item is lost, and what routine actions the cluster needs
 
+### Requirement: The bundle states what capability is needed to use it
+
+Onboarding asks the customer for three physical actions; handover asks them to operate DNS, a Git repository, encrypted secrets and cluster administration. That asymmetry is legitimate — handover happens when the service relationship ends — but the customer MUST NOT discover it on the day. The bundle SHALL state, for each item, what someone must be able to do to use it.
+
+#### Scenario: Required capability is stated per item
+- **WHEN** the handover bundle is produced
+- **THEN** each item records what a person must be able to do to operate it, not only what it is
+
+#### Scenario: The customer can decide whether to outsource
+- **WHEN** the customer reads the bundle
+- **THEN** they can tell whether to operate the cluster themselves or engage someone, without first attempting it
+
+#### Scenario: Handover is not offered as equivalent to onboarding
+- **WHEN** handover is described to a customer
+- **THEN** it is not presented as requiring no more of them than setup did
+
 ### Requirement: Handover is proven by drill, not by assertion
 
 The acceptance criterion for this capability SHALL be a drill: a person holding none of the operator's access takes the bundle and operates the cluster successfully. Until that drill passes, handover is not considered to work.

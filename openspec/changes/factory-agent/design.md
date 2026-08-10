@@ -109,6 +109,37 @@ cloudflared 因 ISP 封鎖 QUIC 而 CrashLoop 的 workaround 已記錄於 `CLAUD
 
 `.claude/skills/provision-customer-cluster/SKILL.md` 寫成「前置條件 / 指令 / 驗證斷言 / 失敗分支」的形式。人可以照著做，agent 可以照著跑。這樣「SOP」與「agent 的程式」不會分岔——分岔的文件必然有一份是錯的。
 
+### D11. Cloudflare 由 operator 提供；網域屬於客戶，DNS 委派給 operator
+
+先釐清一個容易搞混的地方：**appliance 的客戶不會給你 Cloudflare 的任何東西**。
+
+先前討論中曾提到「請客戶給一個 scoped token 而不是帳號密碼」——那對 prosumer / full 成立，對 appliance 不成立：建一個 scoped token 需要有 Cloudflare 帳號、登入、找到 API Tokens、看懂 `Zone - DNS - Edit` 與 `Account - Cloudflare Tunnel - Read` 該怎麼勾、再安全地把 token 交出來。第三步以後全是 IT 工作，零 IT 客戶做不到。
+
+`deployment-profiles` 的 spec 其實已經把 `cloudflare_domain` 與 `cloudflare_token` 列為 **operator-supplied**——「客戶必填 0 項」不等於「欄位 0 個」，是那些欄位由 operator 填。zone 住在 operator 的 Cloudflare 帳號裡，token 也是 operator 的，客戶從頭到尾不碰 Cloudflare。
+
+**網域歸屬選定：客戶自己的網域，NS 委派到 operator 的 Cloudflare 帳號。**
+
+| | 客戶要做什麼 | 交接時 | |
+|---|---|---|---|
+| A operator 的子網域 `im.<cluster>.jgcloud.xx` | 無 | 客戶得自備網域，**所有 URL 改變** | 捨棄 |
+| **B 客戶自己的網域** `im.customer.com` | 買一個網域（消費行為，非設定行為） | NS 指回去，**URL 不變** | **選定** |
+| C Cloudflare Tenant API 子帳號 | 無 | 子帳號整個轉移 | 需 partner 合約，列為後續選項 |
+
+選 B 的理由與 `deployment-profiles` 拒絕 `.lan.` 命名前綴完全相同：**hostname 一旦改變，成本落在使用者身上**——書籤、IoT 與 MQTT client 的位址、HomeKit 配對、Auth0 的 Allowed Callback URLs、憑證 SAN 全都要重配。A 讓交接必然引發一次全面遷移；B 讓 hostname 從第一天就是最終形態，交接只是把 NS 指回去，客戶那端什麼都不用改。
+
+「買一個網域」對零 IT 客戶是可行的——那是消費行為，不是設定行為。要更省事，**operator 可代購並以客戶名義註冊**，那樣連這一步也消失，且客戶在交接時拿到的是一個真正屬於他的資產。
+
+### D12. onboarding 與 handover 的能力不對稱，是設計的一部分
+
+```
+onboarding   零 IT      客戶只做三個物理動作
+handover     需要 IT    客戶要接手 Cloudflare zone、GitHub repo、Omni 控制權、age.key
+```
+
+這個落差是合理的——交接發生在服務關係結束時，客戶那時本來就該找人接手——但它**不該被客戶在交接當天才發現**。目前 `cluster-handover` 的 spec 只要求「交出去」與「演練通過」，沒有要求說明客戶需要什麼能力才用得起這些東西。
+
+因此交接封裝除了列出持有什麼，還必須說明**要用它需要什麼能力**：需要有人能操作 Cloudflare DNS、能用 git 與 SOPS、能存取 Omni 或改用 Talos client cert。寫清楚讓客戶能判斷該自己接手還是外包，而不是拿到一包鑰匙卻打不開門。
+
 ## Risks / Trade-offs
 
 - **factory 是權限集中點**（Omni Admin + GitHub PAT + Cloudflare 母帳號） → 獨立 namespace/SA、憑證不進 image、憑證清單與 blast radius 明文記錄、可輪替。

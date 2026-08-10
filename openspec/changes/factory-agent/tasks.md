@@ -47,6 +47,10 @@
 
 ## 5. 身分與憑證
 
+- [ ] 5.0 網域流程（D11）：客戶自有網域 → NS 委派到 operator 的 Cloudflare 帳號；zone 與 token 皆在 operator 側，客戶零輸入。含 operator 代購網域的選項
+- [ ] 5.0a 驗證：零輸入 profile 的 provisioning 全程不向客戶索取任何 API token 或帳號憑證
+- [ ] 5.0b 驗證：交接前後 hostname 完全不變，改變的只有「哪個帳號管這個網域的 DNS」
+
 - [ ] 5.1 依 1.2 結論實作每叢集服務身分建立
 - [ ] 5.2 明確禁止任何自動化消費者帳號註冊流程（程式與 runbook 皆須寫明）
 - [ ] 5.3 實作登入身分設定：常駐 agent 白名單放客戶自己的信箱，服務身分不得為可登入身分
@@ -55,6 +59,8 @@
 - [ ] 5.6 為每項憑證撰寫就地輪替程序；`age.key` 輪替須以 `sops updatekeys` 就地重加密
 
 ## 6. 交接
+
+- [ ] 6.0 交接封裝除列出「持有什麼」外，須逐項記載「要用它需要什麼能力」（D12 的不對稱）——操作 Cloudflare DNS、git 與 SOPS、Omni 或 Talos client cert
 
 - [ ] 6.1 實作 `task handover`：SOPS 重新加密至客戶公鑰、repo transfer、Cloudflare 帳號信箱、Omni 控制權（依 1.4）、模型 API 憑證、k8s 存取
 - [ ] 6.2 實作部分失敗的回報：列出成功與失敗項，不得回報成功
