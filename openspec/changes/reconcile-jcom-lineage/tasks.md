@@ -1,18 +1,26 @@
 ## 1. Spikes（先做，結果會改變範圍）
 
-- [ ] 1.1 逐項分類 jcom `ks.yaml.j2` 的 54 行差異：真 per-cluster 例外 vs 舊版殘留 vs 該收進模板
-- [ ] 1.2 確認 `cilium_bgp_enabled` / `cilium_loadbalancer_mode` 是否仍有消費端（`spegel_enabled` 已確認仍在用）
+- [x] 1.1 jcom `ks.yaml.j2` 的 54 行**全數為新增**，兩個區塊、皆附事故說明，無舊版殘留：Cilium native-routing override（jcom 託管 Omni，MTU 1370 過小導致 SideroLink WireGuard `sendmmsg: message too long`）與 Spegel suspend。兩者根因相同——單節點
+- [x] 1.2 `cilium_bgp_enabled` / `cilium_loadbalancer_mode` 在 jcom 與 jg-jiahd **皆為 0 消費端**（死碼），僅 genie1 仍在用；`spegel_enabled` 在 jcom 有 2 個消費端，仍活著
 - [ ] 1.3 評估 Spegel 在多節點叢集的實際效益——若不明顯，從 jg-base 移除比 gating 簡單
 - [ ] 1.4 決定 per-cluster 例外的機制形式（post-build substitution / overlay 目錄 / cluster.yaml 條件渲染），判準含「能否偵測未宣告漂移」
 - [ ] 1.5 Omni 路徑下渲染期如何得知節點數（`nodes` 恆為空）——與 `deployment-profiles` 的 profile 軸協調
 
 ## 2. 分岔清冊
 
-- [ ] 2.1 建立清冊格式：檔案 / 差異 / 分類 / 理由 / 哪一邊較好
-- [ ] 2.2 盤點 jcom 全部 7 個漂移檔，逐項分類（不允許「暫時保留」）
-- [ ] 2.3 盤點 jg-jiahd 的 `ks.yaml.j2` 19 行
-- [ ] 2.4 標記所有「不知道為什麼在這裡」的項目並查清
-- [ ] 2.5 記錄已由 `revive-talos-path` 收回模板的項目（talos 工具鏈、`TEMPLATE_NODE_CONFIG_FILE`、`encrypt-secrets` 含 `TALOS_DIR`、kubeconform 接線），避免重複處理
+- [x] 2.1 清冊格式定為：項目 / 位置 / 分類（收進模板・從叢集移除・宣告為例外）/ 現況。產出於 `docs/template-lineage.md`
+- [x] 2.2 jcom 全部 7 個漂移檔逐項分類完成，共 17 項；其中 9 項已由 ① 收回模板
+- [x] 2.3 jg-jiahd 僅 1 項（QUIC → http2），屬真正的 per-cluster 例外，待遷移到新機制
+- [x] 2.4 無「不知道為什麼在這裡」的項目——每一項都有可追溯的理由，兩個 `ks.yaml.j2` 區塊皆附事故註解
+- [x] 2.5 已收回模板的 9 項列於清冊並標記完成，避免重複處理
+
+## 2b. 盤點時新發現
+
+- [ ] 2b.1 模板 `cluster.schema.cue` 宣告 `cilium_bgp_router_addr` / `cilium_bgp_router_asn` / `cilium_bgp_node_asn` / `cilium_loadbalancer_mode` 四個欄位，**模板、cluster-secrets、jg-base 皆零消費端**（僅 genie1 在用）——接上或移除
+- [ ] 2b.2 採納 jcom 的 `validate-talos-config` 任務
+- [ ] 2b.3 採納 jcom 的 `cloudflare-tunnel.json` 前置檢查（實測踩過：缺檔時 configure 會渲染到一半才炸，前置檢查可提早擋下）
+- [ ] 2b.4 單節點的 Cilium 設定（native routing + MTU 1500）與 Spegel 同屬「單節點安全性」，一併納入 3.x
+- [ ] 2b.5 genie1 是第三支更舊的血脈（5 個 namespace 的 app 模板），本 change 不涵蓋，但需記錄以免「模板的後裔」被誤認為只有兩個 repo
 
 ## 3. 單節點安全性（jcom 遷移的前提）
 
