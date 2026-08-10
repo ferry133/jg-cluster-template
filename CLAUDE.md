@@ -60,6 +60,21 @@ Job，但也等於沒有健檢，實務上每個叢集都該填。遷移注意�
 - [ ] `task configure --yes`：重新生成 `kubernetes/flux/cluster/ks.yaml` 和 `cluster-secrets.sops.yaml`
 - [ ] commit & push（三個 repo 依序：jg-base → jg-cluster-template → user repo）
 
+## 文件結構（依讀者拆分）
+
+| 檔案 | 讀者 | 內容 |
+|------|------|------|
+| `README.md` | 任何人 | 入口，只做導向，**不含任何部署步驟** |
+| `README-zero-IT.md` | 收到硬體的客戶 | 繁中，三個物理動作，無指令無術語 |
+| `docs/deploy/manual.md` | 進階使用者 | 完整手動部署，兩條供裝路徑 |
+| `CLAUDE.md`（本檔） | 維護者 | 架構、慣例、程式碼看不出來的規則 |
+
+一份程序只寫在一個地方。operator runbook 由 `factory-agent` change 承擔，
+其他文件**只連結不複述**——分岔的文件必然有一份是錯的，而錯的那份會被照著執行。
+
+`README-zero-IT.md` 需隨箱出貨紙本：客戶讀它的時候網路還沒通，以 URL 為唯一入口
+的設計在那一刻就是失效的。紙本與此檔須同源產生，不可手抄。
+
 ## 兩條供裝路徑
 
 | 路徑 | 適用 | 節點資訊來源 |

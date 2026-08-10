@@ -8,28 +8,28 @@
 
 ## 2. 修正 README 既有錯誤（可獨立驗證，先做）
 
-- [ ] 2.1 `README.md:102` 的 `--template onedr0p/cluster-template` 改為本 repo
+- [x] 2.1 `--template onedr0p/cluster-template` 改為 `ferry133/jg-cluster-template`（並改 `--private`：per-user repo 內含加密 secret）
 - [x] 2.2 `README.md:205` 的 `just bootstrap talos` 已改為 `task bootstrap:talos`（由 `revive-talos-path` task 7.1 完成——該指令在 ① 移植 `.taskfiles/bootstrap` 的 `talos` 任務後才真正存在）
-- [ ] 2.3 `README.md:20` 的「6 stages」改為實際數量
-- [ ] 2.4 `README.md:243` 的 `cp kubeconfig-sa kubeconfig` 移除，改為與 `CLAUDE.md` 一致的做法
-- [ ] 2.5 全篇掃過，確認每個指令、路徑、repo 名稱都對應到 repo 實際存在的東西
+- [x] 2.3 「6 stages」改為實際的 7
+- [x] 2.4 移除 `cp kubeconfig-sa kubeconfig`，改為明確帶 `--kubeconfig`，並說明為何要保留 OIDC 版當救援路徑
+- [x] 2.5 全篇掃過；`just bootstrap talos` 已於 ① 修正，其餘指令均對應到實際存在的 task
 
 ## 3. 文件拆分
 
-- [ ] 3.1 建立文件結構：`README.md`（入口）、`README-zero-IT.md`、`docs/deploy/manual.md`
-- [ ] 3.2 把現行 README 的 Stage 內容搬到 `docs/deploy/manual.md`，內容先搬移不改寫，確認無遺漏
-- [ ] 3.3 `README.md` 縮減為「這是什麼 + 讀者導向」，不含任何部署步驟
-- [ ] 3.4 確認 `docs/deploy/manual.md` 完整涵蓋 (A) Talos 手動路徑（與 ① 對齊）
-- [ ] 3.5 確認 operator runbook 只被連結、不被複述
-- [ ] 3.6 更新 `CLAUDE.md` 的文件結構說明
+- [x] 3.1 建立 `README.md`（入口）、`README-zero-IT.md`、`docs/deploy/manual.md`
+- [x] 3.2 原 README 第 18–354 行原樣搬入 `docs/deploy/manual.md`，逐行 diff 確認無遺漏後才改寫
+- [x] 3.3 `README.md` 縮為 78 行（原 354），只做讀者導向與架構說明，**不含任何部署步驟**
+- [x] 3.4 `docs/deploy/manual.md` 完整涵蓋 (A) 手動 Talos 與 (B) Omni 兩條路徑，並說明 appliance 為何與手動路徑互斥
+- [x] 3.5 operator runbook 僅以連結指向 `factory-agent` change，未複述其步驟
+- [x] 3.6 `CLAUDE.md` 新增「文件結構（依讀者拆分）」章節，含紙本同源產生的要求
 
 ## 4. 零 IT 客戶文件
 
-- [ ] 4.1 撰寫 `README-zero-IT.md`（繁體中文），內容僅含開箱、插網路線、插電開機
-- [ ] 4.2 加入「接下來會發生什麼、大約多久」的說明
-- [ ] 4.3 加入正常但看起來像故障的中間狀態說明
-- [ ] 4.4 加入失敗時的下一步動作（非技術語言）與找人的方式
-- [ ] 4.5 確認全篇無指令、無設定檔、無帳號建立、無技術術語
+- [x] 4.1 撰寫 `README-zero-IT.md`（繁中）：插網路線、接電源、開機三個動作
+- [x] 4.2 說明接下來會發生什麼、約 30 分鐘最多一小時、期間不需要做任何事
+- [x] 4.3 列出正常但看起來像故障的狀態（風扇聲、燈號閃爍變色、機身溫熱、通知較慢）
+- [x] 4.4 失敗時給的是「拍張照傳給我們」這種可執行動作，非錯誤描述；並明寫「不用自己排除問題」與聯絡方式
+- [x] 4.5 機器檢查確認：0 個程式碼區塊，無 kubectl/cluster/yaml/task/git 等術語
 - [ ] 4.6 建立紙本產出流程，與 `README-zero-IT.md` 同源，並確保改版不會誤印舊版
 - [ ] 4.7 設計箱內 QR code（指向溝通管道），並確認它只是輔助入口
 
