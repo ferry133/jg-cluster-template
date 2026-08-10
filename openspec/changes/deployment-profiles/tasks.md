@@ -11,23 +11,23 @@
 
 ## 2. CUE schema 與範本（jg-cluster-template）
 
-- [ ] 2.1 在 `cluster.schema.cue` 加入 `deployment_profile`（三值、無預設）與 `storage_backend`（兩值）
-- [ ] 2.2 把 `nas_server` / `nas_path` 改為 `storage_backend: nfs` 時才必填；`nas_coding_path` 維持 optional
-- [ ] 2.3 把 `cluster_api_addr` / `cloudflare_gateway_addr` 在 appliance 下改為固定 `10.9.9.2` / `10.9.9.5`，並保留 `full` 的顯式覆寫
-- [ ] 2.4 把 `cluster_gateway_addr` / `cluster_dns_gateway_addr` / `mqtt_lb_ip` 在 appliance 下改為不可填（由探測產出）
-- [ ] 2.5 加入 `appliance` ⇒ 禁止手動 Talos node 設定的驗證規則
-- [ ] 2.6 加入 `appliance` ⇒ 備份目的地設定必填的驗證規則
-- [ ] 2.7 在 `templates/scripts/plugin.py` 補上 profile 相關預設值與衍生欄位
-- [ ] 2.8 依 profile 條件化 `templates/config/kubernetes/flux/cluster/ks.yaml.j2` 的 Kustomization 渲染（appliance 不渲染 `storage/nfs-subdir`）
-- [ ] 2.9 在 `cluster-secrets.sops.yaml.j2` 加入備份目的地相關變數
-- [ ] 2.10 依 profile 重組 `cluster.sample.yaml`，appliance 區塊置頂並標明「客戶必填 0 項」
-- [ ] 2.11 用三種 profile 各跑一次 `task configure --yes`，確認渲染結果符合預期
+- [x] 2.1 `cluster.schema.cue` 加入 `deployment_profile`（三值、無預設）與 `storage_backend`（兩值）
+- [x] 2.2 `nas_server` / `nas_path` 改為 `storage_backend: nfs` 時才必填；`nas_coding_path` 維持 optional
+- [x] 2.3 appliance 下 `cluster_api_addr` / `cloudflare_gateway_addr` **不存在**（非「固定 10.9.9.x」——design D3 已改：cloudflared 走 ClusterIP DNS、API 走 Omni proxy，兩者都不需要位址）；`prosumer`/`full` 維持必填與互斥檢查
+- [x] 2.4 appliance 下誤填 `cluster_gateway_addr` / `cluster_dns_gateway_addr` / `mqtt_lb_ip` 一律拒絕（看起來像設定了什麼、實際無人讀取）
+- [x] 2.5 appliance ⇒ `provisioning_path: "omni"`（手動 Talos 需要零 IT 客戶給不出的節點資訊）
+- [x] 2.6 新增 `backup_r2_*` 四欄位；appliance 下必填（單節點本機碟無備援，不該渲染出資料無保護的叢集）
+- [x] 2.7 `plugin.py` 衍生 `default_storage_class`（nfs→sc-nas / 否則 local-path）與 `is_single_node`（appliance 恆真；talos 依節點數；其他 Omni 叢集無從判定故為 false）
+- [x] 2.8 `ks.yaml.j2` 依 `storage_backend` 過濾 extras：非 nfs 時跳過 `storage/nfs-subdir`（實測 extras 2→1）
+- [x] 2.9 `cluster-secrets.sops.yaml.j2` 加入 `BACKUP_R2_*`；並為改成 optional 的位址與 NAS 欄位補上顯式 `default()`（原本無防護，makejinja 的 chainable-undefined 會靜默渲染成空字串）
+- [x] 2.10 `cluster.sample.yaml` 重組：新增 §0 Profile 置頂，標註 `(appliance: n/a)` 的欄位，NAS 改為條件必填，新增備份區塊
+- [x] 2.11 三個 profile 各跑一次完整 `task configure` 皆通過，輸出符合預期（appliance 位址空/備份有值/extras 被過濾；full 位址與 NAS 齊全；prosumer+talos 的 coredns 推導為 10.43.0.10）
 
 ## 3. 既有叢集遷移（不改變行為）
 
-- [ ] 3.1 為 jcom 的 `cluster.yaml` 補 `deployment_profile: full` + `storage_backend: nfs`，`task configure` 綠燈且 diff 為空
-- [ ] 3.2 為 jg-jiahd 及其餘既有 user repo 做同樣處理
-- [ ] 3.3 確認未遷移的 repo 會在 `cue vet` 失敗且 `kubernetes/` 未被寫入（fail fast 行為驗證）
+- [x] 3.1 jg-jiahd 副本補 `deployment_profile: "full"` + `storage_backend: "nfs"`：`ks.yaml` 完全相同，`cluster-secrets` 僅**新增** 4 個空的 `BACKUP_R2_*`，既有值未變
+- [ ] 3.2 jcom 遷移——阻塞於 `reconcile-jcom-lineage`：jcom 是另一支血脈，無法直接套用模板（見該 change）
+- [x] 3.3 未遷移時 `cue vet` 擋下且 `kubernetes/` 完全未被寫入（實測 0 個變更）
 
 ## 4. LAN 位址配置（jg-base）
 

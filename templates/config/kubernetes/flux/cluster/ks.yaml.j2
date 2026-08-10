@@ -125,7 +125,12 @@ spec:
    still lists either does not render a Kustomization pointing at a jg-base
    path that no longer exists. #|
 #% set _now_base = ['claudecode/claude-code', 'monitoring/daily-check'] %#
-#% for extra in extras | default([]) if extra not in _now_base %#
+#| Extras that cannot function under the active storage backend are skipped
+   rather than rendered and left failing: storage/nfs-subdir needs a NAS, and a
+   local-path cluster has none. #|
+#% set _needs_nfs = ['storage/nfs-subdir'] %#
+#% set _skip = _now_base + (_needs_nfs if storage_backend != 'nfs' else []) %#
+#% for extra in extras | default([]) if extra not in _skip %#
 #% set _app = extra.split('/')[1] %#
 ---
 # ── extras/#{extra}# ─────────────────────────────────────────────────────────

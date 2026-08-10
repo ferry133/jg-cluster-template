@@ -4,12 +4,42 @@
 # cluster.yaml is gitignored and never committed.
 #
 # Organization:
-#   §1 Base — always required (network, cloudflare API, repo)
+#   §0 Profile — decides which of the fields below you actually need
+#   §1 Base — required for this profile (network, cloudflare API, repo)
 #   §2 Extras — only required when listed in `extras:`. Each subsection
 #               states which extras it's needed for.
+#
+# Fields marked (appliance: n/a) are rejected by validation under that profile —
+# they configure things an appliance either discovers at runtime or does not run.
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# §1. BASE (always required)
+# §0. PROFILE (always required)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Deployment profile ────────────────────────────────────────────────────────
+# (REQUIRED) Who this cluster is for. No default — an unmigrated cluster.yaml
+# must fail validation rather than be rendered under an assumed profile.
+#
+#   "appliance"  Operator-delivered, single node, zero customer-supplied fields.
+#                Implies provisioning_path "omni" and storage_backend
+#                "local-path"; LAN addresses are discovered at runtime; off-site
+#                backup is mandatory.
+#   "prosumer"   Customer has some infrastructure (often a NAS) but the operator
+#                still configures the cluster.
+#   "full"       Expert operates it directly. Today's behaviour: everything is
+#                declared by hand.
+deployment_profile: "full"
+
+# ── Storage backend ───────────────────────────────────────────────────────────
+# (REQUIRED) What bulk media and file shares use. Databases are block-backed
+# regardless — this axis does not move them.
+#   "local-path"  node-local disk; no NAS needed
+#   "nfs"         NAS-backed; requires nas_server / nas_path below
+# Forced to "local-path" under the appliance profile.
+storage_backend: "nfs"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# §1. BASE (required for this profile)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Provisioning path ─────────────────────────────────────────────────────────
@@ -26,7 +56,9 @@ provisioning_path: "omni"
 # (REQUIRED) network CIDR for the nodes (e.g. 192.168.1.0/24)
 node_cidr: "10.9.9.0/24"
 
-# (REQUIRED) Choose unused IPs in node_cidr for these LB / VIP addresses:
+# (REQUIRED for prosumer/full · appliance: n/a) Unused IPs in node_cidr for the
+# LB / VIP addresses. An appliance discovers its single LAN address at runtime
+# and needs none of these, so declaring them there is rejected.
 cluster_api_addr: "10.9.9.2"          # Kube API VIP / first controller IP
 cluster_dns_gateway_addr: "10.9.9.3"  # k8s-gateway (DNS) LB IP
 cluster_gateway_addr: "10.9.9.4"      # envoy-internal LB IP
@@ -78,12 +110,27 @@ cluster_name: "xxxxxx"
 # repository_branch: "main"
 # repository_visibility: "public"
 
-# ── NAS (REQUIRED) ────────────────────────────────────────────────────────────
-# Base apps storage/nfs-subdir (sc-nas) and claudecode/claude-code both need
-# it, so every cluster must have a NAS with these exports.
+# ── NAS ───────────────────────────────────────────────────────────────────────
+# (REQUIRED when storage_backend is "nfs" · not used otherwise)
+# With storage_backend "local-path" there is no NAS and these are omitted; the
+# storage/nfs-subdir extra is skipped automatically rather than left failing.
 nas_server: "10.x.x.x"
 nas_path: "/volume/path"              # NFS export for storage provisioner (sc-nas)
-nas_coding_path: "/volume/coding"     # NFS export for the claude-code coding workspace
+# nas_coding_path stays optional even on NFS: without it the claude-code
+# workspace uses the profile's default storage class instead.
+# nas_coding_path: "/volume/coding"
+
+# ── Off-site backup ───────────────────────────────────────────────────────────
+# (REQUIRED under the appliance profile · optional otherwise)
+# A single-node appliance on local disk has no redundancy: losing the disk loses
+# the database and the agent's accumulated context. Backups are encrypted with
+# this cluster's own age key before upload, so the destination operator cannot
+# read them — decryption travels with age.key at handover.
+# Create an R2 bucket + API token at dash.cloudflare.com → R2.
+# backup_r2_bucket: ""
+# backup_r2_endpoint: ""              # https://<account-id>.r2.cloudflarestorage.com
+# backup_r2_access_key_id: ""
+# backup_r2_secret_access_key: ""
 
 # ── Cilium BGP (optional) ─────────────────────────────────────────────────────
 # cilium_loadbalancer_mode: "dsr"     # or "snat" — https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/

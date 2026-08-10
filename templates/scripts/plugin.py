@@ -145,6 +145,23 @@ class Plugin(makejinja.plugin.Plugin):
         # uses, so derive it rather than hardcoding a value that is only correct
         # for one provisioning path. An explicit coredns_cluster_ip still wins.
         data.setdefault('coredns_cluster_ip', nthhost(data.get('cluster_svc_cidr'), 10))
+        # Storage class for PVCs that do not pick one explicitly. Databases are
+        # block-backed regardless — this selects what bulk media and file shares
+        # get, which is the only thing the backend axis decides.
+        data.setdefault(
+            'default_storage_class',
+            'sc-nas' if data.get('storage_backend') == 'nfs' else 'local-path',
+        )
+        # Single-node clusters must not run components that require peers. Known
+        # only where the node list is authoritative: the Omni path always renders
+        # `nodes: []`, so an appliance is asserted single-node by its profile and
+        # any other Omni cluster is left undetermined.
+        if data.get('deployment_profile') == 'appliance':
+            data.setdefault('is_single_node', True)
+        elif data.get('provisioning_path') == 'talos':
+            data.setdefault('is_single_node', len(data.get('nodes') or []) <= 1)
+        else:
+            data.setdefault('is_single_node', False)
         data.setdefault('repository_branch', 'main')
         data.setdefault('repository_visibility', 'public')
 
