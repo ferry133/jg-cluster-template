@@ -50,6 +50,7 @@
 ## 5c. 比對 jcom 後補上的缺口
 
 - [x] 5c.1 `encrypt-secrets` 加入 `TALOS_DIR`（移植時漏掉；jcom 有。否則手動路徑的 talos 側 secret 不會被涵蓋）（已於最終狀態回歸驗證：`talsecret.sops.yaml` encrypted=true）
+- [x] 5c.3 採納 jcom 的 `cloudflare-tunnel.json` 前置檢查——2026-08-11 走真實 template 流程時第二次踩到：缺檔時 `task configure` 渲染到一半才以 Python traceback 中止，留下半套 `kubernetes/`。加上後改為渲染前擋下、訊息含建立指令、`kubernetes/` 完全不被寫入
 - [x] 5c.2 `kubeconform.sh` 接上：新增 `template:validate-manifests`（alias `lint`）並納入 `task configure`（渲染後、加密前）。實測 2.1s，驗過 3 個 Flux Kustomization + GitRepository + HelmRelease；`-ignore-missing-schemas` 讓離線時降級而非失敗。這是唯一檢查**渲染輸出**的環節——`cue vet` 只看輸入
 
 ## 6. 完整性檢查
