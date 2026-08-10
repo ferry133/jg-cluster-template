@@ -79,15 +79,14 @@
 
 ## 8. 驗收
 
-> 8.2 標記為 `[~]`（部分）：bootstrap 層已驗證，Flux/jg-base 層未驗證。
-> 丟棄測試用假 `repository_name`，FluxInstance 無法 reconcile。
+> 8.2 已於 2026-08-10 以真實 public repo 補完（首次用假 repository_name 只驗到 bootstrap 層）。
 
 > Phase 0–2 已於 2026-08-09 完成（測試 repo `~/coding/jgt-talos-accept`，機器
 > `e755a600-e306-1208-904b-6e3ed1880a00` / 10.9.1.238，硬體資訊取自 Omni MachineStatus）。
 > 8.1–8.4 待機器改以純 Talos 映像開機、於 LAN 上開出 apid 後執行。
 
 - [x] 8.1 實機 bootstrap 成功（jgt-cp-1 / 10.9.1.238）：`task bootstrap:talos` 完成 gensecret → genconfig → apply → etcd bootstrap → kubeconfig，Node 於約 90 秒後註冊
-- [~] 8.2 **部分驗證**。bootstrap 層已證實：`kube-proxy` 與 `flannel` 皆 0 個、Cilium 2 pods、CoreDNS 2 pods、cert-manager 3 pods、Node Ready，CNI 前的 NotReady 原因確為 `cni plugin not initialized`。**但這些來自 bootstrap helmfile，不是 jg-base 經由 Flux**——`task bootstrap:apps` 於最後一個 release 失敗（FluxInstance 指向不存在的假 repo → `context deadline exceeded`），Flux 從未同步。「與 Omni 路徑一致」的 Flux/jg-base 那一層仍未驗證，需要真實 repo 與 Cloudflare 憑證
+- [x] 8.2 **完整驗證**（2026-08-10，用真實 public repo `ferry133/jgt-talos-accept` 重跑）：`bootstrap:apps` 成功，Flux 同步 jg-base，`cilium` 與 `coredns` 的 HelmRelease 皆 True 且由 Flux(Helm) 管理，`kube-proxy` / `flannel` 仍為 0。手動路徑產出的叢集與 Omni 路徑一致，Flux 層亦確認。預期失敗者：spegel（單節點）、cloudflare-tunnel（假 token）、claudecode/im（無 secret/NAS）
 - [x] 8.3 `apply-node` ✓、`upgrade-node` ✓（完整重開機序列後 uncordon）、`upgrade-k8s` ✓（**但需節點 Ready，見下方順序約束**）
 - [x] 8.4 `reset` 未帶 `--yes` 時拒絕執行（確認機制有效）；帶 `--yes` 後節點回到 maintenance mode（apid 回應 v1.13.8），叢集消失
 - [x] 8.7 實機順序約束：`talos:upgrade-k8s` 會等節點 Ready，而沒有 CNI 的叢集永遠不會 Ready——k8s 升級必須排在 `bootstrap:apps` 之後。首次嘗試即以 `node is not ready / timeout` 失敗，裝好 Cilium 後重試成功

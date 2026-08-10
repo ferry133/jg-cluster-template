@@ -79,6 +79,54 @@ definition, so **every appliance reproduces the Spegel failure** and gets the
 needlessly small MTU. These belong in profile-driven configuration, not in a
 per-cluster patch.
 
+### Spegel reproduced on a disposable single-node cluster (2026-08-10)
+
+Rather than trust the incident note, it was reproduced deliberately on the
+acceptance-test machine while verifying `revive-talos-path` task 8.2.
+
+**Confirmed — Spegel is structurally broken on one node.** The pod reaches
+`Running` but never `Ready`, and restarts:
+
+```
+"failed to run bootstrap"  err="routing table is empty after bootstrapping"  attempts=16
+```
+
+Its peer-to-peer router has no peers to bootstrap a DHT with, so the readiness
+probe can never pass. It also writes the registry mirror config regardless of
+being unhealthy — `_default` means every registry, not a subset:
+
+```toml
+# /etc/cri/conf.d/hosts/_default/hosts.toml
+[host.'http://10.9.1.238:29999']
+capabilities = ['pull', 'resolve']
+dial_timeout = '200ms'
+[host.'http://10.9.1.238:30021']
+capabilities = ['pull', 'resolve']
+dial_timeout = '200ms'
+```
+
+**Not reproduced — the cluster-wide image-pull failure.** An uncached image
+pulled successfully in 7.3s while Spegel sat unready: containerd dialed the
+dead mirror, gave up after the 200 ms timeout, and fell back to the upstream
+registry.
+
+The difference appears to be containerd's version:
+
+| Cluster | Nodes | containerd | Talos | Spegel |
+|---------|-------|-----------|-------|--------|
+| jcom (where the incident happened) | 1 | 2.1.6 | 1.12.4 | suspended by hand-written patch |
+| jg-jiahd | 3 | 2.2.3 | 1.13.2 | 3/3 Ready |
+| acceptance test | 1 | 2.2.6 | 1.13.8 | 0/1, restart loop, pulls still work |
+
+So the hazard is **real but less severe than recorded, on current containerd**:
+a permanently-unready pod, a restart loop, and a pointless 200 ms dial before
+every registry hit — not a dead cluster. Gating Spegel off for single-node
+clusters is still required; treating it as an emergency is not.
+
+Two caveats against over-reading this: one image from one public registry was
+tested, and a registry that is reachable-but-broken may behave differently from
+one that refuses the connection. "Not reproduced" is not "cannot happen".
+
 Both patches also document a mechanism worth keeping: the Cilium one uses a
 JSON6902 append rather than a strategic merge, because a second strategic merge
 **replaces** the child Kustomization's whole `spec.patches` list and silently

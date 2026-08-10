@@ -2,7 +2,7 @@
 
 - [x] 1.1 jcom `ks.yaml.j2` 的 54 行**全數為新增**，兩個區塊、皆附事故說明，無舊版殘留：Cilium native-routing override（jcom 託管 Omni，MTU 1370 過小導致 SideroLink WireGuard `sendmmsg: message too long`）與 Spegel suspend。兩者根因相同——單節點
 - [x] 1.2 `cilium_bgp_enabled` / `cilium_loadbalancer_mode` 在 jcom 與 jg-jiahd **皆為 0 消費端**（死碼），僅 genie1 仍在用；`spegel_enabled` 在 jcom 有 2 個消費端，仍活著
-- [ ] 1.3 評估 Spegel 在多節點叢集的實際效益——若不明顯，從 jg-base 移除比 gating 簡單
+- [ ] 1.3 評估 Spegel 在多節點叢集的實際效益——若不明顯，從 jg-base 移除比 gating 簡單。（已知：jg-jiahd 3 節點上 3/3 Ready，功能正常；單節點必壞）
 - [ ] 1.4 決定 per-cluster 例外的機制形式（post-build substitution / overlay 目錄 / cluster.yaml 條件渲染），判準含「能否偵測未宣告漂移」
 - [ ] 1.5 Omni 路徑下渲染期如何得知節點數（`nodes` 恆為空）——與 `deployment-profiles` 的 profile 軸協調
 
