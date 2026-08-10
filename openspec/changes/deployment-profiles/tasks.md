@@ -27,9 +27,11 @@
 
 - [x] 2c.1 已實作並在活叢集驗證：suspend patch 生成正確、Flux 已套用（`suspend=true`）、刪除後兩分鐘內未重建。`local-path` 叢集的失敗原因已精確佐證——`NAS_SERVER`/`NAS_PATH` 為空導致 Deployment `nfs.server: Required value`
 - [x] 2c.4 新增可選欄位 `single_node`（Omni 路徑渲染期無法得知節點數，`nodes` 恆為 `[]`）；未宣告時假設有 peer——猜錯只是多跑一個能用的元件，反向猜錯會靜默停掉需要的
-- [ ] 2c.5 遷移注意：suspend **不清理**既有資源，只防止重建。既有叢集套用後仍需手動刪除已部署的元件（jcom 的註解早已寫明，但當成既定知識而非遷移步驟）
+- [x] 2c.5 遷移步驟已在 jgt-omni 實測確立：**刪除被 suspend 的 Kustomization 無效**（prune finalizer 被 suspend 擋住，資源全留）；有效做法是直接 `kubectl delete hr`，helm uninstall 會連帶清掉它建立的 StorageClass / ServiceAccount。之後 `cluster-apps-base` 重建子 Kustomization 時 suspend 守住，資源維持消失。順序必須是「先刪資源、再靠 suspend 擋重建」。詳見 `design.md` D11
 - [ ] 2c.2 模板無法表達「不部署任何 claude-code instance」：`claude_instances: []` 會讓 helmrelease 渲染為空並被 makejinja 略過，但 `instances/kustomization.yaml` 硬寫 `resources: [./helmrelease.yaml]`，kustomize build 隨即失敗
 - [ ] 2c.3 弱測試憑證 + 預設啟用的公開入口是危險組合：`ttyd_credential` 若為測試值，配上預設 `claude_instances: ["im"]` 與出站自動連通的 tunnel，會讓 hostname 進 CT log。（本次實測確認 `replicas: 0` 使其不至於真的可登入，但該防護不應是唯一一道）
+
+- [ ] 2c.6 `local-path` 叢集目前**沒有 default StorageClass**：`sc-nas` 隨 nfs-subdir 一起移除後，叢集沒有任何 storage class（`storage/local-path-provisioner` 是 extra，未啟用）。Group 6 需確保 profile 預設 class 真的存在，而非只是「不要錯的那個」
 
 ## 3. 既有叢集遷移（不改變行為）
 

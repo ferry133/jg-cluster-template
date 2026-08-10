@@ -168,6 +168,32 @@ spegel                   is_single_node
 
 jcom 的註解其實早就寫了這件事（「stops reconciling/**recreating** it」），只是把它當成既定知識而非遷移步驟。
 
+#### 既有叢集的遷移步驟（2026-08-11 於 jgt-omni 實測）
+
+先看清楚 suspend 之後留下了什麼。以 `nfs-client-provisioner` 為例，它的 inventory 是 HelmRelease + HelmRepository，但 helm 另外建了 ServiceAccount 與 **StorageClass `sc-nas`，而且是叢集的 default** ——一台 `local-path` 叢集的預設儲存指向一個不能用的 NFS provisioner，這比「一個 pod 失敗」嚴重得多。
+
+**刪除被 suspend 的 Kustomization 不會清理資源。** 實測：刪掉之後 HelmRelease 與 StorageClass 都還在，`prune: true` 沒有生效——suspend 擋掉了刪除時的 prune finalizer。所以這條路是無效的，而且它看起來像成功（Kustomization 確實消失了）。
+
+有效的做法是**直接刪除 HelmRelease**，讓 helm-controller 執行 uninstall：
+
+```
+kubectl -n <ns> delete hr <release>     → helm uninstall 連帶清掉它建立的
+                                          StorageClass / ServiceAccount 等
+```
+
+驗證結果：
+
+```
+刪 Kustomization        → hr 仍在、sc 仍在      ✗ 無效
+刪 HelmRelease          → hr=0、sc=0            ✓ helm uninstall 清乾淨
+強制 cluster-apps-base   → Kustomization 重建
+reconcile                  但 suspend=true 守住，hr=0 sc=0 維持 ✓
+```
+
+最後一列是關鍵：`cluster-apps-base` 會把子 Kustomization 重新建出來（它自己沒有被 suspend），但重建出來的帶著 suspend patch，所以不會重新部署。順序因此是 **先刪資源、再讓 suspend 擋住重建**，而不是反過來。
+
+（另注意 `cluster-apps-base` 的 interval 是 1h，所以刪掉子 Kustomization 之後不會立刻重建——實測 100 秒內都沒有動靜。除錯時容易誤判為「已經永久移除」。）
+
 ### D12. Omni 路徑無法在渲染期得知節點數
 
 `is_single_node` 在 appliance（定義上單節點）與手動路徑（節點清單具權威性）可以推導，但 Omni 叢集的 `nodes` 恆為 `[]`。新增可選欄位 `single_node`，明寫者優先；未宣告時**假設有 peer**——猜錯只是多跑一個本來能用的元件，反向猜錯則會靜默停掉需要的元件。
