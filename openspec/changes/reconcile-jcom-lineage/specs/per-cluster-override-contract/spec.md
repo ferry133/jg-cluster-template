@@ -18,7 +18,7 @@ A cluster's legitimate deviation from the shared configuration SHALL be expresse
 
 ### Requirement: An exception states why it exists
 
-An override without a recorded reason becomes permanent by default, because nobody can tell whether the condition that motivated it still holds.
+An override SHALL record the reason it exists. Without one it becomes permanent by default, because nobody can tell whether the condition that motivated it still holds.
 
 #### Scenario: Reason is recorded
 - **WHEN** an override is declared
@@ -42,7 +42,7 @@ An override SHALL affect only what it declares. A mechanism that lets a narrow e
 
 ### Requirement: A per-cluster workaround that generalises becomes a feature
 
-An override that more than one cluster needs is evidence of a missing shared capability, not of a coincidence.
+An override declared by more than one cluster SHALL be raised as a candidate to become a supported configuration option. Repetition is evidence of a missing shared capability, not of coincidence.
 
 #### Scenario: Repeated override promotes to configuration
 - **WHEN** the same override is declared by more than one cluster

@@ -42,7 +42,7 @@ Where the template holds a newer, correct version of something a cluster still c
 
 ### Requirement: The reconciled cluster can consume template updates
 
-Reconciliation is complete only when the cluster can take a template update as a routine operation. A cluster that still requires hand-merging is not reconciled.
+Reconciliation SHALL be treated as complete only when the cluster can take a template update as a routine operation. A cluster that still requires hand-merging MUST NOT be considered reconciled.
 
 #### Scenario: Template update applies cleanly
 - **WHEN** a subsequent template change is applied to the reconciled cluster
