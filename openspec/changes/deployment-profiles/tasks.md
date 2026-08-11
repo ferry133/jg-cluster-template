@@ -4,7 +4,7 @@
 - [x] 1.2 內網共用位址數量確定為 1，已回寫 `design.md` D3/D3a 與 `specs/lan-address-allocation/spec.md`
 - [ ] 1.3 實測 Cloudflare DNS 接受 RFC1918 A 記錄的行為（DNS-only 可行、proxied 應失敗），記錄實際錯誤訊息
 - [ ] 1.4 決定 DNS rebinding protection 的偵測方式（節點 hostNetwork 查詢路由器 resolver vs 客戶端回報），回寫 `design.md` Open Questions
-- [ ] 1.0 appliance 是單節點，而 `jg-base/.../kube-system/kustomization.yaml:12` **無條件**部署 Spegel。**2026-08-10 已在測試機重現**：pod 永遠 `0/1`（`routing table is empty after bootstrapping`——單節點無 peer），且仍寫入 `_default/hosts.toml` 把所有 registry 導向本機死埠。惟 **image 拉取未受影響**（containerd 2.2.6 於 200ms 逾時後回退上游成功），故 jcom 記錄的「全叢集拉不動」應為舊 containerd 2.1.6 的行為。profile 仍須關掉 Spegel，但非緊急。詳見 `docs/template-lineage.md`
+- [x] 1.0 appliance 是單節點，而 `jg-base/.../kube-system/kustomization.yaml:12` **無條件**部署 Spegel。**2026-08-10 已在測試機重現**：pod 永遠 `0/1`（`routing table is empty after bootstrapping`——單節點無 peer），且仍寫入 `_default/hosts.toml` 把所有 registry 導向本機死埠。惟 **image 拉取未受影響**（containerd 2.2.6 於 200ms 逾時後回退上游成功），故 jcom 記錄的「全叢集拉不動」應為舊 containerd 2.1.6 的行為。profile 仍須關掉 Spegel，但非緊急。**已由 2.8 的 suspend patch 處理**，並於 jgt-omni（單節點）確認 `suspend=true` 且 pod 已清除。詳見 `docs/template-lineage.md`
 - [ ] 1.5 在 scratch 叢集驗證：服務同時匹配窄 pool 與寬 pool 時 Cilium 的選擇順序（不可在有真實裝置的 LAN 上測，寬 pool 自動配發會取 `10.9.9.1`）
 - [ ] 1.6 在 scratch 叢集驗證：單一位址 pool 下，port 衝突的服務是否落到 Pending 並回報 `IPAMRequestSatisfied=False`
 - [ ] 1.7 驗證 Envoy Gateway 的 `spec.infrastructure.annotations` 會把 `sharing-key` / `sharing-cross-namespace` 傳導到產生的 Service
