@@ -42,7 +42,7 @@
 - [x] 2c.12 上述五項合起來是同一個假設的五個位置（claude-code 長在有 NAS 的叢集上），且**全部只在 `local-path` 出現**——即 appliance 的標準組態。已在 jgt-omni 端到端驗證 `im.janncot.cc`：pod `1/1 Running`、兩個 PVC Bound 於 local-path、憑證 Ready、HTTP 401（ttyd basic auth，預期值）。詳見 `design.md` D14
 
 - [x] 2c.13 `storage/local-path-provisioner` 由 extra 改為 base app 且永不 suspend（jg-base `3d87da3`）：它不是 NFS 的替代方案而是 node-local 層，有 NAS 的叢集同樣需要（否則 6.4 在 jg-jiahd 無處可放 DB）。`ks.yaml.j2` 的 auto-add 移除，改列入 `_now_base`。已在 jgt-omni 實測遷移完成：`local-path-provisioner` 現由 `cluster-apps-base` 擁有、路徑指向 `apps/base/`、StorageClass 回歸、PVC 全程 Bound。詳見 `design.md` D15
-- [ ] 2c.14 修正 `accept_node_pinning` 的 predicate：現在掛在 `storage_backend == 'local-path'`，但 local-path 已到處都在，6.4 又要把 DB 放上去 → jg-jiahd（3 節點、NFS）會靜默釘死 postgres 而閘門不觸發。該問「有沒有工作負載落在 node-local class」。**Group 6 的前置**
+- [x] 2c.14 `accept_node_pinning` 的 predicate 已改為 `_uses_node_local`：`storage_backend == 'local-path'` **或** 啟用了 `#BlockTierExtras`（`claudecode/postgres`、`default/mariadb`、`default/postgres`、`freepbx/freepbx`）任一。有 NAS 的多節點叢集跑 DB 一樣被釘死，只是路徑不同，舊 predicate 會直接放行。`extras` 因此由 optional 改為 `*[] | [...string]`，讓判斷式能無條件讀取。七種組合皆已用 `cue vet` 驗證（含「nfs + 多節點 + 無 DB extra → 通過」與「nfs + 多節點 + postgres → 拒絕」）
 - [x] 2c.15 jg-base README 的 extras→base 遷移 runbook 是錯的，且從未被執行過（jcom 事後補寫）。實跑後 release 照樣被 uninstall：`spec.prune` 不管刪除串聯——CRD 定義 `deletionPolicy` 才是，`MirrorPrune` 才會讀 `prune`，而本模板每個 Kustomization 都明寫 `deletionPolicy: WaitForTermination`；且線上 patch 會被母 Kustomization 的下次 apply 覆蓋，suspend 母體也不可靠（`Kustomization/flux-system` 由 flux-operator 管）。已改為「走 git 分兩次 push」（jg-base `db2568a`），詳見 `design.md` D16
 
 ## 3. 既有叢集遷移（不改變行為）
@@ -74,12 +74,13 @@
 
 ## 6. 儲存分層（jg-base）
 
-- [ ] 6.1 修正 `apps/extras/default/postgres/app/backup.yaml:13,26` 的 `storageClassName: ""`
-- [ ] 6.2 掃過 `jg-base` 所有 PVC，確認無其他 `storageClassName: ""`
-- [ ] 6.3 依 profile 設定預設 storage class（appliance → `local-path`）
-- [ ] 6.4 把 PostgreSQL 與 agent memory 的 PVC 改為 block-backed class
-- [ ] 6.5 把 claude-code 工作區改為未設定 `nas_coding_path` 時使用 profile 預設 class
-- [ ] 6.6 確認 `nas_coding_path` 已設定時的 NFS 掛載行為不變
+- [x] 6.1 **原診斷是錯的**：`storageClassName: ""` 在這裡不是 bug。它與同一份 manifest 裡的 PV 以 `volumeName` 靜態綁定，這是既有 NFS export 的正確用法，會立刻 Bound，不會 Pending。掃描找到的真缺陷是另一個：`server: 10.9.2.13`（ferry133 自己的 NAS）被寫死在 ~20 個叢集共讀的 repo 裡。已改為 `${NAS_SERVER}`（jg-base `676f311`）；在唯一啟用這些 extras 的叢集上解析為同一位址，PV 未變動——PV 的 `nfs.server` 是 immutable，這點必須先確認才能推。spec 的該條需求已一併改寫
+- [x] 6.2 掃描完成：13 處 `storageClassName: ""` 全為靜態 PV/PVC 配對；4 個檔案寫死 NAS IP（linebot ×2、synophoto、default/postgres backup），已修。export path（`/volume3/knowledge` 等）仍為字面值——只有原生叢集啟用這些 extras，列為已知限制而非默默帶著
+- [x] 6.3 無 NAS 的叢集原本**完全沒有 default StorageClass**：nfs-subdir 宣告 `defaultClass: true` 但在該處被 suspend，local-path 則從未宣告。已改為 `defaultClass: ${LOCAL_PATH_IS_DEFAULT:=false}`，其值恰在 nfs-subdir 未運行時為 true，兩者永不相撞。已在 jgt-omni 實測：`local-path (default)`，且一個不指定 class 的 PVC 成功 Bound → 掛載 → 寫入
+- [x] 6.4 DB 資料卷改用 `${DB_STORAGE_CLASS}`（`claudecode/postgres`、`default/mariadb`、`default/postgres`）。`default/postgres` 原本**完全沒寫 class**，於是在 NFS 叢集上資料目錄靜默落在 `sc-nas`。substitution 預設值取 `sc-nas` 而非正確的 block tier：PVC 的 `storageClassName` 是 immutable，預設值只會在尚未遷移到 profile schema 的叢集上生效，而那些全是 DB 已在 NFS 上的 NFS 叢集——預設值的意思是「維持現狀」，真正的搬遷仍須 dump/restore。freepbx 已在 block tier，不動
+- [x] 6.5 claude-code 工作區改用 profile 預設 class（已於 2c.9/2c.10 完成）
+- [x] 6.6 已驗證：設了 `nas_coding_path` 時 `coding` 掛載渲染結果與先前逐字相同（`type: nfs` + `${NAS_SERVER}`）；未設時整段不存在，兩個 PVC 落在 `local-path`
+- [ ] 6.7 既有叢集的 DB 搬遷（jg-jiahd `default/postgres`、jcom `claudecode/postgres`）：需 dump → 刪 PVC → 以 block class 重建 → restore。`db_storage_class` 欄位讓「還沒搬」變成 cluster.yaml 裡看得見的一行，而不是靜默狀態
 
 ## 7. Appliance 備份（jg-base）
 

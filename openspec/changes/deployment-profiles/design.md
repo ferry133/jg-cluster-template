@@ -297,6 +297,36 @@ jg-base README 那份「suspend 母 Kustomization → `kubectl patch spec.prune=
 
 **通則**：一份沒被執行過的 runbook 不是文件，是假設。而它會在最壞的時刻被照著執行——上一次就是。
 
+### D17. 儲存分層有三層，不是兩層
+
+Group 6 實作後定形為三個名稱，各自回答不同問題：
+
+| 變數 | 值 | 誰用 |
+|---|---|---|
+| `DEFAULT_STORAGE_CLASS` | `storage_backend` 決定 | 沒指定 class 的 PVC、bulk 資料 |
+| `DB_STORAGE_CLASS` | **恆為 block tier**，與 `storage_backend` 無關 | 需要 fsync 與檔案鎖的（D7） |
+| `LOCAL_PATH_IS_DEFAULT` | `storage_backend != nfs` | local-path 是否宣告自己是叢集預設 |
+
+第三個是補一個真正的洞：`nfs-subdir` 寫死 `defaultClass: true`，但它在無 NAS 的叢集上被 suspend，而 local-path 從來沒宣告過——於是那種叢集**一張 default class 都沒有**，任何省略 `storageClassName` 的 PVC 都會 Pending 指著空氣。兩者永不相撞，因為 `LOCAL_PATH_IS_DEFAULT` 為真的條件恰好就是 nfs-subdir 沒在跑。
+
+`default/postgres` 的 PVC 原本**完全沒寫 class**——於是在 NFS 叢集上，資料目錄靜默落在 `sc-nas`。D7 早就寫著不該這樣，但沒有任何東西在檢查，因為「沒寫」看起來不像一個選擇。
+
+#### 預設值刻意選了「錯的那個」
+
+`${DB_STORAGE_CLASS:=sc-nas}` 的預設不是正確答案，是**現狀**。理由是 PVC 的 `storageClassName` immutable：預設值只在 cluster-secrets 沒有該鍵時生效，也就是還沒遷移到 profile schema 的叢集，而那些全是 DB 已經在 NFS 上的 NFS 叢集。若預設成正確的 block tier，下一次 reconcile 會拿一個改不動的欄位去 patch 活的 PVC，把 jg-jiahd 與 jcom 的 Flux 打成永久紅燈——而資料一步也沒搬。
+
+真正的搬遷是 dump → 刪 PVC → 用 block class 重建 → restore，那是 6.7，per-cluster 的動作。`db_storage_class` 欄位的作用是讓「還沒搬」變成 `cluster.yaml` 裡看得見的一行。
+
+同樣的 immutable 顧慮讓 `server: 10.9.2.13` → `${NAS_SERVER}` 這個改動必須先查證：PV 的 `nfs.server` 也是 immutable，只有在唯一啟用那些 extras 的叢集上兩者解析為同一位址，才推得下去。查證過了，是同一個。
+
+### D18. 「掃出一個缺陷」與「掃出的是那個缺陷」是兩回事
+
+6.1/6.2 原本寫的是「修掉 `storageClassName: \"\"`，它會讓 PVC 永遠 Pending」，spec 甚至有一條需求叫「No PVC depends on manual pre-provisioning」。實際打開 13 處來看，**每一處都是同一份 manifest 裡的 PV/PVC 靜態配對，用 `volumeName` 綁定**——既有 NFS export 的正確用法，會立刻 Bound。
+
+原始診斷是在沒讀檔案的情況下下的：看到 `storageClassName: ""` 就套用了那個 pattern 最常見的解釋。掃描本身是對的，它確實掃出了缺陷——只是缺陷是**寫死的 NAS 位址**，不是空字串。
+
+若照原需求執行，會把四組正常運作的靜態綁定改成動態供裝，在 jg-jiahd 上把 linebot 的知識庫與 synophoto 的 vault 從既有 NFS export 換成新配的空目錄。**照著錯的規格做，比不做更糟**——spec 已改寫，並保留原文與被推翻的過程。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。

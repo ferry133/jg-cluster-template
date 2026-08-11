@@ -43,18 +43,27 @@ deployment_profile: "full"
 # Choosing "nfs" additionally enables the NFS provisioner.
 storage_backend: "nfs"
 
-# (REQUIRED when storage_backend is "local-path") Does this cluster have exactly
-# one node? Derived automatically for appliance (always one) and for the manual
-# Talos path (nodes.yaml is authoritative), but an Omni cluster renders
-# `nodes: []` so it cannot be inferred there.
+# (REQUIRED when anything lands on node-local storage — see below) Does this
+# cluster have exactly one node? Derived automatically for appliance (always
+# one) and for the manual Talos path (nodes.yaml is authoritative), but an Omni
+# cluster renders `nodes: []` so it cannot be inferred there.
 # single_node: true
 #
 # Node-local volumes live on one node and their PVs are pinned to it. On one
 # node that is correct; on several it silently pins every stateful workload to
 # whichever node scheduled it first, and losing that node loses the data and the
-# ability to restart elsewhere. Required — and it must be true — when combining
-# local-path with a multi-node cluster. The real answer there is replicated
-# block storage, which this stack does not provide yet.
+# ability to restart elsewhere. The real answer there is replicated block
+# storage, which this stack does not provide yet.
+#
+# Two ways to end up on node-local storage, and both are asked about:
+#   - storage_backend: "local-path"  — everything lands there
+#   - a database extra               — claudecode/postgres, default/mariadb,
+#                                      default/postgres, freepbx/freepbx. These
+#                                      use the block tier even on a NAS-backed
+#                                      cluster, because NFS does not honour the
+#                                      fsync and lock semantics a database needs
+# So a three-node cluster with a NAS still has to answer this if it runs a
+# database. It is pinned just as hard; only the route there is different.
 # accept_node_pinning: true
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -24,6 +24,10 @@ Node-local volumes live on one node and their PersistentVolumes carry affinity t
 - **WHEN** a cluster selects node-local storage without stating whether it has one node
 - **THEN** validation fails, because the consequences differ entirely between the two cases
 
+#### Scenario: A NAS does not exempt a cluster from the question
+- **WHEN** a cluster with `storage_backend: nfs` enables an extra whose database lands on the block tier
+- **THEN** it is subject to the same acknowledgement, because the database is pinned to one node regardless of what bulk storage the cluster has
+
 #### Scenario: Single node needs no acknowledgement
 - **WHEN** a single-node cluster selects node-local storage
 - **THEN** validation passes with nothing further to declare
@@ -52,17 +56,23 @@ Each profile SHALL supply a default storage class so that PVCs without an explic
 - **WHEN** a PVC without an explicit storage class is created on a cluster with `storage_backend: nfs`
 - **THEN** it binds via the NFS provisioner, as today
 
-### Requirement: No PVC depends on manual pre-provisioning
+### Requirement: No PVC names infrastructure that only one cluster has
 
-Every PVC shipped in `jg-base` SHALL be dynamically provisionable. An empty-string `storageClassName` disables dynamic provisioning and leaves the claim Pending forever on a cluster with no matching pre-created PersistentVolume; this MUST be corrected.
+> Revised 2026-08-11. This requirement previously read "No PVC depends on manual pre-provisioning", and asserted that every `storageClassName: ""` in `jg-base` left a claim Pending forever. Inspecting all thirteen occurrences disproved it: each is one half of a static PV/PVC pair declared in the same manifest and bound by `volumeName`, which is the correct idiom for a pre-existing NFS export and binds immediately. The real defect the scan found was a different one, stated below.
 
-#### Scenario: Postgres backup PVCs bind on an appliance
-- **WHEN** the `default/postgres` extra is deployed on an appliance cluster with no pre-created PersistentVolumes
-- **THEN** its backup PVCs bind successfully rather than remaining Pending
+A manifest in `jg-base` is read by every cluster, so it SHALL NOT name infrastructure belonging to one of them. NFS coordinates SHALL be supplied by substitution rather than written literally.
 
-#### Scenario: Shipped PVCs are inspectable for the defect
-- **WHEN** all PVC manifests in `jg-base` are inspected
-- **THEN** none declares `storageClassName: ""`
+#### Scenario: NAS address is not baked into the shared repository
+- **WHEN** any PersistentVolume in `jg-base` declares an NFS server
+- **THEN** it references `${NAS_SERVER}` rather than a literal address
+
+#### Scenario: Static binding is permitted
+- **WHEN** a PVC declares `storageClassName: ""` together with `volumeName` and a PersistentVolume declared alongside it
+- **THEN** this is correct static provisioning and is left as is
+
+#### Scenario: Export paths remain a known limitation
+- **WHEN** an extra mounts a NAS export at a fixed path such as `/volume3/knowledge`
+- **THEN** the path stays literal until that extra is needed off its originating cluster, and the limitation is recorded rather than silently carried
 
 ### Requirement: Agent workspace and agent memory have different durability
 

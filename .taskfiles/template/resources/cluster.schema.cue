@@ -45,7 +45,31 @@ import (
 		single_node: true
 	}
 
+	// Extras that put a database on the node-local block tier rather than on
+	// bulk storage. NFS does not honour the fsync and lock semantics a database
+	// needs, so these land on `local-path` even when the cluster has a NAS —
+	// which is the same node-pinning exposure as choosing `local-path` for
+	// everything, arriving by a different route.
+	#BlockTierExtras: [
+		"claudecode/postgres",
+		"default/mariadb",
+		"default/postgres",
+		"freepbx/freepbx",
+	]
+
+	// Whether anything in this cluster lands on a node-local class. This, and
+	// not `storage_backend`, is what the acknowledgement below has to be keyed
+	// on: a NAS-backed cluster running a database is pinned just as hard, and
+	// asking about the default class would wave it through.
+	_uses_node_local: *false | true
 	if storage_backend == "local-path" {
+		_uses_node_local: true
+	}
+	if len([for e in extras if list.Contains(#BlockTierExtras, e) {e}]) > 0 {
+		_uses_node_local: true
+	}
+
+	if _uses_node_local {
 		single_node: bool
 		if single_node == false {
 			// `bool` and not `true`: an unresolved type is what makes an absent
@@ -146,6 +170,12 @@ import (
 	cluster_name: string & !=""
 	coredns_cluster_ip?: net.IPv4
 
+	// Escape hatch for a cluster whose database is already on NFS. Defaults to
+	// the block tier; setting it to an NFS class is a deliberate statement that
+	// the move is pending, because a PVC's storageClassName is immutable and
+	// the data has to be dumped and restored to change it.
+	db_storage_class?: string & !=""
+
 	// Off-site backup. A single-node appliance on local disk has no redundancy,
 	// so losing the disk loses the database and the agent's accumulated context.
 	// Required there rather than opt-in: rendering a cluster whose data is
@@ -161,7 +191,9 @@ import (
 		backup_r2_access_key_id: string & !=""
 		backup_r2_secret_access_key: string & !=""
 	}
-	extras?: [...string]
+	// Defaulted rather than optional so the block-tier test above can read it
+	// unconditionally.
+	extras: *[] | [...string]
 	freepbx_mysql_root_password?: string & !=""
 	freepbx_mysql_password?: string & !=""
 	claudecode_postgres_password?: string & !=""

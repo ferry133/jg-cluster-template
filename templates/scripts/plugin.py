@@ -152,6 +152,20 @@ class Plugin(makejinja.plugin.Plugin):
             'default_storage_class',
             'sc-nas' if data.get('storage_backend') == 'nfs' else 'local-path',
         )
+        # The block tier, for anything that needs fsync durability and file
+        # locking. Not derived from storage_backend: NFS is never a valid answer
+        # here, whatever the cluster uses for bulk data. An existing cluster
+        # whose database is already on NFS overrides this until it can be dumped
+        # and restored — a PVC's storageClassName is immutable, so the move is
+        # not something a re-render can perform.
+        data.setdefault('db_storage_class', 'local-path')
+        # Whether local-path should claim the cluster-default StorageClass.
+        # nfs-subdir claims it whenever it is running, and it only runs on an
+        # NFS cluster, so the two never collide.
+        data.setdefault(
+            'local_path_is_default',
+            'true' if data.get('storage_backend') != 'nfs' else 'false',
+        )
         # Single-node clusters must not run components that require peers. The
         # node list is only authoritative on the manual path — the Omni path
         # always renders `nodes: []` — so an Omni cluster that is not an
