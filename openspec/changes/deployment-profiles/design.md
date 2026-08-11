@@ -371,6 +371,39 @@ v2 是為了修 v1 而寫的，寫的時候看起來完備。**是 6.7 的決定
 
 **通則**：實際去用一次 schema，比再讀一遍 schema 有效。這兩次修正都不是想出來的，是套用到真實叢集時撞出來的。
 
+### D21. 把 app 移進 base，會立刻打到所有還列著它的叢集
+
+2c.13 把 `storage/local-path-provisioner` 移進 jg-base 的 base apps，push 之後約 72 分鐘 jcom 的 Flux 是紅的：它的 `extras:` 還列著那個名字，於是 `extras-local-path-provisioner` 指著一條已經不存在的路徑。
+
+jg-base 是**推出去就生效**的——~20 個叢集共讀 main，沒有 per-cluster 的節流。移動一個 app 的目錄等於同時對所有列著它的 `cluster.yaml` 做了破壞性變更，而那些 repo 各自獨立、不會一起更新。ks.yaml.j2 的 `_now_base` 過濾器正是為此存在，但它只保護**已經同步到新模板世代的 repo**；jcom 沒有，所以它就是接不住。
+
+資源全程安全，原因值得記下來：**建不起來的 Kustomization 不會 prune**——它連 inventory 都算不出來，談不上垃圾回收。紅燈是可見的失敗，不是靜默損毀。
+
+#### 但真正的保護不是那個，是 adoption
+
+修的時候本來準備照 D16 的兩次 push 走（先 `deletionPolicy: Orphan`）。查了一下發現不必：
+
+```
+Kustomization/local-path-provisioner
+  labels: kustomize.toolkit.fluxcd.io/name: cluster-apps-base   ← 新主人已接手
+extras-local-path-provisioner.status.inventory
+  entries: [flux-system_local-path-provisioner_...Kustomization]  ← 舊主人還記著
+```
+
+Flux 的 GC 在刪除前會比對物件的 ownership label 是不是自己。label 已經指向 `cluster-apps-base`，所以舊 wrapper 被 prune 時會**跳過**它。實測證實：移除 extras 條目、reconcile，`extras-local-path-provisioner` 消失，而 `local-path` StorageClass 的 age 仍是 88 天——沒有被重建，也就沒有被刪過。
+
+所以 D16 的 runbook 可以收窄：**`deletionPolicy: Orphan` 只在「移除」與「接手」落在同一次 reconcile 時才需要**。一旦新主人已經 apply 過、label 已經改寫，競態就結束了，舊 wrapper 直接刪除是安全的。判斷依據是物件的 label，不是時間。
+
+### D22. 用副本先跑一次，是這次唯一能證明「什麼都沒變」的方法
+
+3.1 對 jg-jiahd（正式叢集）的作法是：整個 repo 複製一份 → 套用變更 → `task configure` → 和變更前的 `kubernetes/` 逐檔比對，然後才在本尊上重跑同一套。
+
+結果讓這件事值得：`ks.yaml` **byte-identical**，`cluster-secrets` **+7 鍵、0 變更**。這種「什麼都沒動」的結論，只有先產出兩份可比對的輸出才拿得到——直接在本尊上跑，看到的是既成事實，沒有對照組。
+
+secret 的比對不能直接 diff 明文（裡面是 token）。作法是解密後把每個值換成 sha 前十碼再比：鍵名照常可見，值只看得出「一樣/不一樣」。空字串是 `da39a3ee5e`，一眼認得出四個 `BACKUP_R2_*` 是空的。
+
+同步時**保留本地分歧**是這次的關鍵細節。jg-jiahd 的 `ks.yaml.j2` 有一段 QUIC → http2 的 per-cluster workaround（該站點的上游防火牆擋 UDP 7844），直接覆蓋上游版本會把 cloudflared 打掛。清單化本地分歧、覆蓋後逐一重貼，是這種「部分同步」唯一安全的作法——也是為什麼只同步了 ② 真正需要的 4 個檔案，而不是整棵 `templates/`。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。

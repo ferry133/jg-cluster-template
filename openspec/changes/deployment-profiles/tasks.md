@@ -47,8 +47,10 @@
 
 ## 3. 既有叢集遷移（不改變行為）
 
-- [x] 3.1 jg-jiahd 副本補 `deployment_profile: "full"` + `storage_backend: "nfs"`：`ks.yaml` 完全相同，`cluster-secrets` 僅**新增** 4 個空的 `BACKUP_R2_*`，既有值未變
-- [ ] 3.2 jcom 遷移——阻塞於 `reconcile-jcom-lineage`：jcom 是另一支血脈，無法直接套用模板（見該 change）
+- [x] 3.1 **已對 jg-jiahd 實際套用**（2026-08-11）。先在完整副本驗過再上線，結果與副本逐字相同：`ks.yaml` **byte-identical**（唯一差異是把過期註解 `jgu5` 改成 `jg-jiahd`——repo 2026-05-30 已改名），`cluster-secrets` **+7 鍵、0 變更、0 移除**：4 個空的 `BACKUP_R2_*`、`DEFAULT_STORAGE_CLASS` 與 `DB_STORAGE_CLASS` 皆為 `sc-nas`、`LOCAL_PATH_IS_DEFAULT=false`。上線後全部 Kustomization Ready、`sc-nas (default)` 未變、`postgres-data` PVC 仍是 2026-06-19 那一個、`cc` pod 未重啟
+  - 只同步了 ② 需要的 4 個檔案（schema / plugin / cluster-secrets / ks.yaml.j2），並把 jg-jiahd 的 QUIC workaround 重貼回去。**其餘仍分歧**：無 `templates/config/talos/`、無 `nodes.yaml` 與 `nodes.schema.cue`、無 `.taskfiles/talos/`、無 `check-template-integrity.py`、`bootstrap` 與 claude-code 模板仍是舊世代（`cc` 的 `replicas: 1` 與 image tag 是刻意的本地值）。完整世代同步屬 ① / ⑤，不在 3.1 範圍
+- [ ] 3.2 jcom 遷移——仍阻塞於 `reconcile-jcom-lineage`：其 `templates/` 是更舊的世代（`SECRET_DOMAIN`、無儲存分層鍵），`task configure` 渲不出 `DB_STORAGE_CLASS`
+  - [x] 3.2a **但 jcom 被 2c.13 弄壞了，已修**：`storage/local-path-provisioner` 移入 base 後，jcom 的 `extras:` 仍列著它，`extras-local-path-provisioner` 指向已不存在的路徑而 NotReady（約 72 分鐘）。資源全程安全——該 Kustomization 建不起來就不會 prune。修法是從 `extras:` 移除後 `task configure`，渲染差異恰好只有那一個 Kustomization 區塊，secret 值 0 變更
 - [x] 3.3 未遷移時 `cue vet` 擋下且 `kubernetes/` 完全未被寫入（實測 0 個變更）
 
 ## 4. LAN 位址配置（jg-base）
