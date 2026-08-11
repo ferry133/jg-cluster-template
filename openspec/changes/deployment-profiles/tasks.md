@@ -31,10 +31,15 @@
 - [ ] 2c.2 模板無法表達「不部署任何 claude-code instance」：`claude_instances: []` 會讓 helmrelease 渲染為空並被 makejinja 略過，但 `instances/kustomization.yaml` 硬寫 `resources: [./helmrelease.yaml]`，kustomize build 隨即失敗
 - [ ] 2c.3 弱測試憑證 + 預設啟用的公開入口是危險組合：`ttyd_credential` 若為測試值，配上預設 `claude_instances: ["im"]` 與出站自動連通的 tunnel，會讓 hostname 進 CT log。（本次實測確認 `replicas: 0` 使其不至於真的可登入，但該防護不應是唯一一道）
 
-- [ ] 2c.6 `local-path` 叢集目前**沒有 default StorageClass**：`sc-nas` 隨 nfs-subdir 一起移除後，叢集沒有任何 storage class（`storage/local-path-provisioner` 是 extra，未啟用）。Group 6 需確保 profile 預設 class 真的存在，而非只是「不要錯的那個」
+- [x] 2c.6 `local-path` 叢集原本**沒有 default StorageClass**：`sc-nas` 隨 nfs-subdir 一起移除後，叢集沒有任何 storage class（`storage/local-path-provisioner` 是 extra，未啟用）。已修：`ks.yaml.j2` 在 `storage_backend == 'local-path'` 時把它加進 Kustomization 清單，不論 `extras:` 有沒有列——profile 的預設 class 必須真的存在，而不只是「不是錯的那個」
 
 - [x] 2c.7 `local-path` + 多節點改為明示選擇（方案 B）：CUE 要求 `single_node` 必須宣告；多節點時另需 `accept_node_pinning: true`，缺值或 `false` 皆拒絕。實作上繞過三次 CUE 自我滿足的陷阱，見 `design.md` D13
 - [ ] 2c.8 （方案 A，後續）在 jg-base 實作複製式 block storage（Longhorn / Rook-Ceph）並新增第三個 `storage_backend` 值。jg-jiahd 是 3 節點，這不是假想需求
+
+- [x] 2c.9 claude-code 的 `coding` volume 硬寫 `type: nfs`：無 NAS 時 `server`/`path` 渲染成空字串，chart schema 拒絕，**整個 release 裝不起來**。已改為由 `nas_coding_path` 條件渲染
+- [x] 2c.10 claude-code 兩個 PVC 硬寫 `storageClass: sc-nas` → 改用 `default_storage_class`；同時 `replicas: 0` 配上 `WaitForFirstConsumer` 會讓 Helm 等一個依定義不會發生的綁定，已加 `install`/`upgrade` 的 `disableWait: true`。NFS 的 `Immediate` 綁定讓這個相撞在有 NAS 的叢集上不會出現
+- [x] 2c.11 jg-base `storage` namespace 缺 PodSecurity 標籤，Talos 預設 `baseline` 擋掉 local-path provisioner 的 hostPath helper pod：provisioner 本身 Running、Kustomization Ready，但 PVC 永遠 Pending，錯誤只留在 PVC event。已於 jg-base `05b1501` 標為 `privileged`
+- [x] 2c.12 上述五項合起來是同一個假設的五個位置（claude-code 長在有 NAS 的叢集上），且**全部只在 `local-path` 出現**——即 appliance 的標準組態。已在 jgt-omni 端到端驗證 `im.janncot.cc`：pod `1/1 Running`、兩個 PVC Bound 於 local-path、憑證 Ready、HTTP 401（ttyd basic auth，預期值）。詳見 `design.md` D14
 
 ## 3. 既有叢集遷移（不改變行為）
 
@@ -88,3 +93,4 @@
 - [ ] 8.3 完成還原演練：僅用備份封存 + escrow 的 `age.key`，在新叢集還原並比對資料一致
 - [ ] 8.4 撰寫還原程序文件，內容須與演練實際步驟逐字一致
 - [ ] 8.5 回寫所有 spike 結論到 `design.md` 與相關 spec，確認無「待驗證」項目遺留
+- [ ] 8.6 每個 profile 的驗收都必須**在該 profile 上實跑到工作負載就緒**，不得只驗 `task configure` 的輸出。2c.9–2c.11 那四道渲染期缺陷全部無聲通過了 `task configure`（見 `design.md` D14）

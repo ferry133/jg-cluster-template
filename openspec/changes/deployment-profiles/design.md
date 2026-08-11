@@ -240,6 +240,32 @@ if single_node == false {
 
 通則是：**`cue vet` 檢查的是「資料是否具體」，所以任何在 schema 裡寫死的值都會讓要求自我滿足**。
 
+### D14. `local-path` 路徑上，claude-code 有一整條未被走過的 NFS 假設鏈
+
+2026-08-11 在 jgt-omni（單節點、無 NAS）第一次真的把預設 instance `im` 跑起來，中間撞到五道牆。它們不是五個獨立 bug，是**同一個假設的五個位置**：claude-code 是在有 NAS 的叢集上長出來的，所以「有 NFS」被寫死在各處。
+
+| # | 位置 | 症狀 | 修法 |
+|---|---|---|---|
+| 1 | `helmrelease.yaml.j2` 的 `coding` volume 硬寫 `type: nfs` | `server`/`path` 渲染成空字串 → chart schema 直接拒絕，**整個 release 裝不起來**（不只是少一個掛載） | 用 `nas_coding_path` 包起來 |
+| 2 | 兩個 PVC 硬寫 `storageClass: sc-nas` | 該 class 在 local-path 叢集不存在 → PVC 永遠 Pending | 改用 `default_storage_class` |
+| 3 | 沒有任何 default StorageClass | `storage/local-path-provisioner` 是 opt-in extra（見 2c.6） | `ks.yaml.j2` 依 `storage_backend` 自動加入 |
+| 4 | `replicas: 0` × `WaitForFirstConsumer` | Helm 等 PVC 綁定，但沒有 pod 就不會綁 → 逾時後 release 永久失敗 | `install`/`upgrade` 加 `disableWait: true` |
+| 5 | `storage` namespace 無 PodSecurity 標籤 | Talos 預設 `baseline` 擋掉 provisioner 的 hostPath helper pod | jg-base `05b1501`：標為 `privileged` |
+
+兩個值得單獨記住的：
+
+**#4 是兩個各自正確的決定相撞。** `replicas: 0` 是刻意的安全姿態（不常駐一個 root shell），`WaitForFirstConsumer` 是 node-local 儲存的正常行為——延後綁定才知道要綁哪台。湊在一起就是「Helm 等一個依定義不會發生的事件」。NFS 用 `Immediate` 綁定，所以**這個相撞在有 NAS 的叢集上完全不會出現**。
+
+**#5 屬於「每個元件看起來都對」的那類故障。** provisioner pod `1/1 Running`、Kustomization `Ready=True`、StorageClass 存在——但 PVC 永遠 Pending，因為失敗發生在一個短命的 helper pod 上，錯誤只留在 PVC 的 event 裡：
+
+```
+failed to provision volume with StorageClass "local-path":
+  pods "helper-pod-create-pvc-…" is forbidden:
+  violates PodSecurity "baseline:latest": hostPath volumes (volume "data")
+```
+
+**通則**：這五道全部只在 `storage_backend: local-path` 上出現，也就是 **appliance profile 的標準組態**。有 NAS 的叢集一道都碰不到——所以這條路徑在此之前從未被端到端走過。②（以及後續每個 profile）的驗收必須包含**在目標 profile 上實跑**，不能只驗 `task configure` 的輸出：前四道在渲染階段全部無聲通過。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。
