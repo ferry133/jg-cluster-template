@@ -5,9 +5,14 @@
 - [ ] 1.3 實測 Cloudflare DNS 接受 RFC1918 A 記錄的行為（DNS-only 可行、proxied 應失敗），記錄實際錯誤訊息
 - [ ] 1.4 決定 DNS rebinding protection 的偵測方式（節點 hostNetwork 查詢路由器 resolver vs 客戶端回報），回寫 `design.md` Open Questions
 - [x] 1.0 appliance 是單節點，而 `jg-base/.../kube-system/kustomization.yaml:12` **無條件**部署 Spegel。**2026-08-10 已在測試機重現**：pod 永遠 `0/1`（`routing table is empty after bootstrapping`——單節點無 peer），且仍寫入 `_default/hosts.toml` 把所有 registry 導向本機死埠。惟 **image 拉取未受影響**（containerd 2.2.6 於 200ms 逾時後回退上游成功），故 jcom 記錄的「全叢集拉不動」應為舊 containerd 2.1.6 的行為。profile 仍須關掉 Spegel，但非緊急。**已由 2.8 的 suspend patch 處理**，並於 jgt-omni（單節點）確認 `suspend=true` 且 pod 已清除。詳見 `docs/template-lineage.md`
-- [ ] 1.5 在 scratch 叢集驗證：服務同時匹配窄 pool 與寬 pool 時 Cilium 的選擇順序（不可在有真實裝置的 LAN 上測，寬 pool 自動配發會取 `10.9.9.1`）
-- [ ] 1.6 在 scratch 叢集驗證：單一位址 pool 下，port 衝突的服務是否落到 Pending 並回報 `IPAMRequestSatisfied=False`
-- [ ] 1.7 驗證 Envoy Gateway 的 `spec.infrastructure.annotations` 會把 `sharing-key` / `sharing-cross-namespace` 傳導到產生的 Service
+- [x] 1.5 **寬 pool 恆勝，規則是「建立時間最早者勝」**（2026-08-11，jgt-omni，Cilium v1.19.1）。窄 pool 只有在寬 pool `disabled: true` 時才被使用，證明它可用、只是不被選。三次實驗排除了另兩個假說：不是字典序（`aaa-spike-narrow` 輸給 `spike-wide`），也不是「最具體者勝」。
+  - **直接後果**：不能在既有 `pool` 旁邊「加一個窄 pool」期待它被優先——jg-base 的 `pool` 在每個叢集上都是最早建立的，永遠贏。**4.6 必須收窄既有 pool，不能新增。**
+  - **附帶發現，比原本假設更糟**：Cilium 把 `/24` block 的**網路位址本身**也算可配發——第一個自動配發的位址是 `192.0.2.0`，接著 `.1`、`.2`。換算到 `cidr: ${NODE_CIDR}` = `10.9.1.0/24`，第一個自動配發的 LB IP 是 `10.9.1.0`，**第二個就是預設閘道 `10.9.1.1`**，且 `l2-policy` 的 `loadBalancerIPs: true` 無 serviceSelector，會把它 ARP 廣播出去。D3a 的風險等級要上調
+- [x] 1.6 **確認**：單一位址 pool + 相同 `sharing-key`，port 不衝突者共用同一位址（`s1:80` 與 `s2:8080` 同得 `203.0.113.50`）；port 衝突者**拿不到位址**，並回報 `cilium.io/IPAMRequestSatisfied = False`。
+  - **但 reason 是誤導的**：`reason=out_of_ips`，訊息為 *All enabled CiliumLoadBalancerIPPools that match this service ran out of allocatable IPs*——實際原因是共用位址上的 port 相撞，不是位址用盡。4.9 讓 daily-check 監看這個條件是對的（失敗可觀測），但**告警內容會把維運者指向錯誤的方向**，需要在告警文案裡點出「單一位址 profile 下，這通常代表 port 衝突」
+- [x] 1.7 **確認，且比要求的更多**：`spec.infrastructure.annotations` 與 `spec.infrastructure.labels` **都**逐字傳到產生的 Service。labels 會傳這點是必要的——pool 的 `serviceSelector` 只能選 Service，而產生的 Service 預設只有 Envoy Gateway 自己的標籤，沒有 labels 傳導就無法讓它落進指定 pool。
+  - 功能面也驗過（不只是「註解有出現」）：單一位址 pool 下，ns `spike` 的 Gateway（:80）與 ns `default` 的普通 Service（:9090）帶同一組 `sharing-key: gwshare` + `sharing-cross-namespace: "*"`，兩者同得 `203.0.113.90`，皆 `IPAMRequestSatisfied=True`。跨 namespace 共用經由 Gateway 傳導的 key 成立
+  - 現網佐證：`envoy-internal` 的 `spec.infrastructure.annotations` 已帶 `lbipam.cilium.io/ips: 10.9.1.241`，產生的 Service 上原樣存在且生效
 
 ## 2. CUE schema 與範本（jg-cluster-template）
 

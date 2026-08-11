@@ -87,7 +87,7 @@ CUE 上不設 `*"full" | ...`。既有 `cluster.yaml` 會在 `cue vet` 階段直
 - 單一位址 pool 下的自動配發是否落到 Pending（推論成立，但未實測）。
 - Envoy Gateway 的 `spec.infrastructure.annotations` 是否會把 `sharing-key` 傳導到產生的 Service。本次測的是原生 Service。既有 production 已證實 `lbipam.cilium.io/ips` 經此路徑傳導成功，而傳導是通用的 annotation 複製，因此推論成立——但仍是推論。
 
-### D3a. 現有 pool 涵蓋整個 node CIDR 是既有風險
+### D3a. 現有 pool 涵蓋整個 node CIDR 是既有風險（2026-08-11 實測後上調，見 D23）
 
 `jg-base/kubernetes/apps/base/kube-system/cilium/app/networks.yaml` 的 pool 是 `cidr: ${NODE_CIDR}`，實測 jg-jiahd 即為 `10.9.9.0/24`。今天沒出事只因為每個 Service 都用 `lbipam.cilium.io/ips` 釘死位址；任何一個漏掉註記的 Service 都會從整個客戶 LAN 隨機取一個位址並經 L2 announcement 宣告，可能與真實裝置衝突。
 
@@ -403,6 +403,56 @@ Flux 的 GC 在刪除前會比對物件的 ownership label 是不是自己。lab
 secret 的比對不能直接 diff 明文（裡面是 token）。作法是解密後把每個值換成 sha 前十碼再比：鍵名照常可見，值只看得出「一樣/不一樣」。空字串是 `da39a3ee5e`，一眼認得出四個 `BACKUP_R2_*` 是空的。
 
 同步時**保留本地分歧**是這次的關鍵細節。jg-jiahd 的 `ks.yaml.j2` 有一段 QUIC → http2 的 per-cluster workaround（該站點的上游防火牆擋 UDP 7844），直接覆蓋上游版本會把 cloudflared 打掛。清單化本地分歧、覆蓋後逐一重貼，是這種「部分同步」唯一安全的作法——也是為什麼只同步了 ② 真正需要的 4 個檔案，而不是整棵 `templates/`。
+
+### D23. LB-IPAM 的 pool 選擇是「先來先贏」，所以窄 pool 不能用加的
+
+1.5 在 jgt-omni（Cilium v1.19.1）實測，服務同時匹配多個 pool 時：
+
+| 假說 | 結果 |
+|---|---|
+| 最具體者勝（/32 勝 /24） | ✗ 寬 pool 拿走 |
+| 字典序 | ✗ `aaa-spike-narrow` 仍輸給 `spike-wide` |
+| **建立時間最早者勝** | ✓ 兩次實驗一致 |
+
+窄 pool 在寬 pool `disabled: true` 時立刻被使用，證明它可用、只是不被選。
+
+**這直接決定 4.6 的作法**：jg-base 的 `pool` 在每個叢集上都是最早建立的那一個，任何後加的窄 pool 永遠拿不到分配。**必須收窄既有 pool，不能在旁邊新增。**
+
+#### 順帶把 D3a 的風險等級上調
+
+原本記的是「pool 涵蓋整個 node CIDR，寬 pool 自動配發會取 `10.9.9.1`」。實測顯示還要更早一格：
+
+```
+第 1 個自動配發   192.0.2.0   ← /24 的網路位址，Cilium 並未排除
+第 2 個           192.0.2.1   ← 換算到 10.9.1.0/24 就是預設閘道
+第 3 個           192.0.2.2
+```
+
+而 `l2-policy` 是 `loadBalancerIPs: true` 且**沒有 serviceSelector**——配到什麼就 ARP 廣播什麼。所以在任何一台這種叢集上，只要有人建立一個沒指定 IP 的 LoadBalancer Service，第二個就會把預設閘道的位址搶去廣播。
+
+目前沒炸的唯一原因是 `envoy-external` / `envoy-internal` / `k8s-gateway` 三者都用 `lbipam.cilium.io/ips` 明確指定位址，自動配發從未發生過。這是巧合構成的安全，不是設計。
+
+### D24. `IPAMRequestSatisfied=False` 說得出有問題，說不對是什麼問題
+
+1.6 確認了單一位址 profile 的失敗是可觀測的：同一個 `sharing-key` 下，port 不衝突的服務共用位址，port 衝突的拿不到位址並回報 `cilium.io/IPAMRequestSatisfied = False`。
+
+但 reason 與訊息是誤導的：
+
+```
+reason  = out_of_ips
+message = All enabled CiliumLoadBalancerIPPools that match this service
+          ran out of allocatable IPs
+```
+
+實際原因是**共用位址上的 port 相撞**，不是位址用盡。在 appliance 的單一位址設計下這兩者永遠長得一樣，維運者看到訊息會去找「pool 是不是太小」，而正解是「這個 port 已經被另一個服務佔走」。
+
+4.9 讓 daily-check 監看這個條件仍然正確——失敗確實浮得出來。但**告警文案必須自己補上正確的解釋**，不能直接轉貼 Cilium 的 message。
+
+### D25. Gateway 的 `infrastructure.labels` 是這條路能走通的前提
+
+1.7 原本只要驗 `annotations` 傳導。實測發現 `labels` 也逐字傳導，而**那才是關鍵的一半**：pool 的 `serviceSelector` 只能選 Service，而 Envoy Gateway 產生的 Service 預設只帶它自己的標籤（`gateway.envoyproxy.io/owning-gateway-name` 等）。沒有 labels 傳導，就沒有辦法讓某個 Gateway 的 Service 落進指定的窄 pool——annotations 傳導得再好也沒用，因為它根本不會被那個 pool 選中。
+
+功能面也一併驗了，不只是「註解有出現」：單一位址 pool 下，ns `spike` 的 Gateway（:80）與 ns `default` 的普通 Service（:9090）帶同一組 `sharing-key` + `sharing-cross-namespace: "*"`，兩者同得 `203.0.113.90`。跨 namespace 共用經由 Gateway 傳導的 key 成立，D3 的單一內網位址設計在 Gateway 這一側站得住。
 
 ## Risks / Trade-offs
 
