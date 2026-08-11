@@ -483,6 +483,49 @@ after recreate:  ip=<none>  satisfied=False
 
 **因此 4.6 的驗收標準不能是「narrow 完之後有沒有壞」**——那個問題在漏列的情況下也會回答「沒有」。必須是**套用前先證明 pool 涵蓋當下每一個已配發位址**，也就是把 `kubectl get svc` 實際列出的位址集合，和渲染出來的 `LB_POOL_BLOCKS` 逐一比對。三個活叢集都已這樣比對過，完全吻合。
 
+### D27. 兩個巢狀 pool 不可能共存，而我照著自己的警告踩了下去
+
+4.6 的初版是兩個 pool：`pool` 保留整個 node CIDR 且預設啟用，`pool-narrow` 列出實際位址，靠 `disabled: true` 讓前者退場。設計理由是保護「看不見的叢集」——沒有變數就維持今日行為。
+
+**它從來沒有運作過。**
+
+```
+pool-narrow: PoolConflict=True  cidr_overlap
+  range '10.9.9.4 - 10.9.9.4' overlaps range '10.9.9.0 - 10.9.9.255' from IP Pool 'pool'
+  IPsUsed = 0
+```
+
+narrow 依定義就是 wide 的子集，必然重疊，而 Cilium 對重疊一律以 `cidr_overlap` 拒絕——**`disabled` 不影響這個判定**。兩個叢集上 `pool-narrow` 的 `IPsUsed` 都是 0，一個位址都沒配過。
+
+而它看起來是好的，因為 **D26**：既有配發不會被收回。四個服務各自抱著改動前就拿到的位址，什麼都沒壞。真正的失敗在等下一次 Service 重建——**正是 D26 描述的那一類潛伏失敗，被引用 D26 的那個改動親手裝上去**。在 jgt-omni 刪掉 `envoy-internal` 之後它再也拿不回位址（`no_pool`），才把它逼出來。
+
+#### 為什麼 1.5 沒抓到
+
+1.5 測「服務同時匹配窄 pool 與寬 pool 時誰勝」，用的兩個 pool 是 `192.0.2.0/24` 與 `198.51.100.5`——**互不重疊**。互不重疊的 pool 確實會比較新舊；巢狀的 pool 根本走不到那一步，先被 conflict 擋掉。
+
+我把「最舊者勝」直接套用到巢狀情境，而那個結論的成立條件（不重疊）在 spike 裡是隱含的、沒有被寫下來。**spike 結論要連同它的前提一起記，否則它會被搬到不成立的地方。**
+
+#### 修正後的形狀
+
+只有一個 pool，每個叢集都必須提供自己的 blocks。沒有 narrow 的叢集就把整個 node CIDR 寫出來——那本來就是它隱含在拿的東西，只是現在是明寫的。空的預設值不是安全網（空 pool 什麼都不發），它只是讓 manifest 保持合法；會落到它的叢集就是沒被現行模板渲染過。
+
+代價是失去「未知叢集自動安全」這個保護，換取的是這個設計真的能動。jcom 因此先補了一行 `LB_POOL_BLOCKS`（值就是它的 node CIDR），三個活叢集全部覆蓋。
+
+### D28. 標註值的兩個陷阱：空字串與 `*`
+
+4.3 要把 sharing 標註放進 jg-base，用 `${LAN_SHARING_KEY:=}` 控制開關。連續兩次被 YAML 擋下：
+
+| 寫法 | 結果 |
+|---|---|
+| `"${LAN_SHARING_KEY:=}"` | Gateway CRD 收到 `null` 而非 `""`，型別驗證失敗，整份 manifest dry-run 被拒 |
+| `"${LAN_SHARING_CROSS_NAMESPACE:=*}"` | kustomize **移除引號**，替換後成為裸 `*`，YAML 當成 alias，解析失敗 |
+
+共同的根因是**替換後的值要能獨立作為合法 YAML 純量**——kustomize 不會替你保留引號，而 Flux 是在 kustomize 之後才做替換的。
+
+修法是給每個服務**非空且互異**的預設值（自己的名字、自己的 namespace），等同「不共用」。實測確認：非空但互異的 key 各自獨立配發，兩個服務都 satisfied。而 `envsubst` 的 `:=` 對「已設定但為空」也套用預設值，所以未遷移叢集與已遷移但不收斂的叢集會落到同一條路徑。
+
+`sharing-cross-namespace` 收斂時用明確的 `network,mqtt` 而非 `*`——實測逗號清單與 `*` 效果相同，順帶把跨 namespace 權限收成最小集合。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。

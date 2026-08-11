@@ -105,6 +105,19 @@ cluster_dns_gateway_addr: "10.9.9.3"  # k8s-gateway (DNS) LB IP
 cluster_gateway_addr: "10.9.9.4"      # envoy-internal LB IP
 cloudflare_gateway_addr: "10.9.9.5"   # envoy-external LB IP
 
+# (OPTIONAL) Collapse every LAN-facing service onto one address. Their ports do
+# not overlap — envoy-internal 80/443, k8s-gateway 53, mqtt 1883 — so one
+# address serves all three, and the three addresses above become one.
+#
+# When set it supersedes cluster_gateway_addr, cluster_dns_gateway_addr and
+# mqtt_lb_ip: they stay declared, but all three render to this value.
+#
+# Opt-in, and it is a breaking change for the LAN: anything already pointed at
+# the old addresses — a resolver setting, an MQTT broker address, a HomeKit
+# pairing — has to be repointed. An appliance has no such history and collapses
+# from the start.
+# lan_shared_addr: "10.9.9.4"
+
 # Optional network overrides (the commented value is the actual default):
 # node_default_gateway: "10.9.9.1"                     # default: .1 of node_cidr
 # node_dns_servers: ["1.1.1.1", "1.0.0.1"]             # default: Cloudflare DNS

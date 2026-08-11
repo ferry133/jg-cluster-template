@@ -22,21 +22,18 @@ from pathlib import Path
 SECRETS = "kubernetes/components/sops/cluster-secrets.sops.yaml"
 
 
-def rendered_blocks(repo: Path) -> tuple[str, str]:
+def rendered_blocks(repo: Path) -> str:
     out = subprocess.run(
         ["sops", "-d", str(repo / SECRETS)], capture_output=True, text=True
     )
     if out.returncode != 0:
         sys.exit(f"could not decrypt {SECRETS}: {out.stderr.strip()}")
-    blocks, wide = "[]", "false"
+    blocks = "[]"
     for line in out.stdout.splitlines():
         key, _, value = line.strip().partition(":")
-        value = value.strip().strip("'\"")
         if key == "LB_POOL_BLOCKS":
-            blocks = value or "[]"
-        elif key == "LB_POOL_WIDE_DISABLED":
-            wide = value or "false"
-    return blocks, wide
+            blocks = value.strip().strip("'\"") or "[]"
+    return blocks
 
 
 def covered_addresses(blocks: str) -> set[ipaddress.IPv4Address]:
@@ -73,13 +70,7 @@ def assigned_addresses() -> list[tuple[str, str]]:
 
 def main() -> int:
     repo = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
-    blocks, wide = rendered_blocks(repo)
-    covered = covered_addresses(blocks)
-
-    if wide != "true":
-        print("wide pool still enabled — nothing is narrowed yet, check is moot")
-        return 0
-
+    covered = covered_addresses(rendered_blocks(repo))
     print(f"pool covers {len(covered)} address(es): "
           f"{', '.join(sorted(str(a) for a in covered))}\n")
     missing = []
@@ -93,6 +84,9 @@ def main() -> int:
         print(f"\nFAIL — {len(missing)} assigned address(es) not in the pool.")
         print("Applying this would leave them working until the Service is next")
         print("recreated, then silently unassign it. Add them and re-render.")
+        print("If instead you are deliberately moving a Service to a new")
+        print("address (lan_shared_addr), confirm the NEW address is listed")
+        print("above — this check only knows where Services are today.")
         return 1
     print("\nok — every assigned address is covered")
     return 0

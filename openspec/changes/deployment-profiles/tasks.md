@@ -62,12 +62,17 @@
 
 - [ ] 4.1 實作 LAN 位址探測元件：hostNetwork + CAP_NET_RAW，ARP 掃描節點所在子網
 - [ ] 4.2 讓探測結果以 `CiliumLoadBalancerIPPool` 為唯一對外輸出，重啟後重現同一位址
-- [ ] 4.3 為 `envoy-internal` / `mqtt` /（fallback）`k8s-gateway` 加上 `sharing-key` 與 `sharing-cross-namespace`（**兩邊都要掛**，缺一邊會 unassigned）
+- [x] 4.3 三個 LAN 服務都加上 `sharing-key` 與 `sharing-cross-namespace`（jg-base）。由 `lan_shared_addr` 一個欄位驅動：設了就把 `cluster_gateway_addr` / `cluster_dns_gateway_addr` / `mqtt_lb_ip` 三者都渲染成它，同時打開共用；沒設就各服務落到**自己的**預設 key（互異＝不共用），今日行為不變
+  - **已在 jgt-omni 端到端驗證**：`envoy-internal` 與 `k8s-gateway` 共用 `10.9.1.241`，兩者 `IPAMRequestSatisfied=True`，pool 從 3 個位址縮成 2 個（`.241` 共用 + `.243` external）。`envoy-external` 刻意不掛——沒有 LAN 客戶端連它
+  - spec 的三個場景都用 scratch 服務單獨驗過：跨 namespace 共用成立、缺一邊 `sharing-cross-namespace` 的那個拿不到位址且 `already_allocated_incompatible_service`、其餘不受影響
+  - 標註值踩了兩個 YAML 陷阱（空字串在 Gateway CRD 上是 `null`；`*` 被 kustomize 去引號後成為 YAML alias），兩次都被 dry-run 擋在套用之前。預設值改為服務自身名稱／namespace，收斂時用明確的 `network,mqtt`。詳見 `design.md` D28
 - [x] 4.6 已實作（jg-base `9b1530e`）。`pool` 保留 `cidr: ${NODE_CIDR}` 但加上 `disabled: ${LB_POOL_WIDE_DISABLED:=false}`，新增 `pool-narrow` 由 `${LB_POOL_BLOCKS:=[]}` 提供逐一位址的 range。**靠停用寬 pool 來收窄，不是加一個更窄的**——1.5 已證明最舊者勝，加窄的沒用。
   - 兩個變數的預設值都等於今日行為：cluster-secrets 還沒有這兩個鍵的叢集維持寬 pool + 空的 `pool-narrow`（空 pool 就是沒東西可發，無害）。**這一點是必要的**：CRD 並未要求 `blocks`，空的 blocks 會被接受並靜默清空整個 pool，所以「沒有預設值」不是安全的失敗，是無聲的斷線
   - envsubst 無法表達「退回 `NODE_CIDR`」：巢狀預設值裡的 `}` 會提前終止運算式，連帶把 YAML 弄壞（已用 `flux envsubst` 實測，設值與不設值兩種情況都壞）
   - 一併移除 jg-base 內兩個寫死的位址：`10.9.1.2`（mariadb）與 `10.9.8.8`（omni），與 6.1 的 NAS IP 同一類缺陷。兩者都以原字面值作為 substitution 預設值，未遷移的叢集行為不變
   - 三個活叢集的推導結果已與實際配發位址逐一比對，完全吻合（jg-jiahd 4 個、jcom 6 個、jgt-omni 3 個）。`cluster_api_addr` 刻意不納入——它是 Talos VIP，不是 Service
+  - **初版的兩個 pool 設計是錯的，已改為單一 pool**（jg-base `7e180df`）：narrow 依定義是 wide 的子集，必然重疊，Cilium 一律以 `PoolConflict=cidr_overlap` 拒絕，`disabled` 不影響判定。兩個叢集上 `pool-narrow` 的 `IPsUsed` 都是 0——**一個位址都沒配過**，而服務靠 D26 的「既有配發不收回」撐著，直到 jgt-omni 刪掉 `envoy-internal` 才逼出來。1.5 沒抓到是因為它的兩個 pool 不重疊。詳見 `design.md` D27
+  - 修正後三個叢集皆 `conflict=False`：jgt-omni `used=2/total=2`、jg-jiahd `used=4/total=4`、jcom `used=8/total=256`（未收斂，明寫整個 node CIDR）。jcom 為此在自己的模板補了一行 `LB_POOL_BLOCKS`
   - **已上線 jgt-omni 與 jg-jiahd**。兩段都先驗證「未帶變數時是 no-op」（`pool-narrow` 存在但為空、寬 pool 仍啟用、服務不變），再推 per-user 變數翻轉。切換皆在 10 秒內完成，位址一個沒掉，全部 Kustomization Ready
   - **危害已實證關閉**：narrow 後在 jgt-omni 建一個未釘位址的 LoadBalancer Service，得到 `ip=<none>` 與 *There are no enabled CiliumLoadBalancerIPPools that match this service*——在此之前它會拿走 `10.9.1.1`（LAN 閘道）並 ARP 廣播
   - jcom 尚未套用（模板世代較舊，見 3.2），維持寬 pool——這正是預設值要保障的情況，其服務全程未受影響
