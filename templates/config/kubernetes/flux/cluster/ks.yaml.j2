@@ -107,6 +107,12 @@ spec:
 #|   nfs-subdir provisions from a NAS this cluster does not have. #|
 #% set _ = _disabled.append(('nfs-client-provisioner', 'storage_backend is ' ~ storage_backend ~ ', so there is no NAS to provision from')) %#
 #% endif %#
+#% if deployment_profile != 'appliance' %#
+#|   Only an appliance is expected to land on a LAN nobody has surveyed. Every
+     other profile declares its addresses in cluster.yaml, and a probe writing a
+     second pool there would overlap the declared one. #|
+#% set _ = _disabled.append(('lan-address-probe', 'this profile declares its LAN addresses in cluster.yaml, so there is nothing to discover')) %#
+#% endif %#
 #% if is_single_node %#
 #|   Spegel is a peer-to-peer image mirror; with no peers its router never
      bootstraps, the pod never becomes ready, and it still rewrites every

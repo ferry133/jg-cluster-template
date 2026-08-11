@@ -60,8 +60,14 @@
 
 ## 4. LAN 位址配置（jg-base）
 
-- [ ] 4.1 實作 LAN 位址探測元件：hostNetwork + CAP_NET_RAW，ARP 掃描節點所在子網
-- [ ] 4.2 讓探測結果以 `CiliumLoadBalancerIPPool` 為唯一對外輸出，重啟後重現同一位址
+- [x] 4.1 `network/lan-address` 元件已實作（jg-base）：hostNetwork + `NET_RAW`，由 `NODE_CIDR` 找出對應介面，**從子網高位往下掃**（`.254 → .200`）——路由器發 DHCP 租約絕大多數從低位開始，高位比較可能長期空著。跳過節點自身持有的每一個位址與慣例閘道 `.1`
+  - 常駐 Deployment 而非 CronJob：appliance 首次開機不該等排程才有位址，而且這個迴圈同時就是 4.4 要的持續撞號監看
+  - **自己的 namespace**：Talos 預設 `baseline` 同時禁止 hostNetwork 與 `NET_RAW`，元件根本起不來（與 2c.11 的 storage namespace 同一類缺陷，同樣是實跑才發現）。標 `network` 會把 cloudflared / envoy / k8s-gateway 一起升到 privileged，因此改為專屬 namespace
+  - 非 appliance 一律 suspend（沿用 2.8 的機制）：那些 profile 在 cluster.yaml 宣告位址，探測寫出的第二個 pool 會與宣告的重疊，而 Cilium 拒絕重疊（D27）
+- [x] 4.2 唯一輸出就是 `pool-discovered` 這個 `CiliumLoadBalancerIPPool`，RBAC 也只給這一個資源名稱——沒有任何 Service 標註、模板或 schema 指名這個元件，所以之後換成 DHCP lease-holder 只要換掉這支腳本
+  - **已在 jgt-omni 實測**（用拋棄式 pool 名稱，不動該叢集的正式 pool）：正確找出 `enp2s0`、排除節點自身的四個位址、以 ARP 選出 `10.9.1.254` 並寫入 pool，`conflict=False`
+  - **重啟穩定性已驗證**：全新 pod 的第一輪輸出是 `keeping 10.9.1.254`（而非 `selected`），證明它讀回已發布的位址、重新 ARP 確認後沿用。這正是「重開機不會把所有 LAN 服務搬到新位址」的機制
+  - 選定的位址每一輪都重新探測，而不是選一次就固定——ARP 只能證明「此刻沒人回應」，當下關機的裝置回來仍會撞號（D4）
 - [x] 4.3 三個 LAN 服務都加上 `sharing-key` 與 `sharing-cross-namespace`（jg-base）。由 `lan_shared_addr` 一個欄位驅動：設了就把 `cluster_gateway_addr` / `cluster_dns_gateway_addr` / `mqtt_lb_ip` 三者都渲染成它，同時打開共用；沒設就各服務落到**自己的**預設 key（互異＝不共用），今日行為不變
   - **已在 jgt-omni 端到端驗證**：`envoy-internal` 與 `k8s-gateway` 共用 `10.9.1.241`，兩者 `IPAMRequestSatisfied=True`，pool 從 3 個位址縮成 2 個（`.241` 共用 + `.243` external）。`envoy-external` 刻意不掛——沒有 LAN 客戶端連它
   - spec 的三個場景都用 scratch 服務單獨驗過：跨 namespace 共用成立、缺一邊 `sharing-cross-namespace` 的那個拿不到位址且 `already_allocated_incompatible_service`、其餘不受影響

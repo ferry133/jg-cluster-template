@@ -211,8 +211,15 @@ class Plugin(makejinja.plugin.Plugin):
         # overlap with PoolConflict=cidr_overlap whether or not the wide one is
         # disabled. So a cluster with nothing to enumerate writes out the whole
         # node CIDR here, which is what it was getting implicitly anyway.
-        blocks = ([{'start': a, 'stop': a} for a in addrs] if addrs
-                  else [{'cidr': str(data.get('node_cidr'))}])
+        if addrs:
+            blocks = [{'start': a, 'stop': a} for a in addrs]
+        elif data.get('deployment_profile') == 'appliance':
+            # An appliance declares no addresses; lan-address-probe discovers one
+            # and publishes it as a second pool. This one stays empty so the two
+            # cannot overlap — Cilium rejects overlapping pools outright.
+            blocks = []
+        else:
+            blocks = [{'cidr': str(data.get('node_cidr'))}]
         data.setdefault('lb_pool_blocks',
                         json.dumps(blocks, separators=(',', ':')))
         # Whether local-path should claim the cluster-default StorageClass.
