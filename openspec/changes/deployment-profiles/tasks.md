@@ -63,9 +63,13 @@
 - [ ] 4.1 實作 LAN 位址探測元件：hostNetwork + CAP_NET_RAW，ARP 掃描節點所在子網
 - [ ] 4.2 讓探測結果以 `CiliumLoadBalancerIPPool` 為唯一對外輸出，重啟後重現同一位址
 - [ ] 4.3 為 `envoy-internal` / `mqtt` /（fallback）`k8s-gateway` 加上 `sharing-key` 與 `sharing-cross-namespace`（**兩邊都要掛**，缺一邊會 unassigned）
-- [ ] 4.6 把 `networks.yaml` 的 pool 從 `cidr: ${NODE_CIDR}` 收窄為只含實際使用的位址（同時修掉既有的寬 pool 風險）；`full` profile 需逐叢集列出現用位址後才套用
+- [x] 4.6 已實作（jg-base `9b1530e`）。`pool` 保留 `cidr: ${NODE_CIDR}` 但加上 `disabled: ${LB_POOL_WIDE_DISABLED:=false}`，新增 `pool-narrow` 由 `${LB_POOL_BLOCKS:=[]}` 提供逐一位址的 range。**靠停用寬 pool 來收窄，不是加一個更窄的**——1.5 已證明最舊者勝，加窄的沒用。
+  - 兩個變數的預設值都等於今日行為：cluster-secrets 還沒有這兩個鍵的叢集維持寬 pool + 空的 `pool-narrow`（空 pool 就是沒東西可發，無害）。**這一點是必要的**：CRD 並未要求 `blocks`，空的 blocks 會被接受並靜默清空整個 pool，所以「沒有預設值」不是安全的失敗，是無聲的斷線
+  - envsubst 無法表達「退回 `NODE_CIDR`」：巢狀預設值裡的 `}` 會提前終止運算式，連帶把 YAML 弄壞（已用 `flux envsubst` 實測，設值與不設值兩種情況都壞）
+  - 一併移除 jg-base 內兩個寫死的位址：`10.9.1.2`（mariadb）與 `10.9.8.8`（omni），與 6.1 的 NAS IP 同一類缺陷。兩者都以原字面值作為 substitution 預設值，未遷移的叢集行為不變
+  - 三個活叢集的推導結果已與實際配發位址逐一比對，完全吻合（jg-jiahd 4 個、jcom 6 個、jgt-omni 3 個）。`cluster_api_addr` 刻意不納入——它是 Talos VIP，不是 Service
 - [ ] 4.7 appliance 下把 `envoy-external` 改為 ClusterIP，並確認 cloudflared 仍經 `envoy-external.network.svc.cluster.local:443` 正常運作
-- [ ] 4.8 把 `jg-base` 的 `CiliumLoadBalancerIPPool` apiVersion 從 `v2alpha1` 更新為叢集實際服務的 `cilium.io/v2`
+- [x] 4.8 `networks.yaml` 的 apiVersion 已改為 `cilium.io/v2`（叢集實際服務且儲存的版本），隨 4.6 一併變更
 - [ ] 4.9 讓 daily-check 監看所有 LoadBalancer Service 的 `cilium.io/IPAMRequestSatisfied` 條件
 - [ ] 4.4 實作指派後的持續撞號監看，並在確認撞號時自動改選、記錄新舊位址
 - [ ] 4.5 撰寫探測元件的替換說明：DHCP lease-holder 須產出相同的 pool，且不得要求 pool 以外的任何變更
@@ -113,6 +117,8 @@
 - [ ] 7.6 建立 `age.key` escrow 流程，並將「escrow 完成」列為 provisioning 完成的條件
 
 ## 8. 驗收
+
+- [ ] 8.7 收窄 pool 的驗收**不能**問「narrow 之後有沒有壞」——漏列位址時那個問題也會答「沒有」。必須在套用前證明 pool 涵蓋當下每一個已配發位址（`kubectl get svc` 的實際集合 vs 渲染出的 `LB_POOL_BLOCKS`）。已配發的位址不會因來源 pool 消失而被收回，要到 Service 下次重建才失敗。詳見 `design.md` D26
 
 - [ ] 8.1 在 scratch 叢集完成一次 appliance profile 全新部署，客戶端輸入為 0 項
 - [ ] 8.2 從 LAN 用戶端驗證內網服務可用扁平 hostname 存取，且未變更路由器或裝置設定

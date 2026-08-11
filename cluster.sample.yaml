@@ -284,7 +284,7 @@ ttyd_credential: "user:password"      # also used by the default/ttyd extra
 #   default/linebot              → anthropic_api_key, database_url,
 #                                  line_channel_access_token, line_channel_secret, line_notify_group_id,
 #                                  trello_api_key, trello_api_token
-#   default/mariadb              → (no extra params)
+#   default/mariadb              → mariadb_lb_ip
 #   default/mqtt                 → mqtt_lb_ip
 #   default/postgres             → postgres_password
 #   default/synophoto            → synophoto_auth0_* (3),
@@ -297,7 +297,7 @@ ttyd_credential: "user:password"      # also used by the default/ttyd extra
 #   ingress-nginx/ingress-nginx  → ingress_nginx_lb_ip
 #   kube-system/cilium           → (requires Omni cniConfig:none MachineConfigPatch)
 #   network/cloudflare-tunnel-lan→ cloudflare_lan_tunnel_token
-#   omni/omni                    → omni_gpg_key
+#   omni/omni                    → omni_gpg_key, omni_udp_lb_ip
 # extras: []
 # Example:
 # extras:
@@ -315,7 +315,10 @@ ttyd_credential: "user:password"      # also used by the default/ttyd extra
 # postgres_password: ""
 
 # ── default/mqtt ──────────────────────────────────────────────────────────────
-# mqtt_lb_ip: "10.9.x.x"              # LB IP for MQTT broker; must be in node_cidr LB pool
+# Every *_lb_ip below is added to this cluster's LoadBalancer pool. The pool
+# contains only the addresses listed here plus the three gateway addresses in
+# §1 — an address that is not listed is one the Service cannot be given.
+# mqtt_lb_ip: "10.9.x.x"
 
 # ── default/trello-notifier ───────────────────────────────────────────────────
 # trello_api_key: ""
@@ -348,6 +351,9 @@ ttyd_credential: "user:password"      # also used by the default/ttyd extra
 # ── default/ttyd ──────────────────────────────────────────────────────────────
 # ttyd_credential: "user:password"    # shared with claude-code if both enabled
 
+# ── default/mariadb ───────────────────────────────────────────────────────────
+# mariadb_lb_ip: "10.9.x.x"           # was hardcoded to 10.9.1.2 in jg-base
+
 # ── ingress-nginx/ingress-nginx ───────────────────────────────────────────────
 # ingress_nginx_lb_ip: "10.9.x.x"
 
@@ -356,6 +362,7 @@ ttyd_credential: "user:password"      # also used by the default/ttyd extra
 # freepbx_mysql_password: ""
 
 # ── omni/omni ─────────────────────────────────────────────────────────────────
+# omni_udp_lb_ip: "10.9.x.x"          # was hardcoded to 10.9.8.8 in jg-base
 # GPG private key for omni etcd encryption. Generate with:
 #   (export GNUPGHOME=$(mktemp -d); gpg --batch --passphrase '' --quick-gen-key x; \
 #    gpg -a --export-secret-key; rm -rf $GNUPGHOME)

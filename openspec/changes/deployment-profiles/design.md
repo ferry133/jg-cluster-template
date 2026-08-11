@@ -460,6 +460,29 @@ message = All enabled CiliumLoadBalancerIPPools that match this service
 
 功能面也一併驗了，不只是「註解有出現」：單一位址 pool 下，ns `spike` 的 Gateway（:80）與 ns `default` 的普通 Service（:9090）帶同一組 `sharing-key` + `sharing-cross-namespace: "*"`，兩者同得 `203.0.113.90`。跨 namespace 共用經由 Gateway 傳導的 key 成立，D3 的單一內網位址設計在 Gateway 這一側站得住。
 
+### D26. 收窄 pool 的失敗是延遲性的，不是即時可見的
+
+4.6 實作前先在 jg-jiahd 演練了整個切換（用 TEST-NET 位址明確釘死，任何 LAN pool 都服務不了它，因此對真實網路零暴露）。兩個結果，第二個推翻了我先前的判斷。
+
+**切換本身無縫**。`drill-wide` 設 `disabled: true` 的瞬間起連續取樣 12 秒，位址一次都沒掉，`IPAMRequestSatisfied` 全程 `True`——Cilium 直接改由 `drill-narrow` 供應同一個位址，不會先收回再配發。
+
+**但漏列一個位址不會當場報錯**。刪掉提供該位址的 pool 之後：
+
+```
+t+3s … t+18s   ip=192.0.2.50   satisfied=True   reason=satisfied
+```
+
+**已經配出去的位址不會因為來源 pool 消失而被收回。** 直到 Service 被重建才浮出來：
+
+```
+after recreate:  ip=<none>  satisfied=False
+  message: No pool exists with a CIDR containing '192.0.2.50'
+```
+
+我先前說「漏掉的位址會依 1.6 可見地失敗」——**那是錯的**。1.6 量的是「新配發時 pool 空間不足」，不是「既有配發的來源消失」。後者是潛伏的：narrow 之後一切看起來正常，直到某次 Helm upgrade、Flux 重佈或節點事件重建了那個 Service，它才安靜地失去位址。而那時距離改動已經過了幾天或幾週，沒有人會把兩件事連起來。
+
+**因此 4.6 的驗收標準不能是「narrow 完之後有沒有壞」**——那個問題在漏列的情況下也會回答「沒有」。必須是**套用前先證明 pool 涵蓋當下每一個已配發位址**，也就是把 `kubectl get svc` 實際列出的位址集合，和渲染出來的 `LB_POOL_BLOCKS` 逐一比對。三個活叢集都已這樣比對過，完全吻合。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。
