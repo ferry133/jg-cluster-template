@@ -68,6 +68,10 @@
   - envsubst 無法表達「退回 `NODE_CIDR`」：巢狀預設值裡的 `}` 會提前終止運算式，連帶把 YAML 弄壞（已用 `flux envsubst` 實測，設值與不設值兩種情況都壞）
   - 一併移除 jg-base 內兩個寫死的位址：`10.9.1.2`（mariadb）與 `10.9.8.8`（omni），與 6.1 的 NAS IP 同一類缺陷。兩者都以原字面值作為 substitution 預設值，未遷移的叢集行為不變
   - 三個活叢集的推導結果已與實際配發位址逐一比對，完全吻合（jg-jiahd 4 個、jcom 6 個、jgt-omni 3 個）。`cluster_api_addr` 刻意不納入——它是 Talos VIP，不是 Service
+  - **已上線 jgt-omni 與 jg-jiahd**。兩段都先驗證「未帶變數時是 no-op」（`pool-narrow` 存在但為空、寬 pool 仍啟用、服務不變），再推 per-user 變數翻轉。切換皆在 10 秒內完成，位址一個沒掉，全部 Kustomization Ready
+  - **危害已實證關閉**：narrow 後在 jgt-omni 建一個未釘位址的 LoadBalancer Service，得到 `ip=<none>` 與 *There are no enabled CiliumLoadBalancerIPPools that match this service*——在此之前它會拿走 `10.9.1.1`（LAN 閘道）並 ARP 廣播
+  - jcom 尚未套用（模板世代較舊，見 3.2），維持寬 pool——這正是預設值要保障的情況，其服務全程未受影響
+  - 4.8 一併踩到一個坑：`CiliumL2AnnouncementPolicy` **只有 v2alpha1**，我把整份檔案改成 v2 導致整個 manifest dry-run 失敗、Kustomization NotReady。Flux 的 dry-run 擋在套用之前，pool 與服務都沒被動到；已修正（jg-base `2fa30b6`）
 - [ ] 4.7 appliance 下把 `envoy-external` 改為 ClusterIP，並確認 cloudflared 仍經 `envoy-external.network.svc.cluster.local:443` 正常運作
 - [x] 4.8 `networks.yaml` 的 apiVersion 已改為 `cilium.io/v2`（叢集實際服務且儲存的版本），隨 4.6 一併變更
 - [ ] 4.9 讓 daily-check 監看所有 LoadBalancer Service 的 `cilium.io/IPAMRequestSatisfied` 條件
@@ -118,7 +122,7 @@
 
 ## 8. 驗收
 
-- [ ] 8.7 收窄 pool 的驗收**不能**問「narrow 之後有沒有壞」——漏列位址時那個問題也會答「沒有」。必須在套用前證明 pool 涵蓋當下每一個已配發位址（`kubectl get svc` 的實際集合 vs 渲染出的 `LB_POOL_BLOCKS`）。已配發的位址不會因來源 pool 消失而被收回，要到 Service 下次重建才失敗。詳見 `design.md` D26
+- [x] 8.7 收窄 pool 的驗收**不能**問「narrow 之後有沒有壞」——漏列位址時那個問題也會答「沒有」。必須在套用前證明 pool 涵蓋當下每一個已配發位址（`kubectl get svc` 的實際集合 vs 渲染出的 `LB_POOL_BLOCKS`）。已配發的位址不會因來源 pool 消失而被收回，要到 Service 下次重建才失敗。詳見 `design.md` D26。已實作為 `scripts/check-lb-pool-covers-live.py`，套用前對 jgt-omni 與 jg-jiahd 各跑一次皆通過
 
 - [ ] 8.1 在 scratch 叢集完成一次 appliance profile 全新部署，客戶端輸入為 0 項
 - [ ] 8.2 從 LAN 用戶端驗證內網服務可用扁平 hostname 存取，且未變更路由器或裝置設定
