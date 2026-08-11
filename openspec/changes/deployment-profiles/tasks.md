@@ -41,6 +41,10 @@
 - [x] 2c.11 jg-base `storage` namespace 缺 PodSecurity 標籤，Talos 預設 `baseline` 擋掉 local-path provisioner 的 hostPath helper pod：provisioner 本身 Running、Kustomization Ready，但 PVC 永遠 Pending，錯誤只留在 PVC event。已於 jg-base `05b1501` 標為 `privileged`
 - [x] 2c.12 上述五項合起來是同一個假設的五個位置（claude-code 長在有 NAS 的叢集上），且**全部只在 `local-path` 出現**——即 appliance 的標準組態。已在 jgt-omni 端到端驗證 `im.janncot.cc`：pod `1/1 Running`、兩個 PVC Bound 於 local-path、憑證 Ready、HTTP 401（ttyd basic auth，預期值）。詳見 `design.md` D14
 
+- [x] 2c.13 `storage/local-path-provisioner` 由 extra 改為 base app 且永不 suspend（jg-base `3d87da3`）：它不是 NFS 的替代方案而是 node-local 層，有 NAS 的叢集同樣需要（否則 6.4 在 jg-jiahd 無處可放 DB）。`ks.yaml.j2` 的 auto-add 移除，改列入 `_now_base`。已在 jgt-omni 實測遷移完成：`local-path-provisioner` 現由 `cluster-apps-base` 擁有、路徑指向 `apps/base/`、StorageClass 回歸、PVC 全程 Bound。詳見 `design.md` D15
+- [ ] 2c.14 修正 `accept_node_pinning` 的 predicate：現在掛在 `storage_backend == 'local-path'`，但 local-path 已到處都在，6.4 又要把 DB 放上去 → jg-jiahd（3 節點、NFS）會靜默釘死 postgres 而閘門不觸發。該問「有沒有工作負載落在 node-local class」。**Group 6 的前置**
+- [x] 2c.15 jg-base README 的 extras→base 遷移 runbook 是錯的，且從未被執行過（jcom 事後補寫）。實跑後 release 照樣被 uninstall：`spec.prune` 不管刪除串聯——CRD 定義 `deletionPolicy` 才是，`MirrorPrune` 才會讀 `prune`，而本模板每個 Kustomization 都明寫 `deletionPolicy: WaitForTermination`；且線上 patch 會被母 Kustomization 的下次 apply 覆蓋，suspend 母體也不可靠（`Kustomization/flux-system` 由 flux-operator 管）。已改為「走 git 分兩次 push」（jg-base `db2568a`），詳見 `design.md` D16
+
 ## 3. 既有叢集遷移（不改變行為）
 
 - [x] 3.1 jg-jiahd 副本補 `deployment_profile: "full"` + `storage_backend: "nfs"`：`ks.yaml` 完全相同，`cluster-secrets` 僅**新增** 4 個空的 `BACKUP_R2_*`，既有值未變

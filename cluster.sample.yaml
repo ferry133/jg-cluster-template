@@ -31,11 +31,16 @@
 deployment_profile: "full"
 
 # ── Storage backend ───────────────────────────────────────────────────────────
-# (REQUIRED) What bulk media and file shares use. Databases are block-backed
-# regardless — this axis does not move them.
+# (REQUIRED) Which storage class is the cluster default — what bulk media and
+# file shares land on. Databases are block-backed regardless; this axis does not
+# move them.
 #   "local-path"  node-local disk; no NAS needed
 #   "nfs"         NAS-backed; requires nas_server / nas_path below
 # Forced to "local-path" under the appliance profile.
+#
+# This picks the default, not which provisioners exist: every cluster installs
+# local-path-provisioner, because a NAS is not somewhere a database can live.
+# Choosing "nfs" additionally enables the NFS provisioner.
 storage_backend: "nfs"
 
 # (REQUIRED when storage_backend is "local-path") Does this cluster have exactly
@@ -270,8 +275,7 @@ ttyd_credential: "user:password"      # also used by the default/ttyd extra
 #   ingress-nginx/ingress-nginx  → ingress_nginx_lb_ip
 #   kube-system/cilium           → (requires Omni cniConfig:none MachineConfigPatch)
 #   network/cloudflare-tunnel-lan→ cloudflare_lan_tunnel_token
-#   omni/omni                    → omni_gpg_key (+ storage/local-path-provisioner)
-#   storage/local-path-provisioner → (no extra params; needed by omni/omni)
+#   omni/omni                    → omni_gpg_key
 # extras: []
 # Example:
 # extras:

@@ -175,7 +175,7 @@ Generates: `cluster.yaml` (from sample), `nodes.yaml` (from sample), `age.key` (
     | Field | Values | Effect |
     |-------|--------|--------|
     | `deployment_profile` | `appliance` / `prosumer` / `full` | This page is the `full` path. `appliance` rejects everything you would fill in by hand. |
-    | `storage_backend` | `local-path` / `nfs` | `nfs` requires `nas_server` and `nas_path`; `local-path` skips the `storage/nfs-subdir` extra automatically. |
+    | `storage_backend` | `local-path` / `nfs` | Which class is the cluster default. `nfs` requires `nas_server` and `nas_path` and enables the NFS provisioner; `local-path` suspends it. `local-path` itself is installed either way. |
 
     `cue vet` runs before anything is rendered, so a missing or contradictory
     field fails immediately and leaves `kubernetes/` untouched.

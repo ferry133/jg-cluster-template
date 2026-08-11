@@ -266,6 +266,37 @@ failed to provision volume with StorageClass "local-path":
 
 **通則**：這五道全部只在 `storage_backend: local-path` 上出現，也就是 **appliance profile 的標準組態**。有 NAS 的叢集一道都碰不到——所以這條路徑在此之前從未被端到端走過。②（以及後續每個 profile）的驗收必須包含**在目標 profile 上實跑**，不能只驗 `task configure` 的輸出：前四道在渲染階段全部無聲通過。
 
+### D15. `storage_backend` 在回答兩個問題，只有一個是單值的
+
+`local-path-provisioner` 原本是 extra，語意上被當成「NFS 的替代方案」——於是有 NAS 的叢集**不會裝它**。但它不是替代方案，是 node-local 那一層：D7 要求 PostgreSQL 離開 NFS（fsync 與鎖語意，與 NAS 多大無關），而在 `storage_backend: nfs` 的叢集上，DB 無處可去。Group 6.4 因此在 jg-jiahd 上根本無法實作。
+
+```
+「裝哪些 provisioner?」  → 常常兩個都要
+「哪一張是預設 class?」  → 恰好一個
+```
+
+只有第二個是單值選擇。2026-08-11 起：`local-path-provisioner` 移入 jg-base base apps 且**永不 suspend**；`nfs-subdir` 維持 base 但無 NAS 時 suspend；`storage_backend` 只決定預設。`ks.yaml.j2` 那段 auto-add 隨之刪除——它存在的唯一理由就是「是 extra 但又非裝不可」，這個矛盾本身就是訊號。
+
+**連帶要修的 predicate**：D13 的 `accept_node_pinning` 閘門掛在 `storage_backend == 'local-path'`。local-path 現在到處都在，6.4 又要把 DB 放上去，於是 jg-jiahd（3 節點、NFS）會把 postgres 釘死在一台**而閘門不觸發**。該問的是「有沒有工作負載落在 node-local class」，不是「local-path 是不是預設」。列為 Group 6 的前置。
+
+### D16. 遷移 runbook 從未被執行過，而它是錯的
+
+jg-base README 那份「suspend 母 Kustomization → `kubectl patch spec.prune=false`」的步驟，是 2026-08-08 jcom 掉 PVC 之後寫下的**補救建議**，沒有人跑過。2026-08-11 第一次照著跑（local-path 遷移），release 照樣被 uninstall。兩個各自獨立的原因：
+
+**一、`prune` 不是管刪除串聯的欄位。** CRD 寫得很清楚：
+
+> `deletionPolicy` … Valid values are (`MirrorPrune`, `Delete`, `WaitForTermination`, `Orphan`). **`MirrorPrune` mirrors the Prune field**. Defaults to `MirrorPrune`.
+
+`prune` 只透過 `MirrorPrune` 才會被讀到。而本模板生成的每個 Kustomization 都**明寫** `deletionPolicy: WaitForTermination`，所以刪除時 `prune` 根本不在路徑上。patch 下去讀回來一模一樣，看起來完全成功。
+
+**二、線上 patch 本來就留不住。** 兩個欄位都宣告在 git 裡，母 Kustomization 下次 server-side apply 就覆蓋回去。想靠 suspend 母體擋住也不行：suspend 當下看是生效的，但已在飛行中的 reconcile 照樣落地，而且這個 stack 的 `Kustomization/flux-system` 帶著 `app.kubernetes.io/managed-by: flux-operator`——另一個 controller 對它的 spec 有自己的主張。
+
+有效做法是**走 git，分兩次 push**：先把退役的 Kustomization 設成 `deletionPolicy: Orphan`、確認真的 apply 了，再 push 移除。
+
+這次選在 jgt-omni 上試是對的：local-path 的 PV 是節點上的 hostPath，helm uninstall 拿走 StorageClass 與 Deployment，但**不碰還有 PVC 綁著的 PV**。兩個 PVC 全程 Bound，復原只需要一次 `flux reconcile source git jg-base`。同一個錯誤發生在 claude-code 的 PVC 上就是 jcom 那次的資料損失。
+
+**通則**：一份沒被執行過的 runbook 不是文件，是假設。而它會在最壞的時刻被照著執行——上一次就是。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。

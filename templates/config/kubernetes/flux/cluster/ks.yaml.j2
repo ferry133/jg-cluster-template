@@ -156,21 +156,22 @@ spec:
         kind: Secret
   dependsOn:
     - name: cluster-apps-base
-#| claudecode/claude-code and monitoring/daily-check moved from extras to base
-   (2026-08-07); the filter below skips them so a per-user cluster.yaml that
-   still lists either does not render a Kustomization pointing at a jg-base
-   path that no longer exists. #|
-#% set _now_base = ['claudecode/claude-code', 'monitoring/daily-check'] %#
-#| storage/nfs-subdir is NOT filtered here: it is a base app in jg-base, not an
-   extra, so it is disabled by the suspend patch on cluster-apps-base above.
+#| Apps that graduated from extras to base. The filter skips them so a per-user
+   cluster.yaml that still lists one does not render a Kustomization pointing at
+   a jg-base path that no longer exists.
 
-   Disabling the NFS provisioner leaves the cluster with no storage class at
-   all, and PVCs that name one that does not exist stay Pending forever. So the
-   backend that replaces it is added here whether or not `extras:` lists it —
-   the profile's default storage class has to exist, not merely be named. #|
-#% set _required = ['storage/local-path-provisioner'] if storage_backend == 'local-path' else [] %#
-#% set _all_extras = (extras | default([])) + (_required | reject('in', extras | default([])) | list) %#
-#% for extra in _all_extras if extra not in _now_base %#
+     claudecode/claude-code, monitoring/daily-check     2026-08-07
+     storage/local-path-provisioner                     2026-08-11
+
+   local-path is not the alternative to NFS — it is the node-local tier, and a
+   cluster with a NAS still needs one (Postgres on NFS is wrong on fsync and
+   lock semantics regardless of NAS size). So it is installed everywhere and
+   never suspended, and `storage_backend` only decides which class is default.
+
+   storage/nfs-subdir is likewise a base app, but it IS conditional, so it is
+   disabled by the suspend patch on cluster-apps-base above rather than here. #|
+#% set _now_base = ['claudecode/claude-code', 'monitoring/daily-check', 'storage/local-path-provisioner'] %#
+#% for extra in extras | default([]) if extra not in _now_base %#
 #% set _app = extra.split('/')[1] %#
 ---
 # ── extras/#{extra}# ─────────────────────────────────────────────────────────
