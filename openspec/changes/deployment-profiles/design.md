@@ -87,7 +87,7 @@ CUE 上不設 `*"full" | ...`。既有 `cluster.yaml` 會在 `cue vet` 階段直
 - 單一位址 pool 下的自動配發是否落到 Pending（推論成立，但未實測）。
 - Envoy Gateway 的 `spec.infrastructure.annotations` 是否會把 `sharing-key` 傳導到產生的 Service。本次測的是原生 Service。既有 production 已證實 `lbipam.cilium.io/ips` 經此路徑傳導成功，而傳導是通用的 annotation 複製，因此推論成立——但仍是推論。
 
-### D3a. 現有 pool 涵蓋整個 node CIDR 是既有風險（2026-08-11 實測後上調，見 D23）
+### D3a. 現有 pool 涵蓋整個 node CIDR 是既有風險（2026-08-11 實測確認，見 D23）
 
 `jg-base/kubernetes/apps/base/kube-system/cilium/app/networks.yaml` 的 pool 是 `cidr: ${NODE_CIDR}`，實測 jg-jiahd 即為 `10.9.9.0/24`。今天沒出事只因為每個 Service 都用 `lbipam.cilium.io/ips` 釘死位址；任何一個漏掉註記的 Service 都會從整個客戶 LAN 隨機取一個位址並經 L2 announcement 宣告，可能與真實裝置衝突。
 
@@ -418,15 +418,21 @@ secret 的比對不能直接 diff 明文（裡面是 token）。作法是解密�
 
 **這直接決定 4.6 的作法**：jg-base 的 `pool` 在每個叢集上都是最早建立的那一個，任何後加的窄 pool 永遠拿不到分配。**必須收窄既有 pool，不能在旁邊新增。**
 
-#### 順帶把 D3a 的風險等級上調
+#### 順帶確認 D3a 的風險（含一次自我更正）
 
-原本記的是「pool 涵蓋整個 node CIDR，寬 pool 自動配發會取 `10.9.9.1`」。實測顯示還要更早一格：
+第一次量測時我的 spike pool 沒有寫 `allowFirstLastIPs`，而該欄位**未指定即等於可配發**，於是拿到 `192.0.2.0`（網路位址），我據此把 D3a 的風險上調成「比原本假設更糟」。**那是錯的——量到的是我自己的設定，不是生產設定。** jg-base 的 pool 明寫 `allowFirstLastIPs: "No"`。
+
+補測（同樣 `/24`，這次照抄生產設定）：
 
 ```
-第 1 個自動配發   192.0.2.0   ← /24 的網路位址，Cilium 並未排除
-第 2 個           192.0.2.1   ← 換算到 10.9.1.0/24 就是預設閘道
-第 3 個           192.0.2.2
+allowFirstLastIPs: "No"
+第 1 個自動配發   192.0.2.1
+第 2 個           192.0.2.2
 ```
+
+所以網路位址確實被保留，**D3a 原本寫的就是對的**：第一個自動配發的位址就是 `.1`，換算到 `10.9.1.0/24` 正是預設閘道。風險等級不變，不需要上調。
+
+**教訓**：spike 的環境要照抄被測對象的設定，否則量到的是自己。
 
 而 `l2-policy` 是 `loadBalancerIPs: true` 且**沒有 serviceSelector**——配到什麼就 ARP 廣播什麼。所以在任何一台這種叢集上，只要有人建立一個沒指定 IP 的 LoadBalancer Service，第二個就會把預設閘道的位址搶去廣播。
 
