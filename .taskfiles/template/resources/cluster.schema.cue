@@ -57,17 +57,21 @@ import (
 		"freepbx/freepbx",
 	]
 
+	// Which class the block tier uses. Node-local by default. A cluster whose
+	// database is still on NFS names that class here until it can be dumped and
+	// restored — a PVC's storageClassName is immutable, so the move is not
+	// something a re-render can perform.
+	db_storage_class: *"local-path" | string & !=""
+
 	// Whether anything in this cluster lands on a node-local class. This, and
 	// not `storage_backend`, is what the acknowledgement below has to be keyed
 	// on: a NAS-backed cluster running a database is pinned just as hard, and
-	// asking about the default class would wave it through.
-	_uses_node_local: *false | true
-	if storage_backend == "local-path" {
-		_uses_node_local: true
-	}
-	if len([for e in extras if list.Contains(#BlockTierExtras, e) {e}]) > 0 {
-		_uses_node_local: true
-	}
+	// asking about the default class would wave it through. Equally, a cluster
+	// that has deliberately parked its database on NFS is pinning nothing, and
+	// should not be asked to acknowledge what is not happening.
+	_uses_node_local: (storage_backend == "local-path") ||
+		(db_storage_class == "local-path" &&
+			len([for e in extras if list.Contains(#BlockTierExtras, e) {e}]) > 0)
 
 	if _uses_node_local {
 		single_node: bool
@@ -170,11 +174,6 @@ import (
 	cluster_name: string & !=""
 	coredns_cluster_ip?: net.IPv4
 
-	// Escape hatch for a cluster whose database is already on NFS. Defaults to
-	// the block tier; setting it to an NFS class is a deliberate statement that
-	// the move is pending, because a PVC's storageClassName is immutable and
-	// the data has to be dumped and restored to change it.
-	db_storage_class?: string & !=""
 
 	// Off-site backup. A single-node appliance on local disk has no redundancy,
 	// so losing the disk loses the database and the agent's accumulated context.

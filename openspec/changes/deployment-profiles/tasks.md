@@ -80,7 +80,21 @@
 - [x] 6.4 DB 資料卷改用 `${DB_STORAGE_CLASS}`（`claudecode/postgres`、`default/mariadb`、`default/postgres`）。`default/postgres` 原本**完全沒寫 class**，於是在 NFS 叢集上資料目錄靜默落在 `sc-nas`。substitution 預設值取 `sc-nas` 而非正確的 block tier：PVC 的 `storageClassName` 是 immutable，預設值只會在尚未遷移到 profile schema 的叢集上生效，而那些全是 DB 已在 NFS 上的 NFS 叢集——預設值的意思是「維持現狀」，真正的搬遷仍須 dump/restore。freepbx 已在 block tier，不動
 - [x] 6.5 claude-code 工作區改用 profile 預設 class（已於 2c.9/2c.10 完成）
 - [x] 6.6 已驗證：設了 `nas_coding_path` 時 `coding` 掛載渲染結果與先前逐字相同（`type: nfs` + `${NAS_SERVER}`）；未設時整段不存在，兩個 PVC 落在 `local-path`
-- [ ] 6.7 既有叢集的 DB 搬遷（jg-jiahd `default/postgres`、jcom `claudecode/postgres`）：需 dump → 刪 PVC → 以 block class 重建 → restore。`db_storage_class` 欄位讓「還沒搬」變成 cluster.yaml 裡看得見的一行，而不是靜默狀態
+- [ ] 6.7 既有叢集的 DB 搬遷 —— **2026-08-11 決定延後**，改以 `db_storage_class: "sc-nas"` 明寫標記待辦。理由與現況：
+
+  | | jg-jiahd | jcom |
+  |---|---|---|
+  | 節點 | 3 | **1** |
+  | PVC | `db/postgres-data` 5Gi sc-nas | `claudecode/postgres-data` 5Gi sc-nas |
+  | DB 大小 | 8.7 MB | 7.7 MB |
+  | 日備份 | 正常，保留 14 份 | 正常 |
+  | 釘死代價 | **真實**——3 選 1 | **無**——本來就單節點 |
+  | 阻塞於 | 3.1（模板世代同步） | 3.2 → ⑤ |
+
+  jg-jiahd 選擇保留 sc-nas，等 2c.8 的複製式儲存到位再一次到位——搬到 local-path 是拿「可跨節點重新排程」換「正確的 fsync/鎖語意」，而 2c.8 兩者都給。jcom 單節點本無代價，但其 `templates/` 是更舊的世代（`SECRET_DOMAIN`、無儲存分層鍵），`task configure` 渲不出 `DB_STORAGE_CLASS`，必須先過 ⑤。
+
+- [x] 6.8 `_uses_node_local` 再修一次：`db_storage_class` 明寫為非 node-local 的 class 時，DB 就不在 node-local 上，pinning 閘門不該再問。predicate 改為 `storage_backend == "local-path"` **或**（`db_storage_class == "local-path"` **且** 有 block-tier extra）。這個錯誤是由 6.7 的決定當場暴露的——選了「不搬」才發現 schema 會要求承認一件不會發生的事。六種組合已驗證
+- [x] 6.9 **還原演練**（延後搬遷的直接後果：jg-jiahd 的 DB 繼續待在 NFS 上，失效模式是靜默損毀，而唯一的救援就是那份日備份——它的 restore 半邊從未被執行過）。已在 jg-jiahd 以唯讀掛載備份卷的拋棄式 postgres 實測 `linebot-20260810.sql.gz`：10 張表列數與生產**逐表相同**，restore 0 error。前置條件一併查出：**必須先建 `linebot` role**，否則 dump 裡的 `OWNER TO` 全數失敗（表仍會建，但擁有者變成 postgres）。演練 pod 已刪除
 
 ## 7. Appliance 備份（jg-base）
 

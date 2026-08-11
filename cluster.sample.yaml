@@ -64,7 +64,20 @@ storage_backend: "nfs"
 #                                      fsync and lock semantics a database needs
 # So a three-node cluster with a NAS still has to answer this if it runs a
 # database. It is pinned just as hard; only the route there is different.
+# Setting db_storage_class to a non-node-local class below removes the second
+# route, and with it the question.
 # accept_node_pinning: true
+
+# ── Block tier ────────────────────────────────────────────────────────────────
+# (OPTIONAL) Which storage class databases use. Defaults to "local-path" and
+# deliberately does not follow storage_backend — NFS is never a correct answer
+# for something that needs fsync durability and file locking.
+#
+# Name an NFS class instead (e.g. "sc-nas") only to record that a cluster's
+# database has not been moved yet: a PVC's storageClassName is immutable, so the
+# move is a dump and restore, not a re-render. Writing it down keeps "not yet
+# moved" visible instead of silent.
+# db_storage_class: "local-path"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # §1. BASE (required for this profile)

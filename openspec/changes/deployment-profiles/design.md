@@ -327,6 +327,50 @@ Group 6 實作後定形為三個名稱，各自回答不同問題：
 
 若照原需求執行，會把四組正常運作的靜態綁定改成動態供裝，在 jg-jiahd 上把 linebot 的知識庫與 synophoto 的 vault 從既有 NFS export 換成新配的空目錄。**照著錯的規格做，比不做更糟**——spec 已改寫，並保留原文與被推翻的過程。
 
+### D19. 延後搬遷是有代價的選擇，代價要當場付掉
+
+6.7 的決定是**不搬**：jg-jiahd 的 postgres 留在 `sc-nas`，等 2c.8 的複製式儲存。理由站得住腳——搬到 local-path 是拿「可跨節點重新排程」換「正確的 fsync/鎖語意」，而 2c.8 兩者都給，何必先付一次遷移成本再付第二次。
+
+但這個選擇有個立即的後果：**jg-jiahd 的資料庫繼續待在 NFS 上，而 postgres on NFS 的失效模式是靜默損毀**——不是崩潰，是某天發現資料不對。那條路徑的唯一救援是每天那份 dump。
+
+而那份 dump 的 **restore 半邊從未被執行過**。備份 CronJob 每天寫出 48 KB 的檔案、留 14 份、job 全部 Completed——證明的是「dump 會產生檔案」，不是「檔案能還原成資料庫」。這正是 D16 那個錯誤的形狀：一份沒被執行過的程序不是保障，是假設。
+
+所以延後搬遷的同時就把演練做掉了。在 jg-jiahd 起一個拋棄式 postgres、唯讀掛上備份卷、還原 `linebot-20260810.sql.gz`：
+
+```
+prod                    restored
+episodes=148            episodes=148
+knowledge=34            knowledge=34
+line_user_projects=29   line_user_projects=29
+line_users=29           line_users=29
+projects=7              projects=7
+schema_migrations=13    schema_migrations=13
+sites=3                 sites=3
+task_confirmations=11   task_confirmations=11
+trello_boards=20        trello_boards=20
+working_memory=11       working_memory=11
+```
+
+逐表相同，0 error。同時查出一個**前置條件**：必須先 `create role linebot`，否則 dump 裡每一句 `OWNER TO linebot` 都失敗——表還是會建起來，資料也在，但擁有者變成 `postgres`。這種「看起來成功了」的還原，正是會在真正需要的那天才發現不對的東西。
+
+**通則**：接受一個風險的時候，同時驗證對應的補償措施還活著。否則「我們有備份」和「我們有 runbook」是同一種話。
+
+### D20. 決定會反過來證偽 schema
+
+`accept_node_pinning` 的 predicate 在一天之內錯了兩次，兩次都是同一種錯——問的是代理指標，不是實際狀態：
+
+```
+v1  storage_backend == "local-path"              漏掉：有 NAS 但 DB 在 block tier 的叢集
+v2  ... 或 有 block-tier extra                    誤抓：明寫 db_storage_class 把 DB 移開的叢集
+v3  ... 或 (db_storage_class 是 node-local 且 有 block-tier extra)
+```
+
+v2 是為了修 v1 而寫的，寫的時候看起來完備。**是 6.7 的決定把它證偽的**：使用者選「不搬、明寫 `sc-nas`」，我去套用時才發現 schema 會要求 jg-jiahd 承認一件在它身上不會發生的事——DB 明明在 NFS 上，卻被要求簽署 node-pinning 同意書。
+
+一個要求使用者承認風險的閘門，如果會對沒有該風險的人發問，它教出來的行為就是「照簽」。那比不問更糟——D13 花了三次嘗試才讓 CUE 無法代簽，結果 predicate 本身讓簽名失去意義。
+
+**通則**：實際去用一次 schema，比再讀一遍 schema 有效。這兩次修正都不是想出來的，是套用到真實叢集時撞出來的。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。
