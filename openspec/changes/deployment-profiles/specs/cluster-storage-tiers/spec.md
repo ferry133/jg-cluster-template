@@ -16,6 +16,30 @@ Workloads SHALL be assigned a storage tier according to their access semantics. 
 - **WHEN** a database outgrows local disk capacity
 - **THEN** the remedy is larger local capacity or a block-mode CSI class backed by the NAS, and moving the database onto an NFS class is rejected
 
+### Requirement: Node-local storage on a multi-node cluster is an explicit choice
+
+Node-local volumes live on one node and their PersistentVolumes carry affinity to it. On a single node that is simply correct. On more than one node it pins every stateful workload to whichever node first scheduled it — the pod cannot be rescheduled elsewhere, and losing that node loses both the data and the ability to restart. The cluster looks replicated and is not. Validation SHALL refuse this combination unless it is explicitly acknowledged.
+
+#### Scenario: Node count must be stated for node-local storage
+- **WHEN** a cluster selects node-local storage without stating whether it has one node
+- **THEN** validation fails, because the consequences differ entirely between the two cases
+
+#### Scenario: Single node needs no acknowledgement
+- **WHEN** a single-node cluster selects node-local storage
+- **THEN** validation passes with nothing further to declare
+
+#### Scenario: Multi-node requires acknowledgement
+- **WHEN** a multi-node cluster selects node-local storage without acknowledging the pinning
+- **THEN** validation fails
+
+#### Scenario: The acknowledgement cannot be supplied on the reader's behalf
+- **WHEN** the acknowledgement is absent, or present and negative
+- **THEN** validation fails rather than the requirement being satisfied by a default
+
+#### Scenario: Replicated storage is the real answer
+- **WHEN** a multi-node cluster has no NAS
+- **THEN** the acknowledgement is recorded as a stopgap, and replicated block storage remains the correct solution
+
 ### Requirement: Default storage class follows the profile
 
 Each profile SHALL supply a default storage class so that PVCs without an explicit class resolve correctly. Under `appliance` the default SHALL be `local-path`. Under `prosumer` and `full` the default SHALL follow `storage_backend`.

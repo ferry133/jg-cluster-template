@@ -29,6 +29,36 @@ import (
 	// (a peer-to-peer image mirror, for one) are suspended when this is true.
 	single_node?: bool
 
+	// local-path volumes live in a directory on one node and the PV carries node
+	// affinity to it. On a single node that is simply correct. On more than one
+	// node it silently pins every stateful workload to whichever node first
+	// scheduled it: the pod cannot be rescheduled elsewhere, and losing that node
+	// loses both the data and the ability to restart. The cluster looks
+	// replicated and is not.
+	//
+	// Set this only when that is understood and accepted. The real answer for a
+	// multi-node cluster with no NAS is replicated block storage, which this
+	// stack does not yet provide.
+	accept_node_pinning?: bool
+
+	if deployment_profile == "appliance" {
+		single_node: true
+	}
+
+	if storage_backend == "local-path" {
+		single_node: bool
+		if single_node == false {
+			// `bool` and not `true`: an unresolved type is what makes an absent
+			// field fail validation. Asserting the value here instead would let
+			// CUE satisfy the requirement on the reader's behalf, and the check
+			// would pass without anyone having read it.
+			accept_node_pinning: bool
+			if accept_node_pinning == false {
+				accept_node_pinning: _|_
+			}
+		}
+	}
+
 	// How this cluster's machines are provisioned. Declared rather than inferred:
 	// nodes.yaml is materialised automatically for every repo (makejinja aborts on
 	// a missing data file), so its presence proves nothing about the path.

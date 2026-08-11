@@ -33,6 +33,9 @@
 
 - [ ] 2c.6 `local-path` 叢集目前**沒有 default StorageClass**：`sc-nas` 隨 nfs-subdir 一起移除後，叢集沒有任何 storage class（`storage/local-path-provisioner` 是 extra，未啟用）。Group 6 需確保 profile 預設 class 真的存在，而非只是「不要錯的那個」
 
+- [x] 2c.7 `local-path` + 多節點改為明示選擇（方案 B）：CUE 要求 `single_node` 必須宣告；多節點時另需 `accept_node_pinning: true`，缺值或 `false` 皆拒絕。實作上繞過三次 CUE 自我滿足的陷阱，見 `design.md` D13
+- [ ] 2c.8 （方案 A，後續）在 jg-base 實作複製式 block storage（Longhorn / Rook-Ceph）並新增第三個 `storage_backend` 值。jg-jiahd 是 3 節點，這不是假想需求
+
 ## 3. 既有叢集遷移（不改變行為）
 
 - [x] 3.1 jg-jiahd 副本補 `deployment_profile: "full"` + `storage_backend: "nfs"`：`ks.yaml` 完全相同，`cluster-secrets` 僅**新增** 4 個空的 `BACKUP_R2_*`，既有值未變

@@ -38,6 +38,20 @@ deployment_profile: "full"
 # Forced to "local-path" under the appliance profile.
 storage_backend: "nfs"
 
+# (REQUIRED when storage_backend is "local-path") Does this cluster have exactly
+# one node? Derived automatically for appliance (always one) and for the manual
+# Talos path (nodes.yaml is authoritative), but an Omni cluster renders
+# `nodes: []` so it cannot be inferred there.
+# single_node: true
+#
+# Node-local volumes live on one node and their PVs are pinned to it. On one
+# node that is correct; on several it silently pins every stateful workload to
+# whichever node scheduled it first, and losing that node loses the data and the
+# ability to restart elsewhere. Required — and it must be true — when combining
+# local-path with a multi-node cluster. The real answer there is replicated
+# block storage, which this stack does not provide yet.
+# accept_node_pinning: true
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # §1. BASE (required for this profile)
 # ═══════════════════════════════════════════════════════════════════════════════

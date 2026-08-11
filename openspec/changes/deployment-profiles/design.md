@@ -198,6 +198,48 @@ reconcile                  但 suspend=true 守住，hr=0 sc=0 維持 ✓
 
 `is_single_node` 在 appliance（定義上單節點）與手動路徑（節點清單具權威性）可以推導，但 Omni 叢集的 `nodes` 恆為 `[]`。新增可選欄位 `single_node`，明寫者優先；未宣告時**假設有 peer**——猜錯只是多跑一個本來能用的元件，反向猜錯則會靜默停掉需要的元件。
 
+### D13. `storage_backend` 的兩個值蓋不住三種情境
+
+`local-path` 把兩個後果完全不同的情境混成同一個值：
+
+| | local-path 是否適當 |
+|---|---|
+| 單節點無 NAS | ✓ 正確且完整 |
+| **多節點無 NAS** | ⚠ 可用但降級——正解是複製式儲存 |
+
+node-local 的 PV 帶著指向該節點的 affinity。多節點上這會**在第一次排程時**把每個有狀態工作負載悄悄釘死在一台機器：pod 排不到別台、那台碟壞了資料與服務一起沒。表面上有三個節點，實際上 postgres 只活在其中一台。
+
+`cluster-storage-tiers` 原本只要求「DB 用 block-backed storage」，而 `local-path` 技術上就是 block-backed——多節點叢集選它會**通過所有檢查**，直到某次節點維護才發現起不來。spec 缺的是「block-backed 但不可跨節點漂移」這個維度。
+
+正解是 Longhorn / Rook-Ceph 這類複製式 block storage。README Stage 1 提過它們，但 **jg-base 完全沒有實作**（只有 nfs-subdir 與 local-path-provisioner）。實作一整套複製式儲存範圍不小，因此分兩步：
+
+- **現在**：CUE 拒絕「`local-path` + 多節點」除非明寫 `accept_node_pinning: true`。把沉默的降級變成明示的選擇。
+- **之後**：在 jg-base 實作複製式儲存並加入第三個 `storage_backend` 值。jg-jiahd 是 3 節點，所以這不是假想需求。
+
+#### 實作上的一個 CUE 陷阱
+
+要求「使用者必須明寫某個值」比看起來難。三次嘗試都被 CUE 自己滿足了：
+
+```
+accept_node_pinning: true          → CUE 直接賦值，永遠通過
+_hidden: accept_node_pinning & true → hidden field 不受 concreteness 檢查
+accept_node_pinning?: "字面值"       → 引用時取到具體的字面值，仍然通過
+```
+
+有效的是**讓宣告的約束保持非具體**，再用矛盾拒絕不要的值：
+
+```cue
+accept_node_pinning?: bool          // 非具體
+if single_node == false {
+    accept_node_pinning: bool       // 缺值 → incomplete → 拒絕
+    if accept_node_pinning == false {
+        accept_node_pinning: _|_    // false → 矛盾 → 拒絕
+    }
+}
+```
+
+通則是：**`cue vet` 檢查的是「資料是否具體」，所以任何在 schema 裡寫死的值都會讓要求自我滿足**。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。
