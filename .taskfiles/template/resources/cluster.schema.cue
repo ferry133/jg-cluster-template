@@ -246,6 +246,13 @@ import (
 	// Opt-in: collapsing moves services off addresses that LAN clients may
 	// already be configured with.
 	lan_shared_addr?: net.IPv4 & !=""
+
+	// Deploy k8s-gateway. Internal names are published as ordinary A records
+	// that any resolver returns, so it is no longer the primary path — it is
+	// the fallback for a router that refuses to hand back RFC1918 answers.
+	// Defaults on everywhere except appliance, where it costs a LAN address and
+	// a customer cannot be asked to repoint a resolver at it anyway.
+	dns_fallback?: bool
 	cloudflare_lan_tunnel_token?: string & !=""
 	// monitoring/daily-check (base app on every cluster). Fields stay optional:
 	// an unconfigured cluster's CronJob exits 0 with a "not configured" log

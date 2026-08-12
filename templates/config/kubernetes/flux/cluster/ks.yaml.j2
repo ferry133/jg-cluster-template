@@ -107,6 +107,13 @@ spec:
 #|   nfs-subdir provisions from a NAS this cluster does not have. #|
 #% set _ = _disabled.append(('nfs-client-provisioner', 'storage_backend is ' ~ storage_backend ~ ', so there is no NAS to provision from')) %#
 #% endif %#
+#% if not deploy_dns_fallback %#
+#|   Internal names now resolve through public DNS for any resolver, so
+     k8s-gateway is only needed where the router refuses to return RFC1918
+     answers. Off by default on an appliance: it costs a LAN address, and a
+     customer cannot be asked to repoint a resolver at it regardless. #|
+#% set _ = _disabled.append(('k8s-gateway', 'internal names resolve through public DNS; this is the rebinding-protection fallback and detection has not asked for it')) %#
+#% endif %#
 #% if deployment_profile != 'appliance' %#
 #|   Only an appliance is expected to land on a LAN nobody has surveyed. Every
      other profile declares its addresses in cluster.yaml, and a probe writing a

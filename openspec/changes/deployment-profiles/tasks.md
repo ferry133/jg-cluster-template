@@ -2,8 +2,13 @@
 
 - [x] 1.1 驗證 Cilium LB-IPAM `lbipam.cilium.io/sharing-key` 跨 namespace 支援 — 2026-08-09 於 jg-jiahd (v1.19.1) 實測，可行；結論見 `design.md` D3
 - [x] 1.2 內網共用位址數量確定為 1，已回寫 `design.md` D3/D3a 與 `specs/lan-address-allocation/spec.md`
-- [ ] 1.3 實測 Cloudflare DNS 接受 RFC1918 A 記錄的行為（DNS-only 可行、proxied 應失敗），記錄實際錯誤訊息
-- [ ] 1.4 決定 DNS rebinding protection 的偵測方式（節點 hostNetwork 查詢路由器 resolver vs 客戶端回報），回寫 `design.md` Open Questions
+- [x] 1.3 已實測（2026-08-12），**結論與原本的假設相反**：
+  - proxied + RFC1918 → 被拒，`code 9003`：`Target 10.9.1.241 is not allowed for a proxied record.`
+  - DNS-only + RFC1918 → **API 接受，但權威 DNS 不回應**（NXDOMAIN）
+  - 我第一次量成「可解析」並據此寫進設計，那是錯的且無法重現。第二次加上對照組才看清楚：同時建立的 `ctl-public → 203.0.113.9` 立即可解，`rfc1918-probe → 10.9.1.241` 回 NXDOMAIN。同一次查詢、同一個權威 NS，排除傳播與快取；zone 內無 wildcard
+  - **這推翻 D6 的地基**，詳見 `design.md` D29
+- [x] 1.4 決定由**節點自行查詢路由器**：客戶端回報需要客戶執行東西，而零 IT 客戶正是做不到的那一群；節點在同一個 LAN、同一個路由器後面，它看到的就是客戶端會看到的。已實作於 daily-check（先查公開 DNS 是否回 RFC1918，再問閘道是否回相同答案）
+  - 但 1.3 之後這個偵測失去了原本的用途：擋住 RFC1918 的不是客戶路由器，是 Cloudflare 自己。偵測邏輯保留且會安靜跳過（公開查不到就不比對）
 - [x] 1.0 appliance 是單節點，而 `jg-base/.../kube-system/kustomization.yaml:12` **無條件**部署 Spegel。**2026-08-10 已在測試機重現**：pod 永遠 `0/1`（`routing table is empty after bootstrapping`——單節點無 peer），且仍寫入 `_default/hosts.toml` 把所有 registry 導向本機死埠。惟 **image 拉取未受影響**（containerd 2.2.6 於 200ms 逾時後回退上游成功），故 jcom 記錄的「全叢集拉不動」應為舊 containerd 2.1.6 的行為。profile 仍須關掉 Spegel，但非緊急。**已由 2.8 的 suspend patch 處理**，並於 jgt-omni（單節點）確認 `suspend=true` 且 pod 已清除。詳見 `docs/template-lineage.md`
 - [x] 1.5 **寬 pool 恆勝，規則是「建立時間最早者勝」**（2026-08-11，jgt-omni，Cilium v1.19.1）。窄 pool 只有在寬 pool `disabled: true` 時才被使用，證明它可用、只是不被選。三次實驗排除了另兩個假說：不是字典序（`aaa-spike-narrow` 輸給 `spike-wide`），也不是「最具體者勝」。
   - **直接後果**：不能在既有 `pool` 旁邊「加一個窄 pool」期待它被優先——jg-base 的 `pool` 在每個叢集上都是最早建立的，永遠贏。**4.6 必須收窄既有 pool，不能新增。**
@@ -94,12 +99,12 @@
 
 ## 5. 內網服務 DNS（jg-base）
 
-- [ ] 5.1 新增第二份 external-dns 實例，`--gateway-name=envoy-internal`、關閉 proxy
-- [ ] 5.2 設定與現有實例分離的 `txtPrefix` 與 `txtOwnerId`，並驗證兩者 full sync 後互不刪除對方記錄
-- [ ] 5.3 把 `k8s-gateway` 改為條件啟用，appliance 預設不部署
-- [ ] 5.4 依 1.4 的結論實作 rebinding protection 偵測與偵測結果的回報路徑
-- [ ] 5.5 驗證啟用 `k8s-gateway` fallback 前後 hostname 與 LAN 位址不變（零客戶端遷移）
-- [ ] 5.6 驗證外部路由（`envoy-external`）的發佈行為與今日完全相同
+- [~] 5.1 已實作並在 jgt-omni 實測，**隨後移除**：記錄確實被建立（A → `10.9.1.241`、`proxied=false`、TXT owner 分離），但**沒有任何 resolver 解得到**（見 1.3 / D29）。留著只會發佈解析不了的記錄，因此撤回而非保留
+- [x] 5.2 分離機制本身已驗證有效（這部分結論不受 1.3 影響）：`txtPrefix: k8s-internal.` + `txtOwnerId: internal`，兩個實例同時 `policy: sync` 於同一 zone，external 側六筆記錄（3 CNAME + 3 TXT owner=default）在第二實例運行期間**逐字未變**。若共用 owner id，彼此會把對方的記錄當成孤兒刪除
+- [ ] 5.3 **暫緩**：已實作開關（`dns_fallback`，appliance 預設不部署），但 1.3 之後這個預設是錯的——`k8s-gateway` 不是 fallback，是唯一能回答內網名稱的東西。appliance 不部署它等於內網名稱完全無法解析。開關保留，預設值待 D29 的方向決定後再定
+- [x] 5.4 已實作於 daily-check：查公開 DNS → 若得到 RFC1918 → 問閘道是否回相同答案 → 不同或無回應則 warn 並指出要設 `dns_fallback: true`。無公開記錄時安靜跳過（這正是 1.3 之後的實際情況）
+- [ ] 5.5 **阻塞於 D29**：在確定內網名稱要怎麼解析之前，沒有「啟用 fallback 前後」可比
+- [x] 5.6 已驗證：第二個 external-dns 實例運行期間，`external.janncot.cc` / `flux-webhook` / `im` 三筆 CNAME 與三筆 `k8s.cname-*` TXT **逐字未變**，proxied 狀態也未變。實例移除後叢集回到原狀（`target: internal.janncot.cc` 已還原、`im.janncot.cc` 仍回 401）
 
 ## 6. 儲存分層（jg-base）
 
