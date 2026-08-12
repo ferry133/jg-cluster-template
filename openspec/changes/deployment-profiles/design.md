@@ -548,6 +548,22 @@ D6 整套設計建立在一個假設上：把內網名稱發成指向 LAN 位址
 
 **API 收下記錄，DNS 拒絕發布它。** Cloudflare 這是在做 DNS rebinding 防護——諷刺的是，D6 原本擔心的是**客戶路由器**會做這件事，並為此準備了 `k8s-gateway` fallback。真正擋下來的是上游的權威 DNS，而 fallback 對它無效。
 
+#### 而且 appliance 是**兩條路都不通**，不是「改用 k8s-gateway 就好」
+
+這一點上一版寫得不夠清楚。`k8s-gateway` 是**被動的**——它是一台 DNS server，不攔截流量，只在客戶端主動查詢它時才回答。要讓 LAN 上的手機、電視、HomeKit 用得到，必須：
+
+- 路由器的 DHCP 發 option 6 指向它，或
+- 每台裝置手動設定 DNS
+
+**而那正是 D6 當初發明公開 A 記錄要繞開的那一步。** 所以 appliance 現在的處境是：
+
+```
+公開 A 記錄     → Cloudflare 不解析              ✗
+k8s-gateway     → 部署得起來，但沒有人會去指向它   ✗
+```
+
+`full` / `prosumer` 不受影響：那些叢集的 operator 有能力也有權限把路由器的 DNS 指到 `k8s-gateway`，jg-jiahd 與 jcom 今天就是這樣運作的。**問題完全集中在 appliance**，而它恰好是唯一不能要求任何設定動作的那一個。
+
 #### 連帶失效的東西
 
 - **5.1 / 5.2**（第二份 external-dns）：發出去的記錄沒有人解得到。已移除，而不是留著發佈解析不了的記錄
