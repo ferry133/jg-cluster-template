@@ -174,6 +174,13 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # workspace uses the profile's default storage class instead.
 # nas_coding_path: "/volume/coding"
 
+# (REQUIRED for appliance) Has age.key been escrowed outside this cluster?
+# Backups are encrypted to the cluster's own public key, so age.key is the only
+# thing that can read them — and on a single-node appliance it sits on the very
+# disk the backups exist to survive. Not defaulted: it has to be stated by
+# whoever did the escrow. See docs/operations/age-key-escrow.md
+# age_key_escrowed: true
+
 # ── Off-site backup ───────────────────────────────────────────────────────────
 # (REQUIRED under the appliance profile · optional otherwise)
 # A single-node appliance on local disk has no redundancy: losing the disk loses

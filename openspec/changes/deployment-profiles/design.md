@@ -583,6 +583,37 @@ k8s-gateway     → 部署得起來，但沒有人會去指向它   ✗
 
 **通則**：這次的錯誤不在於量測，而在於**沒有對照組**。一個沒有 negative control 的正面結果，證明的可能只是「我當時看到了什麼」。第二次測試之所以可信，正是因為公開位址的記錄在同一時刻是通的。
 
+### D30. 未 escrow 的 `age.key` 讓備份變成「看起來像保護」的東西
+
+備份加密到叢集自己的 age 公鑰（D9），好處是 R2 上的密文連持有該 R2 帳號的 operator 都讀不了——已實測：密文中找不到明文標記，換一把 key 解密得到 `no identity matched any of the recipients`。
+
+代價是 `age.key` 成為唯一能讀取備份的東西。而在單節點 appliance 上，它就放在**備份要對抗的那顆碟**上。
+
+```
+碟壞掉 → 叢集沒了 → R2 上有備份 → 但解密金鑰跟著碟一起沒了
+```
+
+結果是一堆沒人打得開的密文。這比沒有備份更糟，因為它在事發之前一直看起來像保護。
+
+因此 `age_key_escrowed` 沿用 D13 的模式：**appliance 未宣告或宣告 `false` 一律拒絕渲染**，且不給預設值——預設值等於替 operator 簽名。這讓「escrow 完成」成為 provisioning 的前置條件，而不是一條寫在文件裡、沒人檢查的步驟。
+
+文件另外要求用 `age-keygen -y` 對 **escrow 副本**驗出的公鑰去比對 `.sops.yaml`：一份被截斷的金鑰副本，和一份好的看起來完全一樣，而差別只會在需要它的那天顯現。
+
+### D31. ConfigMap 裡的 shell 腳本會先經過 envsubst
+
+備份腳本用 `BASH_REMATCH` 的數字索引取回正則捕獲，整個 Kustomization 因此建置失敗：
+
+```
+post build failed for 'ConfigMap.v1/offsite-backup':
+  envsubst error: variable substitution failed: missing closing brace
+```
+
+Flux 在套用 ConfigMap 之前會對它跑 envsubst，於是帶數字索引的展開被讀成一個「名字裡有中括號」的變數。**腳本放在 ConfigMap 裡就不再只是 shell，它同時是 Flux 的替換輸入。**
+
+有意思的是 `@` 形式的陣列展開沒事——daily-check 用了好幾個月。所以不是所有中括號都不行，是數字索引特別會踩到。
+
+而第一次修正之後它**還是失敗**：我把程式碼改成 `sed`，卻在註解裡寫下 `${BASH_REMATCH[1]}` 解釋為什麼要改。envsubst 不區分程式碼與註解。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。

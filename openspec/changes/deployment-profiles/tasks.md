@@ -132,12 +132,18 @@
 
 ## 7. Appliance 備份（jg-base）
 
-- [ ] 7.1 實作備份 CronJob：`pg_dump` + agent 工作區 → age 加密 → Cloudflare R2
-- [ ] 7.2 確認備份內容不含 Git 已追蹤的 manifests
-- [ ] 7.3 驗證僅憑 R2 憑證無法解密任何內容
-- [ ] 7.4 在 `monitoring/daily-check` 加入備份新鮮度回報，逾期時扣住 dead-man switch ping
-- [ ] 7.5 確認非 appliance 且未設定備份的叢集，daily-check 仍印出「not configured」並 exit 0
-- [ ] 7.6 建立 `age.key` escrow 流程，並將「escrow 完成」列為 provisioning 完成的條件
+- [~] 7.1 `monitoring/backup` CronJob 已實作（每日 02:00 台北，早於 08:00 健檢，讓失敗當天就被回報）：`pg_dump` 各資料庫 → tar → age 加密 → `aws s3 cp` 上傳 R2 → 依 `BACKUP_RETAIN_DAYS`（預設 30）清理舊檔
+  - **agent 工作區刻意不備**（依 D8）：工作區檔案可重建，不可重建的每客戶 context 在資料庫層、已被 dump 涵蓋；且該 PVC 在 `claudecode` namespace，跨 namespace 掛不上，硬要備就得把這個 job 放進 claudecode，位置是錯的
+  - 資料庫走 `pg_dump` 而非檔案層複製——執行中的 data directory 檔案複製不是備份，是 torn page
+  - `BACKUP_AGE_RECIPIENT` 為空時**硬失敗而非略過**：把可讀的客戶資料上傳到別人的物件儲存，比不上傳更糟
+  - **尚未驗證實際上傳**：手上沒有 R2 憑證。已驗證的是「未設定 → 印訊息 → exit 0」（7.5）與加密（7.3）。上傳與還原屬 8.3 的驗收
+- [x] 7.2 備份內容僅有 `pg_dump` 產出的 `.sql`，腳本不讀取任何 manifest 路徑。理由已寫進腳本註解：manifests 的權威副本在 git，從封存還原只會還原一份較舊的快照
+- [x] 7.3 已實測：用叢集的 recipient 加密一段標記字串後，密文中**找不到明文標記**（grep 計數 0）；用另一把 age key 解密得到 `no identity matched any of the recipients`；用叢集自己的 `age.key` 才解得出。持有 R2 憑證者能取得的就是那段密文
+- [x] 7.4 daily-check 讀最近一次成功的 backup Job 完成時間：>48h 判 FAIL（FAIL 會扣住 dead-man ping，因此即使信件本身沒寄達也會浮現）、>26h 判 warn、其餘 ok。已設定但從未成功過也判 FAIL
+- [x] 7.5 已在 jgt-omni 實跑（該叢集無 `backup_r2_*`）：job `succeeded=1`，輸出 `off-site backup not configured — set backup_r2_* in cluster.yaml`。daily-check 對應記 ok 而非 fail——「沒設定」是這個叢集的陳述，不是故障；appliance 因 schema 必填而到不了這個分支
+- [x] 7.6 `docs/operations/age-key-escrow.md` 寫明流程，並新增 `age_key_escrowed` 欄位：**appliance 未宣告或宣告 false 一律拒絕渲染**（沿用 D13 的模式，不給預設值，不能由 CUE 代簽）。四種組合已用 `cue vet` 驗證
+  - 理由：備份加密到叢集自己的公鑰，`age.key` 是唯一能讀它的東西，而在單節點 appliance 上它就放在備份要對抗的那顆碟上。**未 escrow 的金鑰讓備份變成沒人打得開的密文**——那比沒有備份更糟，因為它看起來像保護
+  - 文件也要求以 `age-keygen -y` 對**escrow 副本**驗出的公鑰比對 `.sops.yaml`：被截斷的金鑰副本，看起來和好的一模一樣
 
 ## 8. 驗收
 

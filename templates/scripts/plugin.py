@@ -159,6 +159,21 @@ class Plugin(makejinja.plugin.Plugin):
         # and restored — a PVC's storageClassName is immutable, so the move is
         # not something a re-render can perform.
         data.setdefault('db_storage_class', 'local-path')
+        # Backups are encrypted to the cluster's own age public key, taken from
+        # .sops.yaml rather than added as another field to fill in. The key is
+        # already there, it is already the thing that travels with the cluster
+        # at handover, and a public key is not a secret. The consequence worth
+        # stating: whoever holds age.key can read the backups, and nobody else
+        # can — including the operator holding the R2 credentials.
+        if 'backup_age_recipient' not in data:
+            sops_config = Path('.sops.yaml')
+            recipient = ''
+            if sops_config.is_file():
+                match = re.search(r'age:\s*["\']?(age1[a-z0-9]+)',
+                                  sops_config.read_text())
+                if match:
+                    recipient = match.group(1)
+            data['backup_age_recipient'] = recipient
         # The three LAN-facing services listen on non-overlapping ports
         # (80/443, 53, 1883), so one address serves all of them. Collapsing them
         # turns "find several free addresses on a LAN you have never seen" into

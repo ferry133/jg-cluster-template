@@ -184,7 +184,24 @@ import (
 	backup_r2_access_key_id?: string & !=""
 	backup_r2_secret_access_key?: string & !=""
 
+	// Whether age.key has been escrowed somewhere outside this cluster.
+	//
+	// Backups are encrypted to the cluster's own public key, so age.key is the
+	// only thing that can read them. On a single-node appliance it lives on the
+	// one disk whose failure the backups exist to survive — an unescrowed key
+	// means the backups are ciphertext nobody can open, which is worse than no
+	// backups because it looks like protection.
+	//
+	// Declared rather than defaulted, for the same reason as
+	// accept_node_pinning: a default would answer on the operator's behalf.
+	age_key_escrowed?: bool
+
 	if deployment_profile == "appliance" {
+		// `bool` and not `true`: an absent field must fail validation.
+		age_key_escrowed: bool
+		if age_key_escrowed == false {
+			age_key_escrowed: _|_
+		}
 		backup_r2_bucket: string & !=""
 		backup_r2_endpoint: string & !=""
 		backup_r2_access_key_id: string & !=""
