@@ -57,7 +57,14 @@
 - [x] 2c.6 `local-path` 叢集原本**沒有 default StorageClass**：`sc-nas` 隨 nfs-subdir 一起移除後，叢集沒有任何 storage class（`storage/local-path-provisioner` 是 extra，未啟用）。已修：`ks.yaml.j2` 在 `storage_backend == 'local-path'` 時把它加進 Kustomization 清單，不論 `extras:` 有沒有列——profile 的預設 class 必須真的存在，而不只是「不是錯的那個」
 
 - [x] 2c.7 `local-path` + 多節點改為明示選擇（方案 B）：CUE 要求 `single_node` 必須宣告；多節點時另需 `accept_node_pinning: true`，缺值或 `false` 皆拒絕。實作上繞過三次 CUE 自我滿足的陷阱，見 `design.md` D13
-- [ ] 2c.8 （方案 A，後續）在 jg-base 實作複製式 block storage（Longhorn / Rook-Ceph）並新增第三個 `storage_backend` 值。jg-jiahd 是 3 節點，這不是假想需求
+- [~] 2c.8 已實作 Longhorn（非 Rook-Ceph——3 節點家用叢集用 Ceph 過重）與第三個值 `storage_backend: "replicated"`：
+  - jg-base `storage/longhorn`，預設 suspend；2 副本而非 3（一台可停機或 drain，仍有一份副本加一個重建目的地，只花三分之二空間；第三份副本擋不了真正威脅家用叢集的整站失效，那是異地備份的職責）
+  - **不設為叢集預設 class**：bulk 資料不需要複製，設成預設會把既有 PVC 全部悄悄搬過去
+  - namespace 標 `privileged`：Longhorn 掛 host path 且需要 mount propagation，Talos 預設 `baseline`——與 2c.11 的 storage namespace 同一道牆、同樣的安靜失敗方式
+  - CUE：`single_node: true` 時**拒絕** `replicated`（單節點的「複製」是同一顆碟上的兩份副本，付了 Longhorn 的代價卻沒有保護）。六種組合已驗證
+  - `db_storage_class` 刻意**不隨 backend 自動變成 `longhorn`**：裝了 Longhorn 不等於資料庫搬過去。忘記設不會靜默——資料庫仍在 node-local class，`accept_node_pinning` 閘門因此觸發，而它問的正好就是被忘記的那件事。（初版讓它自動推導，被 `check-template-integrity` 的「一個欄位兩個預設」規則擋下，那是對的：CUE 宣告 `local-path` 而 plugin 算出 `longhorn` 時，`_uses_node_local` 會依錯的值判斷）
+  - **未在任何叢集實際部署**，因此標 partial。Longhorn 需要 `iscsi-tools` 與 `util-linux-tools` 兩個 Talos system extension 加上 `/var/lib/longhorn` 的 rshared 掛載——**manifest 裝不了這些**，而少了它們 pod 會起來、回報健康、然後掛載不了任何 volume。節點變更需要換 schematic 並逐台重開機
+  - `docs/operations/replicated-storage.md` 寫明前置需求（Omni 與手動 Talos 兩條路徑）、驗證方式，以及**一張誠實的取捨表**：對 jg-jiahd（3 節點、8.7 MB 資料庫、已驗證的每日還原路徑）而言「釘住 + 備份」是站得住腳的，Longhorn 要在 RPO 真的重要、資料大到還原很慢、或節點重開頻繁到人工復原不再罕見時才值得。文件也記下第三條路：用 CSI 拿 NAS 的 iSCSI block（同樣需要那個 extension，但不多一層複製）
 
 - [x] 2c.9 claude-code 的 `coding` volume 硬寫 `type: nfs`：無 NAS 時 `server`/`path` 渲染成空字串，chart schema 拒絕，**整個 release 裝不起來**。已改為由 `nas_coding_path` 條件渲染
 - [x] 2c.10 claude-code 兩個 PVC 硬寫 `storageClass: sc-nas` → 改用 `default_storage_class`；同時 `replicas: 0` 配上 `WaitForFirstConsumer` 會讓 Helm 等一個依定義不會發生的綁定，已加 `install`/`upgrade` 的 `disableWait: true`。NFS 的 `Immediate` 綁定讓這個相撞在有 NAS 的叢集上不會出現

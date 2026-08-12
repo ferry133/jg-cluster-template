@@ -87,6 +87,11 @@ storage_backend: "nfs"
 # move is a dump and restore, not a re-render. Writing it down keeps "not yet
 # moved" visible instead of silent.
 # db_storage_class: "local-path"
+#
+# With storage_backend "replicated", set this to "longhorn" — installing
+# Longhorn does not move the database onto it by itself. Forgetting is caught
+# rather than silent: the database stays on a node-local class, so
+# accept_node_pinning is demanded and names the thing that was missed.
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # §1. BASE (required for this profile)

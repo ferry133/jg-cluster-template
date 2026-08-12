@@ -148,10 +148,11 @@ class Plugin(makejinja.plugin.Plugin):
         # Storage class for PVCs that do not pick one explicitly. Databases are
         # block-backed regardless — this selects what bulk media and file shares
         # get, which is the only thing the backend axis decides.
-        data.setdefault(
-            'default_storage_class',
-            'sc-nas' if data.get('storage_backend') == 'nfs' else 'local-path',
-        )
+        _backend = data.get('storage_backend')
+        data.setdefault('default_storage_class', {
+            'nfs': 'sc-nas',
+            'replicated': 'longhorn',
+        }.get(_backend, 'local-path'))
         # The block tier, for anything that needs fsync durability and file
         # locking. Not derived from storage_backend: NFS is never a valid answer
         # here, whatever the cluster uses for bulk data. An existing cluster

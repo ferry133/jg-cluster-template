@@ -15,11 +15,23 @@ import (
 
 	// Where stateful data lives. Databases always want block storage regardless
 	// of this — it selects what bulk media and file shares use.
-	storage_backend: "local-path" | "nfs"
+	//
+	//   local-path   node-local disk; correct on one node, pins on several
+	//   nfs          NAS-backed
+	//   replicated   Longhorn. Requires Talos system extensions on every node,
+	//                which no manifest can install — see
+	//                docs/operations/replicated-storage.md
+	storage_backend: "local-path" | "nfs" | "replicated"
 
-	// An appliance has no NAS to configure and nobody to configure it.
+	// An appliance has no NAS to configure and nobody to configure it. It is
+	// also a single node, where replication has nothing to replicate onto.
 	if deployment_profile == "appliance" {
 		storage_backend: "local-path"
+	}
+	// Replication across one node is a copy of a copy on the same disk: the
+	// cost of Longhorn with none of the protection.
+	if single_node == true {
+		storage_backend: "local-path" | "nfs"
 	}
 
 	// Whether this cluster has exactly one node. Derived where it can be —
@@ -57,10 +69,18 @@ import (
 		"freepbx/freepbx",
 	]
 
-	// Which class the block tier uses. Node-local by default. A cluster whose
-	// database is still on NFS names that class here until it can be dumped and
-	// restored — a PVC's storageClassName is immutable, so the move is not
-	// something a re-render can perform.
+	// Which class the block tier uses. Node-local by default, but `longhorn`
+	// once the cluster has replicated storage — that is the whole point of
+	// running it, and leaving the database on local-path would keep it pinned.
+	//
+	// A cluster whose database is still on NFS names that class here until it
+	// can be dumped and restored — a PVC's storageClassName is immutable, so
+	// the move is not something a re-render can perform.
+	// Deliberately one default, not one per backend. Deploying Longhorn does
+	// not move the database onto it — that is an explicit `db_storage_class:
+	// "longhorn"`. Forgetting is not silent: the database is still on a
+	// node-local class, so the pinning acknowledgement below fires and asks
+	// about exactly the thing that was forgotten.
 	db_storage_class: *"local-path" | string & !=""
 
 	// Whether anything in this cluster lands on a node-local class. This, and
@@ -69,6 +89,9 @@ import (
 	// asking about the default class would wave it through. Equally, a cluster
 	// that has deliberately parked its database on NFS is pinning nothing, and
 	// should not be asked to acknowledge what is not happening.
+	// `longhorn` is block-backed AND replicated, so it is the one block class
+	// that does not pin. Deploying replicated storage is therefore what lifts
+	// the acknowledgement, which is the correct incentive.
 	_uses_node_local: (storage_backend == "local-path") ||
 		(db_storage_class == "local-path" &&
 			len([for e in extras if list.Contains(#BlockTierExtras, e) {e}]) > 0)

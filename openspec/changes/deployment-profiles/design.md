@@ -722,6 +722,37 @@ ttyd_credential: invalid value "admin:hunter2" (out of bound =~"...")
 
 與 D18（`storageClassName: ""` 那次）同一個形狀：**掃描或推論指出一個缺陷，不代表指出的是那個缺陷。** 差別在於這次的成本只是一次實驗，而 D18 若照著做會拆掉四個正常運作的 NFS 掛載。
 
+### D35. 複製式儲存解除了 D13 的承認要求，但它的前提裝不進 manifest
+
+D13 把「多節點 + node-local」變成必須明寫的承認（`accept_node_pinning`），並說真正的解是複製式 block storage。2c.8 把那條路做出來了：`storage_backend: "replicated"` → Longhorn，而 `longhorn` 是唯一同時是 block-backed **且**不釘節點的 class。所以部署它會讓那個閘門自動不再觸發——這是正確的誘因方向：想擺脫承認書，就去解決它描述的問題。
+
+選 Longhorn 而非 Rook-Ceph：3 節點的家用叢集跑 Ceph 過重。
+
+#### 它與其他 provisioner 有一個結構性差異
+
+`local-path` 與 `nfs-subdir` 是純 manifest：套用就會動。Longhorn 不是——它需要每個節點有 `iscsi-tools` 與 `util-linux-tools` 兩個 Talos system extension，加上 `/var/lib/longhorn` 的 rshared 掛載。**這些沒有任何 Kubernetes manifest 裝得起來**，而少了它們的失敗形狀特別壞：pod 起得來、回報健康、然後掛載不了任何 volume。
+
+因此它預設 suspend 的理由和 `nfs-subdir` 不同：後者是「這個叢集沒有 NAS」，前者是「這個叢集的節點還沒被改造過」。文件把節點準備寫成 enable 之前的必要步驟，而不是 troubleshooting。
+
+#### 誠實的取捨表比實作更有價值
+
+| | 釘住的 local-path + 備份 | Longhorn |
+|---|---|---|
+| 節點死掉 | 從昨晚的 dump 還原到另一台 | 從存活副本重建 |
+| RPO | 最多 24h | 0 |
+| RTO | 約 15 分鐘、人工 | 秒級、自動 |
+| 代價 | 無（備份本來就在跑） | 每節點約 1 GB RAM，多一個要升級與監看的系統 |
+
+對 jg-jiahd——3 節點、8.7 MB 的資料庫、**今天剛驗證過的每日還原路徑**——「釘住 + 備份」是站得住腳的。Longhorn 要在 RPO 真的重要、資料大到還原很慢、或節點重開頻繁到人工復原不再罕見時才值得。
+
+文件因此以「先問值不值得」開頭，並記下第三條這個 stack 沒實作的路：用 CSI 從 NAS 取 iSCSI block volume。資料留在已有 RAID 的硬體上、fsync 語意正確、pod 可以漂移，而且不多一層複製——代價是同樣需要那個 iSCSI extension。
+
+#### 一個被自己的檢查擋下的設計錯誤
+
+初版讓 `db_storage_class` 隨 backend 自動推導成 `longhorn`。`check-template-integrity` 的「一個欄位只能有一個有效預設」規則擋下它，而那是對的：CUE 宣告預設 `local-path`、plugin 算出 `longhorn`，`_uses_node_local` 就會依 CUE 那個錯的值判斷，於是對一個已經不釘節點的叢集索取承認書。
+
+改成單一預設，並讓「忘記把資料庫搬到 longhorn」以正確的方式現形——資料庫仍在 node-local class，閘門觸發，而它問的正好就是被忘記的那件事。**比自動推導更好：自動推導會讓人以為裝了 Longhorn 資料就搬好了。**
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。
