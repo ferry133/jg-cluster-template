@@ -147,6 +147,45 @@ spec:
         kind: Kustomization
         name: #{ name }#
 #% endfor %#
+#% if cilium_native_routing | default(false) %#
+#| Cilium native routing instead of the default vxlan tunnel. Needed by a
+   cluster that hosts Omni: SideroLink carries WireGuard over the pod network,
+   and vxlan's 1370-byte pod MTU is too small for it — the tunnel fails with
+   `sendmmsg: message too long` and Omni's UI and kubectl crawl. Removing the
+   encapsulation allows MTU 1500 and makes DSR usable, which vxlan does not
+   support.
+
+   JSON6902 append, not strategic merge: appending to the cilium child
+   Kustomization's `spec.patches` preserves the generic HelmRelease-strategy
+   patch above. A second strategic merge would replace that list wholesale —
+   verified on jcom, which is where this override comes from. #|
+    # native routing: this cluster hosts Omni and SideroLink needs MTU 1500
+    - patch: |-
+        - op: add
+          path: /spec/patches/-
+          value:
+            patch: |-
+              apiVersion: helm.toolkit.fluxcd.io/v2
+              kind: HelmRelease
+              metadata:
+                name: cilium
+              spec:
+                values:
+                  routingMode: native
+                  ipv4NativeRoutingCIDR: "#{ cluster_pod_cidr }#"
+                  autoDirectNodeRoutes: true
+                  MTU: 1500
+                  loadBalancer:
+                    mode: "dsr"
+            target:
+              group: helm.toolkit.fluxcd.io
+              kind: HelmRelease
+              name: cilium
+      target:
+        group: kustomize.toolkit.fluxcd.io
+        kind: Kustomization
+        name: cilium
+#% endif %#
 ---
 # ── claude-code instances (base; per-cluster rendered from claude_instances) ──
 # The shared pieces (namespace, SA/RBAC, OCIRepository, secrets) come from

@@ -179,6 +179,20 @@ import (
 	cloudflare_domain: net.FQDN
 	cloudflare_token: string
 	github_webhook_token?: string & !=""
+	// Cilium native routing instead of the default vxlan tunnel.
+	//
+	// A cluster that hosts Omni needs this: SideroLink carries WireGuard over
+	// the pod network, and vxlan's 1370-byte pod MTU is too small for it — the
+	// tunnel fails with `sendmmsg: message too long`. Removing the encapsulation
+	// allows MTU 1500 and makes DSR load balancing usable, which vxlan does not
+	// support.
+	//
+	// Requires every node on one L2 segment: native routing installs direct
+	// routes to each node's pod CIDR rather than encapsulating between them.
+	// Can be removed when the cluster no longer hosts Omni, or when SideroLink
+	// stops needing more than 1370 bytes.
+	cilium_native_routing?: bool
+
 	cilium_bgp_router_addr?: net.IPv4 & !=""
 	cilium_bgp_router_asn?: string & !=""
 	cilium_bgp_node_asn?: string & !=""
@@ -241,11 +255,14 @@ import (
 	// defaults to ["im"] at render time; ttyd_credential is only unused when
 	// claudecode_auth0_* switches the instances to OIDC login.
 	claude_instances?: [...string]
-	// Keep the claude-code terminal running. Off by default — it is a root
-	// shell with cluster-admin RBAC that the tunnel exposes — so a cluster that
-	// wants one standing declares it here. Scaling by hand instead works until
-	// the next reconcile and then disappears without an apparent cause.
-	claude_code_always_on?: bool
+	// Which claude-code instances stay running. Empty by default — each is a
+	// root shell with cluster-admin RBAC that the tunnel exposes — so a cluster
+	// that wants one standing names it here. Scaling by hand instead works
+	// until the next reconcile and then disappears without an apparent cause.
+	//
+	// A list rather than a flag because clusters do mix: jcom keeps `im` up for
+	// support and leaves `cc` at zero until it is needed.
+	claude_code_always_on?: [...string]
 	// Strength is checked by scripts/check-ttyd-credential.py, not here: a CUE
 	// constraint prints the offending value in its error, and a check that leaks
 	// the credential into a terminal and CI log to complain about it is worse

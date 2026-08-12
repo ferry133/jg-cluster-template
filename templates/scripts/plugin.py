@@ -160,12 +160,10 @@ class Plugin(makejinja.plugin.Plugin):
         # and restored — a PVC's storageClassName is immutable, so the move is
         # not something a re-render can perform.
         data.setdefault('db_storage_class', 'local-path')
-        # Whether the claude-code terminal stays up. Off by default: it is a
-        # root shell with cluster-admin, and the tunnel makes it reachable.
-        # A cluster that wants it standing says so here, rather than someone
-        # running `kubectl scale` and losing it at the next reconcile.
-        data.setdefault('claude_code_replicas',
-                        1 if data.get('claude_code_always_on') else 0)
+        # Which claude-code instances stay up. Empty by default: each is a root
+        # shell with cluster-admin that the tunnel makes reachable. Named here
+        # rather than scaled by hand, which works until the next reconcile.
+        data.setdefault('claude_code_always_on', [])
         # Backups are encrypted to the cluster's own age public key, taken from
         # .sops.yaml rather than added as another field to fill in. The key is
         # already there, it is already the thing that travels with the cluster
