@@ -2,8 +2,17 @@
 
 - [x] 1.1 jcom `ks.yaml.j2` 的 54 行**全數為新增**，兩個區塊、皆附事故說明，無舊版殘留：Cilium native-routing override（jcom 託管 Omni，MTU 1370 過小導致 SideroLink WireGuard `sendmmsg: message too long`）與 Spegel suspend。兩者根因相同——單節點
 - [x] 1.2 `cilium_bgp_enabled` / `cilium_loadbalancer_mode` 在 jcom 與 jg-jiahd **皆為 0 消費端**（死碼），僅 genie1 仍在用；`spegel_enabled` 在 jcom 有 2 個消費端，仍活著
-- [ ] 1.3 評估 Spegel 在多節點叢集的實際效益——若不明顯，從 jg-base 移除比 gating 簡單。（已知：jg-jiahd 3 節點上 3/3 Ready，功能正常；單節點必壞）
-- [ ] 1.4 決定 per-cluster 例外的機制形式（post-build substitution / overlay 目錄 / cluster.yaml 條件渲染），判準含「能否偵測未宣告漂移」
+- [x] 1.3 **實測 jg-jiahd（3 節點）的命中率：4.4%**——`spegel_mirror_requests_total` 在約 3 小時、90 次請求的窗口內 `hit=4 / miss=86`。95.6% 的請求最後仍去外部 registry
+  - 原因合理：家用叢集的 workload 多是 `replicas: 1`，只有 DaemonSet 會在多節點共用同一個 image，而那些在建叢集時就拉好了。P2P mirror 的前提很少成立
+  - **但「移除比 gating 簡單」這個前提已經不成立**：gating 由 ② 的 2.8 免費提供了（`is_single_node` → suspend patch），所以保留的成本現在趨近於零，移除反而是額外變更
+  - 爆炸半徑也比原本記的小：② 的 1.0 實測顯示 spegel 失敗時 containerd 2.2.6 會在 200ms 逾時後回退上游，image 仍拉得動；jcom 那次全叢集拉不動是舊的 2.1.6
+  - **結論：不從 jg-base 移除。** 效益低但非零，gating 已解決唯一的硬傷（單節點），而移除是對所有叢集的變更。建議改為「多節點預設開、可關」——已由 2.8 的機制支援，不需新工作
+- [x] 1.4 **決定：具名設定選項 + 全樹漂移偵測，不做通用的 patch 注入機制**
+  - 需求規模在盤點後大幅縮小：真實例外只剩 jcom 的 Cilium native-routing 一個（jg-jiahd 的 QUIC 已因上游採納而消失，見 5.1）。為一個例外造一套通用 YAML 注入機制，複雜度遠超收益
+  - 而 4.7 本來就寫著「同一例外出現於多個叢集 → 升格為設定選項」——若那是終點，就直接從那裡開始
+  - **判準「能否偵測未宣告漂移」由 `scripts/check-template-drift.py` 滿足**：比對整個 `templates/`、`.taskfiles/`、`scripts/`，分三類報告 DRIFTED（內容不同）／BEHIND（本地缺少，代表收不到改進）／EXTRA（僅本地有）
+  - 三個叢集實跑結果：jgt-omni 0 DRIFTED（僅缺今天新增的兩個腳本）、jg-jiahd 9 DRIFTED + 4 BEHIND、jcom 11 DRIFTED + 2 BEHIND（schema 255 行、plugin 164 行——印證它是更舊的世代）
+  - 腳本的輸出刻意同時提醒**反方向**：一個因上游採納而變得多餘的例外，讀起來仍然像現行決策（5.1 的教訓）
 - [x] 1.5 **已由 ② 解決**：新增 `single_node` 欄位（Omni 路徑渲染期確實無從得知，`nodes` 恆為 `[]`），並衍生 `is_single_node`——appliance 恆真、手動 Talos 依節點數、其他 Omni 叢集未宣告時假設有 peer。詳見 `deployment-profiles` 2c.4
 
 ## 2. 分岔清冊
@@ -40,7 +49,7 @@
 - [ ] 4.3 實作例外清單的檢視方式
 - [ ] 4.4 驗證例外範圍受限：宣告範圍外的共用行為不受影響
 - [ ] 4.5 驗證共用改進仍能到達有例外的叢集
-- [ ] 4.6 實作未宣告漂移的偵測（手改共用模板檔須可被回報）
+- [x] 4.6 `scripts/check-template-drift.py` 已實作並對三個叢集實跑（見 1.4）。DRIFTED 涵蓋任何手改共用檔案；BEHIND 額外回答一個原本沒被問的問題——**這個叢集正在錯過哪些改進**
 - [ ] 4.7 定義「同一例外出現於多個叢集 → 升格為設定選項」的流程
 
 ## 5. 遷移既有例外

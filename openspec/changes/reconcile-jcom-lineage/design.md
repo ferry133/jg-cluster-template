@@ -50,6 +50,49 @@ jg-jiahd 只有一個檔漂移（QUIC workaround），所以模板改動能乾�
 
 檢查鏈裡沒有一環會問「這個 patch 還是你想要的那個 patch 嗎」。還原後改以**完整區塊比對**移除（前後錨點都驗），並用「渲染後與另一個叢集逐字相同」作為驗收——那才是真正想要的性質。
 
+
+### 一個例外不值得一套機制
+
+提案時假設需要 per-cluster 例外機制（overlay 目錄／通用 patch 注入／條件渲染）。盤點後真實例外只剩**一個**：jcom 的 Cilium native-routing（它託管 Omni，tunnel 模式的 MTU 1370 太小，SideroLink WireGuard 會 `sendmmsg: message too long`）。
+
+jg-jiahd 的 QUIC workaround 因上游採納而消失，jcom 的 Spegel suspend 則是單節點通則而非例外——② 的 gating 已經涵蓋。
+
+而 4.7 本來就寫著「同一例外出現於多個叢集 → 升格為設定選項」。**若那是終點，就從那裡開始**：具名設定選項，不造通用注入機制。為一個例外造一套能表達任意 YAML 的機制，複雜度遠超收益，而且那種機制本身會變成新的漂移來源（任意 YAML 無法被 schema 驗證）。
+
+真正缺的不是機制，是**偵測**。
+
+### 漂移偵測要回答兩個方向，而第二個沒人問過
+
+`scripts/check-template-drift.py` 比對整個 `templates/` / `.taskfiles/` / `scripts/`，分三類：
+
+| | 意義 |
+|---|---|
+| DRIFTED | 內容不同——例外，或沒人寫下來的手改 |
+| BEHIND | 本地缺少——**這個叢集正在錯過哪些改進** |
+| EXTRA | 僅本地有——整份新增，需要交代 |
+
+原本 4.6 只要求偵測「手改」。實跑後 BEHIND 這一類同樣重要：jg-jiahd 缺 4 個檔（含整個 `.taskfiles/talos/`），jcom 缺 2 個。分歧不只是「改了什麼」，也是「沒收到什麼」——而後者不會有任何症狀，直到有人問「為什麼這個叢集沒有那個功能」。
+
+三個叢集的形狀因此一眼可辨：
+
+```
+jgt-omni    0 DRIFTED   2 BEHIND    幾乎對齊
+jg-jiahd    9 DRIFTED   4 BEHIND    3.1 只同步了 ② 需要的四個檔
+jcom       11 DRIFTED   2 BEHIND    schema 255 行、plugin 164 行 — 更舊的世代
+```
+
+腳本的結語刻意提醒反方向：**一個因上游採納而變得多餘的例外，讀起來仍然像現行決策**。那正是 jg-jiahd 那三個星期發生的事。
+
+### Spegel：結論反轉，因為前提被別的工作改掉了
+
+1.3 原本的框架是「若效益不明顯，從 jg-base 移除比 gating 簡單」。
+
+效益實測確實不明顯——jg-jiahd 3 節點上 `spegel_mirror_requests_total` 在約 3 小時 90 次請求的窗口內 `hit=4 / miss=86`，**命中率 4.4%**。原因合理：家用叢集的 workload 多是 `replicas: 1`，只有 DaemonSet 會在多節點共用 image，而那些在建叢集時就拉好了。
+
+但**「移除比 gating 簡單」這個前提在 ② 完成後就不成立了**：gating 現在是免費的（`is_single_node` → 生成 suspend patch），而移除是對所有叢集的變更。爆炸半徑也比原本記的小——② 的 1.0 實測顯示 containerd 2.2.6 在 spegel 失敗時會於 200ms 後回退上游，image 仍拉得動；jcom 那次全叢集拉不動是舊的 2.1.6。
+
+所以結論是**不移除**。這個 spike 的價值不在於它的原始問題，而在於它讓兩個假設同時被檢查：效益（低）與替代方案的成本（已歸零）。**只檢查其中一個都會得到錯的答案。**
+
 ## Goals / Non-Goals
 
 **Goals:**
