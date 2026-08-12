@@ -28,12 +28,27 @@ kubectl -n network get svc k8s-gateway \
   -o jsonpath='{.status.loadBalancer.ingress[0].ip}{"\n"}'
 ```
 
-Set it in the router's **DHCP settings** (usually "DNS server" or "DHCP option
-6"), not in one device's network settings — the point is that every device on
-the LAN picks it up automatically.
+There are three ways to deliver that, and they fail very differently.
 
-Leave the router's own upstream resolver as it is. `k8s-gateway` answers only
-for this cluster's domain and forwards everything else.
+| | internal names | when the cluster is down |
+|---|---|---|
+| **Conditional forwarding** — send only `<domain>` to the cluster | all of them, automatically | only internal names break |
+| Per-host records on the router | each one added by hand | only those names break |
+| DHCP DNS server → the cluster | all of them, automatically | **the whole LAN loses DNS** |
+
+**Prefer conditional forwarding.** `k8s-gateway` forwards queries for domains it
+does not serve, so pointing the LAN's DNS server at it puts every lookup in the
+house through this cluster — and a cluster that is down then takes the internet
+with it. That is the failure mode this design rejected elsewhere (D3) when it
+declined to put the appliance in the network path.
+
+UniFi's UDM/UDR run dnsmasq underneath, which supports `server=/<domain>/<addr>`
+natively; whether the UI exposes it depends on the version. If it does not, add
+the handful of internal hostnames as local DNS records instead and accept the
+manual step — it is still safer than making the cluster answer for everything.
+
+Only use the DHCP DNS server route on a cluster where losing DNS with the
+cluster is acceptable, and say so in the handover notes if you do.
 
 ## Pin the address before you set it
 
