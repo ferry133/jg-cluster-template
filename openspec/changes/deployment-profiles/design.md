@@ -681,6 +681,47 @@ D29 的四個選項中選定「出廠時 operator 設定一次路由器的 DNS�
 
 正確的檢查是直接的：**問路由器解不解得出內網名稱**。解不出就代表路由器被重設、被換掉，或設定從未生效——而那正是「內網全壞掉但沒有任何元件顯示異常」的情形。
 
+### D33. 檢查憑證的機制不該自己洩漏憑證
+
+2c.3 的第一版實作把強度規則寫進 CUE：
+
+```cue
+ttyd_credential?: string & =~"^[^:]+:.{20,}$" & !~"(?i)(admin|test|password|...)"
+```
+
+規則本身是對的，八個測試案例全部如預期。但 `cue vet` 失敗時會這樣說：
+
+```
+ttyd_credential: invalid value "admin:hunter2" (out of bound =~"...")
+```
+
+**它把憑證印進終端和 CI log。** 一個為了抱怨憑證太弱而把憑證洩漏出去的檢查，比沒有檢查更糟——弱憑證至少還需要有人去猜。
+
+所以檢查移到 `scripts/check-ttyd-credential.py`，那裡可以控制輸出：只講哪裡不對、怎麼修，永遠不印值。
+
+順帶踩到第二個坑：第一版腳本用 `line.partition(":")` 讀值。憑證本身**依定義含冒號**，而該行還可能有行內註解與引號，於是它讀到的字串比真值長了幾個字元——長度判斷因此得出不同答案（先說 9 字元，後說含弱字）。改用 `yq`。**一個讀錯待檢物件的檢查器，比沒有檢查更危險，因為它會給出看似權威的錯誤結論。**
+
+#### 檢查結果證明這個任務不是假想的
+
+| 叢集 | 問題 |
+|---|---|
+| jg-jiahd | 使用者名稱 `admin`、密碼 9 字元 |
+| jcom | 使用者名稱 `admin`、密碼 9 字元 |
+| jgt-omni-accept | 使用者名稱 `admin` |
+| jgt-talos-accept | 密碼 1 字元、單一重複字元 |
+
+四個全部不合格，其中兩個是生產叢集，守著一個 tunnel 一連上就對外可達的 shell。`replicas: 0` 擋住了實際登入，但那是姿態不是控制——任何把它 scale up 的動作都會拿掉它。
+
+### D34. 「模板無法表達 X」要先跑一次再說
+
+2c.2 記錄的是：`claude_instances: []` 會讓 makejinja 略過 helmrelease，而 `kustomization.yaml` 硬寫的 `resources` 會讓 kustomize build 失敗。
+
+實測結果：**makejinja 沒有略過**，它產生了一個只含註解的檔案；`kustomize build` 成功並輸出 0 個物件；`task configure` rc=0。模板一直都表達得出來。
+
+會失敗的是「檔案根本不存在」（`evalsymlink failure`），但那個情況不會發生。原本的失敗鏈是從兩個各自合理的前提推論出來的，中間那一步沒有人驗過。
+
+與 D18（`storageClassName: ""` 那次）同一個形狀：**掃描或推論指出一個缺陷，不代表指出的是那個缺陷。** 差別在於這次的成本只是一次實驗，而 D18 若照著做會拆掉四個正常運作的 NFS 掛載。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。

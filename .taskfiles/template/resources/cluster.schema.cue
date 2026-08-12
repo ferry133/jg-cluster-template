@@ -218,6 +218,10 @@ import (
 	// defaults to ["im"] at render time; ttyd_credential is only unused when
 	// claudecode_auth0_* switches the instances to OIDC login.
 	claude_instances?: [...string]
+	// Strength is checked by scripts/check-ttyd-credential.py, not here: a CUE
+	// constraint prints the offending value in its error, and a check that leaks
+	// the credential into a terminal and CI log to complain about it is worse
+	// than no check.
 	ttyd_credential?: string & !=""
 	claudecode_auth0_domain?: string & !=""
 	claudecode_auth0_client_id?: string & !=""

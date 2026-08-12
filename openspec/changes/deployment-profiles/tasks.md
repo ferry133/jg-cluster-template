@@ -38,8 +38,21 @@
 - [x] 2c.1 已實作並在活叢集驗證：suspend patch 生成正確、Flux 已套用（`suspend=true`）、刪除後兩分鐘內未重建。`local-path` 叢集的失敗原因已精確佐證——`NAS_SERVER`/`NAS_PATH` 為空導致 Deployment `nfs.server: Required value`
 - [x] 2c.4 新增可選欄位 `single_node`（Omni 路徑渲染期無法得知節點數，`nodes` 恆為 `[]`）；未宣告時假設有 peer——猜錯只是多跑一個能用的元件，反向猜錯會靜默停掉需要的
 - [x] 2c.5 遷移步驟已在 jgt-omni 實測確立：**刪除被 suspend 的 Kustomization 無效**（prune finalizer 被 suspend 擋住，資源全留）；有效做法是直接 `kubectl delete hr`，helm uninstall 會連帶清掉它建立的 StorageClass / ServiceAccount。之後 `cluster-apps-base` 重建子 Kustomization 時 suspend 守住，資源維持消失。順序必須是「先刪資源、再靠 suspend 擋重建」。詳見 `design.md` D11
-- [ ] 2c.2 模板無法表達「不部署任何 claude-code instance」：`claude_instances: []` 會讓 helmrelease 渲染為空並被 makejinja 略過，但 `instances/kustomization.yaml` 硬寫 `resources: [./helmrelease.yaml]`，kustomize build 隨即失敗
-- [ ] 2c.3 弱測試憑證 + 預設啟用的公開入口是危險組合：`ttyd_credential` 若為測試值，配上預設 `claude_instances: ["im"]` 與出站自動連通的 tunnel，會讓 hostname 進 CT log。（本次實測確認 `replicas: 0` 使其不至於真的可登入，但該防護不應是唯一一道）
+- [x] 2c.2 **原診斷是錯的，模板其實表達得出來**。實測 `claude_instances: []`：makejinja **並沒有略過**檔案，它產生了一個只含註解的 `helmrelease.yaml`，`kustomize build` 成功並輸出 0 個物件，`task configure` rc=0。會失敗的是「檔案不存在」那種情況（`evalsymlink failure`），而那不會發生
+  - 原本記的失敗鏈是推論出來的，沒有跑過。實際跑一次就散了
+- [x] 2c.3 已加強制檢查，而且**擔憂完全成立**——四個叢集的憑證逐一檢查後全部不合格：
+
+  | 叢集 | 問題（未輸出憑證值） |
+  |---|---|
+  | jg-jiahd | 使用者名稱 `admin`、密碼 9 字元 |
+  | jcom | 使用者名稱 `admin`、密碼 9 字元 |
+  | jgt-omni-accept | 使用者名稱 `admin`（密碼長度足夠） |
+  | jgt-talos-accept | 密碼 1 字元且為單一重複字元 |
+
+  - 檢查**刻意不放在 CUE**：CUE 的約束失敗會把違規的值印進錯誤訊息，也就是把憑證洩漏到終端與 CI log——一個為了抱怨憑證太弱而洩漏憑證的檢查，比沒有檢查更糟。改為 `scripts/check-ttyd-credential.py`，只輸出「哪裡不對」與修復指令
+  - 接在 `task configure` 的**渲染之前**：弱憑證應該擋住渲染，而不是部署之後才發現
+  - 解析用 `yq` 而非自己切字串：憑證本身含冒號，行內又可能有註解，手工解析一度多讀了幾個字元，長度判斷因此不同——一個讀錯待檢物件的檢查器毫無用處
+  - jgt-omni-accept 已換上強憑證並確認 `task configure` 通過。**jg-jiahd 與 jcom 未動**：換憑證會影響 ferry133 自己的存取，時機由他決定；叢集現在不受影響（Flux 不跑這個檢查），只有下次 `task configure` 會被擋
 
 - [x] 2c.6 `local-path` 叢集原本**沒有 default StorageClass**：`sc-nas` 隨 nfs-subdir 一起移除後，叢集沒有任何 storage class（`storage/local-path-provisioner` 是 extra，未啟用）。已修：`ks.yaml.j2` 在 `storage_backend == 'local-path'` 時把它加進 Kustomization 清單，不論 `extras:` 有沒有列——profile 的預設 class 必須真的存在，而不只是「不是錯的那個」
 
