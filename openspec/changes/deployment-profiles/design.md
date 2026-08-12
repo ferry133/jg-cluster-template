@@ -783,6 +783,25 @@ jg-jiahd 有同樣的需求，處理方式是**手改自己那份 `helmrelease.y
 
 **進場前先想好退場。** 這件事的教訓不只是「移除很麻煩」，而是：一個元件的**安裝**驗證通過，不代表它可以被安全地移除，而 profile 這種可切換的軸隱含了雙向承諾。已寫進 `docs/operations/replicated-storage.md`。
 
+### D38. 換 storage class 的順序：先確認 secret，再刪 PVC
+
+jcom 的 DB 搬遷（6.7）第一次沒成功，而失敗的方式很有教育意義。
+
+流程是：改 `db_storage_class` → `task configure` → push → 刪 PVC → 讓 Flux 用新 class 重建。刪掉之後 Flux **立刻**重建了 PVC，但它讀到的 `cluster-secrets` 還是舊的，於是又建成 `sc-nas`。而 `storageClassName` immutable，所以那個新 PVC 也改不了——只能再刪一次。
+
+根因是把「push 了」當成「叢集已經知道了」。`cluster-secrets` 是另一個 Kustomization，它有自己的 reconcile 節奏；而 PVC 的重建幾乎是瞬時的。兩者之間有一個窗口，而破壞性操作正好落在窗口裡。
+
+正確的順序是**先驗證叢集上的值**，再動 PVC：
+
+```sh
+kubectl -n flux-system get secret cluster-secrets \
+  -o jsonpath='{.data.DB_STORAGE_CLASS}' | base64 -d   # 必須已是新值
+```
+
+第二次照此執行，一次成功。
+
+**通則**：GitOps 裡「我推了」和「叢集套用了」之間永遠有延遲，而任何不可逆的手動步驟都必須以後者為前提，不是前者。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。
