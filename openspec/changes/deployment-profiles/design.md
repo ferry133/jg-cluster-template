@@ -570,11 +570,36 @@ k8s-gateway     → 部署得起來，但沒有人會去指向它   ✗
 - **5.3**（k8s-gateway 降為條件啟用）：它不是 fallback，是**唯一**能回答內網名稱的東西。appliance 若不部署它，內網名稱完全無法解析
 - **5.4**（rebinding 偵測）：邏輯本身沒錯且會安靜跳過（公開查不到 RFC1918 就不比對），但它偵測的是客戶路由器，而問題不在那裡
 
+#### 這是 Cloudflare 的政策，不是 DNS 的限制
+
+補測（2026-08-12）：已知會把位址編進主機名的公開服務，從公開 resolver 查都正常回傳私有位址。
+
+```
+10.9.1.241.nip.io      @1.1.1.1 → 10.9.1.241     @8.8.8.8 → 10.9.1.241
+192.168.1.1.sslip.io   @1.1.1.1 → 192.168.1.1    @8.8.8.8 → 192.168.1.1
+localtest.me           @1.1.1.1 → 127.0.0.1      @8.8.8.8 → 127.0.0.1
+```
+
+所以 **DNS 協定沒問題、1.1.1.1 與 8.8.8.8 沒有過濾**，擋住的是 Cloudflare 對自己託管 zone 的發布政策。D6 的想法本身成立，只是不能託在 Cloudflare 上。
+
+**但 zone 不能整個搬走**：Cloudflare Tunnel 的公開入口必須是同 zone 內的 proxied 記錄（`<id>.cfargotunnel.com` 只在 Cloudflare zone 內有意義）。所以能動的是「內網名稱那一部分」，不是整個網域。
+
+#### mDNS 為什麼不是解（2026-08-12 評估）
+
+`.local` 幾乎零設定——各大 OS 原生支援，正好符合「不能碰路由器與裝置」。但有兩個硬限制：
+
+1. **只能服務 `.local`。** resolver 依後綴決定走不走 multicast，`homebridge.janncot.cc` 永遠不會被送去問 mDNS。要用就得改名，而那正是 D5 拒絕過的那類變更。
+2. **`.local` 拿不到公開 TLS 憑證。** Let's Encrypt 不簽保留網域，所以 HTTPS 一定是憑證錯誤，除非在每台裝置安裝私有 CA——那就回到「要碰每一台裝置」。
+
+值得記的是：**真正需要「LAN 主機名 + 有效 TLS」的集合比想像小**。homebridge / HomeKit 本來就用 Bonjour（即 mDNS）做裝置探索，不經 DNS；MQTT 的 IoT 裝置通常直接設 IP。需要憑證的其實是那些有登入的網頁介面。mDNS 可以覆蓋前者，覆蓋不了後者。
+
 #### 剩下的選項，沒有一個是免費的
 
 | 方案 | 代價 |
 |---|---|
-| 換一家不過濾 RFC1918 的 DNS | 新的外部相依，與「不引入新相依」的約束衝突 |
+| **把內網名稱委派給另一家權威 DNS**（`lan.<domain>` NS 委派，Cloudflare 留給 tunnel） | 多一層後綴（D5 拒絕過類似的）、多一個 provider 與其 API 憑證；但扁平度以外的一切都保留：cert-manager 照樣 DNS-01 簽發、tunnel 不動、客戶端零設定 |
+| mDNS `.local` | 名稱全改且**拿不到公開憑證**；只適合 HomeKit/MQTT 這類本來就不靠 DNS 或不需 TLS 的 |
+| 換掉整個 zone 的 DNS 供應商 | **不可行**：Cloudflare Tunnel 需要同 zone 的 proxied 記錄 |
 | 客戶把路由器 DNS 指向 k8s-gateway | 正是零 IT 客戶做不到的那一步 |
 | appliance 接管 DHCP 並發 option 6 | 讓 appliance 成為客戶網路的單點，D3 已因此否決過類似方案 |
 | 接受出廠時由 operator 設定一次路由器 | 誠實，但「三個物理動作」變成四個，且需要路由器管理權 |
