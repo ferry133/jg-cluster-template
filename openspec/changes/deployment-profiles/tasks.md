@@ -168,7 +168,9 @@
 - [x] 8.7 收窄 pool 的驗收**不能**問「narrow 之後有沒有壞」——漏列位址時那個問題也會答「沒有」。必須在套用前證明 pool 涵蓋當下每一個已配發位址（`kubectl get svc` 的實際集合 vs 渲染出的 `LB_POOL_BLOCKS`）。已配發的位址不會因來源 pool 消失而被收回，要到 Service 下次重建才失敗。詳見 `design.md` D26。已實作為 `scripts/check-lb-pool-covers-live.py`，套用前對 jgt-omni 與 jg-jiahd 各跑一次皆通過
 
 - [ ] 8.1 在 scratch 叢集完成一次 appliance profile 全新部署，客戶端輸入為 0 項
-- [ ] 8.2 從 LAN 用戶端驗證內網服務可用扁平 hostname 存取，且未變更路由器或裝置設定
+- [ ] 8.2 從 LAN 用戶端驗證兩件事（原文寫「未變更路由器」，D32 之後改為「僅 operator 設定一次路由器，客戶端零設定」）：
+  - 內網名稱（`envoy-internal` 上的）可用扁平 hostname 存取
+  - **WAN 名稱在 LAN 上解到內網位址**——`im.<domain>` 應回 `envoy-external` 的 LAN IP 而非 Cloudflare 的。這決定對外線路中斷時家裡還能不能用，也是「路由器設定確實生效」的最佳探針
 - [ ] 8.3 完成還原演練：僅用備份封存 + escrow 的 `age.key`，在新叢集還原並比對資料一致
 - [ ] 8.4 撰寫還原程序文件，內容須與演練實際步驟逐字一致
 - [ ] 8.5 回寫所有 spike 結論到 `design.md` 與相關 spec，確認無「待驗證」項目遺留
