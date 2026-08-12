@@ -68,6 +68,15 @@ storage_backend: "nfs"
 # route, and with it the question.
 # accept_node_pinning: true
 
+# (OPTIONAL) Deploy k8s-gateway, the in-cluster resolver for internal names.
+# On by default, because it is the only thing that answers them — Cloudflare
+# refuses to publish RFC1918 addresses, so there is no public-DNS route. The
+# operator points the router's DNS at it once during installation; see
+# docs/operations/router-dns.md. It shares its address with envoy-internal and
+# mqtt, so it costs nothing extra. Turn it off only where something else
+# resolves those names.
+# k8s_gateway: true
+
 # ── Block tier ────────────────────────────────────────────────────────────────
 # (OPTIONAL) Which storage class databases use. Defaults to "local-path" and
 # deliberately does not follow storage_backend — NFS is never a correct answer

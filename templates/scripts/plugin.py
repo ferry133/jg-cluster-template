@@ -194,19 +194,18 @@ class Plugin(makejinja.plugin.Plugin):
         # Empty is not a sharing key that everything shares — Cilium treats it
         # as no key at all, verified on jgt-omni. So the annotations can sit in
         # jg-base unconditionally and stay inert on clusters that do not share.
-        # k8s-gateway answers internal names for LAN clients that point their
-        # resolver at it. Since 2026-08-12 those names are also published as
-        # plain A records that any resolver returns, so it is no longer the
-        # primary path — it is the fallback for a router that refuses to hand
-        # back RFC1918 answers (DNS rebinding protection).
+        # k8s-gateway answers internal names for clients whose resolver points
+        # at it. That is the primary path everywhere, including appliance:
+        # Cloudflare refuses to publish RFC1918 answers (D29), so there is no
+        # public-DNS route to fall back from. The operator points the router's
+        # DNS at it once during installation (D32).
         #
-        # Kept on for existing profiles, where it is what works today; off for
-        # an appliance, which cannot ask a customer to repoint a resolver
-        # anyway, so it only earns its address if detection says it is needed.
+        # It costs no extra address — 4.3 shares one with envoy-internal and
+        # mqtt — so the only reason to turn it off is a cluster that runs its
+        # own resolver.
         data.setdefault(
-            'deploy_dns_fallback',
-            bool(data['dns_fallback']) if 'dns_fallback' in data
-            else data.get('deployment_profile') != 'appliance')
+            'deploy_k8s_gateway',
+            bool(data['k8s_gateway']) if 'k8s_gateway' in data else True)
         # Nothing on the LAN connects to the external gateway — cloudflared
         # reaches it by in-cluster DNS name — so on an appliance it takes no LAN
         # address at all. Elsewhere it stays a LoadBalancer, because operators do

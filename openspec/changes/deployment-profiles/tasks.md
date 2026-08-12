@@ -94,16 +94,17 @@
 - [x] 4.8 `networks.yaml` 的 apiVersion 已改為 `cilium.io/v2`（叢集實際服務且儲存的版本），隨 4.6 一併變更
 - [x] 4.9 daily-check 新增兩項：所有 LoadBalancer 的 `cilium.io/IPAMRequestSatisfied` 不為 True 時回報 fail；以及探測位址的穩定性（改選時 warn）
   - **告警文案自己給解釋，不轉貼 Cilium 的訊息**：依 1.6，共用位址上的 port 相撞會回報 `out_of_ips` 並說「pool 位址用盡」，把維運者指向「pool 太小」，而真正原因是那個 port 已被佔走；單一位址設計下這兩者從訊息完全分不出來。同理 `already_allocated_incompatible_service` 通常代表少掛了 `sharing-cross-namespace`
-- [x] 4.4 探測迴圈每輪重新 ARP 確認選定位址；一旦該位址開始有回應就改選，並把新舊位址寫在 pool 的 annotation 上（`confirmed-at` / `previous` / `reselected-at`）——**記錄放在 pool 而不是只寫 log**，因為 pool 是這個元件唯一的輸出，而沒人看的 pod log 不算記錄。daily-check 讀這三個 annotation，改選時以 warn 呈報（改選代表所有 LAN 服務換位址，快取舊位址的客戶端需要重指）
+- [x] 4.4 **D32 後語意收窄**：位址一旦被寫進路由器就是外部契約，自動改選會讓路由器指向沒有東西在聽的位址、且全部內網名稱同時失效。因此 appliance 出廠前要把探測到的位址提升為宣告值（`lan_shared_addr`），之後撞號**回報而不自動改選**。程序見 `docs/operations/router-dns.md`。以下為原實作：探測迴圈每輪重新 ARP 確認選定位址；一旦該位址開始有回應就改選，並把新舊位址寫在 pool 的 annotation 上（`confirmed-at` / `previous` / `reselected-at`）——**記錄放在 pool 而不是只寫 log**，因為 pool 是這個元件唯一的輸出，而沒人看的 pod log 不算記錄。daily-check 讀這三個 annotation，改選時以 warn 呈報（改選代表所有 LAN 服務換位址，快取舊位址的客戶端需要重指）
 - [x] 4.5 `kubernetes/apps/base/network/lan-address/README.md` 明訂替換契約：必須產出名為 `pool-discovered`、僅含一個單位址 block 的 pool，重啟後沿用同一位址，且不得碰其他 pool；**不得要求變更 Cilium 設定、Service 標註、模板或 CUE schema**——若需要，代表契約被打破，該重新檢視邊界而不是放寬它。同時寫明 ARP 為何只是第一版而非最終版（它只能證明「此刻沒人回應」）
 
 ## 5. 內網服務 DNS（jg-base）
 
 - [~] 5.1 已實作並在 jgt-omni 實測，**隨後移除**：記錄確實被建立（A → `10.9.1.241`、`proxied=false`、TXT owner 分離），但**沒有任何 resolver 解得到**（見 1.3 / D29）。留著只會發佈解析不了的記錄，因此撤回而非保留
 - [x] 5.2 分離機制本身已驗證有效（這部分結論不受 1.3 影響）：`txtPrefix: k8s-internal.` + `txtOwnerId: internal`，兩個實例同時 `policy: sync` 於同一 zone，external 側六筆記錄（3 CNAME + 3 TXT owner=default）在第二實例運行期間**逐字未變**。若共用 owner id，彼此會把對方的記錄當成孤兒刪除
-- [ ] 5.3 **暫緩**：已實作開關（`dns_fallback`，appliance 預設不部署），但 1.3 之後這個預設是錯的——`k8s-gateway` 不是 fallback，是唯一能回答內網名稱的東西。appliance 不部署它等於內網名稱完全無法解析。開關保留，預設值待 D29 的方向決定後再定
-- [x] 5.4 已實作於 daily-check：查公開 DNS → 若得到 RFC1918 → 問閘道是否回相同答案 → 不同或無回應則 warn 並指出要設 `dns_fallback: true`。無公開記錄時安靜跳過（這正是 1.3 之後的實際情況）
-- [ ] 5.5 **阻塞於 D29**：在確定內網名稱要怎麼解析之前，沒有「啟用 fallback 前後」可比
+- [x] 5.3 D32 定案後改為：`k8s_gateway` 開關（原名 `dns_fallback`，那個名字描述的是一個不存在的角色），**所有 profile 預設開**，包括 appliance——它是唯一能回答內網名稱的東西，沒有可以 fall back 的對象。因 4.3 的 sharing-key 與 `envoy-internal`／`mqtt` 共用位址，不額外佔用 LAN 位址
+- [x] 5.4 D32 後重寫：**直接問路由器解不解得出內網名稱**（不再與公開 DNS 比對——D29 之後那邊根本沒有答案可比）。解不出判 FAIL 並指向 `docs/operations/router-dns.md`；FAIL 會扣住 dead-man ping
+  - 這個檢查存在的理由：路由器設定是安裝時的一次性動作，叢集無法強制它維持。重設、換機、ISP 推設定都會讓 LAN 上所有內網名稱同時失效，而**叢集本身完全健康**——正是沒人會歸因正確的那種故障
+- [ ] 5.5 D32 後改寫語意：不再有「fallback 前後」可比（k8s-gateway 一直都在）。要驗的是**路由器設定完成後，LAN 客戶端用扁平 hostname 可存取**——需要一台 appliance 與一個可設定的路由器，屬 8.2 的驗收
 - [x] 5.6 已驗證：第二個 external-dns 實例運行期間，`external.janncot.cc` / `flux-webhook` / `im` 三筆 CNAME 與三筆 `k8s.cname-*` TXT **逐字未變**，proxied 狀態也未變。實例移除後叢集回到原狀（`target: internal.janncot.cc` 已還原、`im.janncot.cc` 仍回 401）
 
 ## 6. 儲存分層（jg-base）

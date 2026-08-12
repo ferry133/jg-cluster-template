@@ -264,12 +264,14 @@ import (
 	// already be configured with.
 	lan_shared_addr?: net.IPv4 & !=""
 
-	// Deploy k8s-gateway. Internal names are published as ordinary A records
-	// that any resolver returns, so it is no longer the primary path — it is
-	// the fallback for a router that refuses to hand back RFC1918 answers.
-	// Defaults on everywhere except appliance, where it costs a LAN address and
-	// a customer cannot be asked to repoint a resolver at it anyway.
-	dns_fallback?: bool
+	// Deploy k8s-gateway, the in-cluster resolver for internal names. On by
+	// default everywhere, because it is the only thing that answers them:
+	// Cloudflare refuses to publish RFC1918 addresses, so there is no
+	// public-DNS route. The operator points the router's DNS at it once during
+	// installation. It shares its address with envoy-internal and mqtt, so it
+	// costs nothing extra. Turn it off only where something else resolves those
+	// names.
+	k8s_gateway?: bool
 	cloudflare_lan_tunnel_token?: string & !=""
 	// monitoring/daily-check (base app on every cluster). Fields stay optional:
 	// an unconfigured cluster's CronJob exits 0 with a "not configured" log
