@@ -179,6 +179,14 @@ class Plugin(makejinja.plugin.Plugin):
         # Empty is not a sharing key that everything shares — Cilium treats it
         # as no key at all, verified on jgt-omni. So the annotations can sit in
         # jg-base unconditionally and stay inert on clusters that do not share.
+        # Nothing on the LAN connects to the external gateway — cloudflared
+        # reaches it by in-cluster DNS name — so on an appliance it takes no LAN
+        # address at all. Elsewhere it stays a LoadBalancer, because operators do
+        # reach it directly today and changing that is not this change's business.
+        data.setdefault(
+            'envoy_external_service_type',
+            'ClusterIP' if data.get('deployment_profile') == 'appliance'
+            else 'LoadBalancer')
         data.setdefault('lan_sharing_key', 'lan' if shared else '')
         # An explicit namespace list, never "*": kustomize strips the quotes
         # around a substituted scalar, and a bare `*` is a YAML alias, so the

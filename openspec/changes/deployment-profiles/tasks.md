@@ -83,11 +83,14 @@
   - **危害已實證關閉**：narrow 後在 jgt-omni 建一個未釘位址的 LoadBalancer Service，得到 `ip=<none>` 與 *There are no enabled CiliumLoadBalancerIPPools that match this service*——在此之前它會拿走 `10.9.1.1`（LAN 閘道）並 ARP 廣播
   - jcom 尚未套用（模板世代較舊，見 3.2），維持寬 pool——這正是預設值要保障的情況，其服務全程未受影響
   - 4.8 一併踩到一個坑：`CiliumL2AnnouncementPolicy` **只有 v2alpha1**，我把整份檔案改成 v2 導致整個 manifest dry-run 失敗、Kustomization NotReady。Flux 的 dry-run 擋在套用之前，pool 與服務都沒被動到；已修正（jg-base `2fa30b6`）
-- [ ] 4.7 appliance 下把 `envoy-external` 改為 ClusterIP，並確認 cloudflared 仍經 `envoy-external.network.svc.cluster.local:443` 正常運作
+- [x] 4.7 `envoy-external` 改用**專屬的 EnvoyProxy**（GatewayClass 上那個對每個 Gateway 都生效，無法只改一個），Service type 由 `${ENVOY_EXTERNAL_SERVICE_TYPE}` 控制，appliance 為 ClusterIP
+  - **已在 jgt-omni 實測 spec 場景**：暫時改為 ClusterIP 後，`envoy-external` 沒有 LB 位址、pool 用量由 2 降為 1，而 `https://im.janncot.cc` 三次都正常回應——證明 cloudflared 確實經叢集內 DNS 名稱連線，公開 ingress 不依賴那個 LAN 位址。之後已復原為 LoadBalancer（jgt-omni 是 full profile），`.243` 回歸
+  - `lbipam.cilium.io/ips` 保留非空佔位值：ClusterIP 時 LB-IPAM 根本不讀它，而空字串在 Gateway CRD 上是 `null`（D28）
 - [x] 4.8 `networks.yaml` 的 apiVersion 已改為 `cilium.io/v2`（叢集實際服務且儲存的版本），隨 4.6 一併變更
-- [ ] 4.9 讓 daily-check 監看所有 LoadBalancer Service 的 `cilium.io/IPAMRequestSatisfied` 條件
-- [ ] 4.4 實作指派後的持續撞號監看，並在確認撞號時自動改選、記錄新舊位址
-- [ ] 4.5 撰寫探測元件的替換說明：DHCP lease-holder 須產出相同的 pool，且不得要求 pool 以外的任何變更
+- [x] 4.9 daily-check 新增兩項：所有 LoadBalancer 的 `cilium.io/IPAMRequestSatisfied` 不為 True 時回報 fail；以及探測位址的穩定性（改選時 warn）
+  - **告警文案自己給解釋，不轉貼 Cilium 的訊息**：依 1.6，共用位址上的 port 相撞會回報 `out_of_ips` 並說「pool 位址用盡」，把維運者指向「pool 太小」，而真正原因是那個 port 已被佔走；單一位址設計下這兩者從訊息完全分不出來。同理 `already_allocated_incompatible_service` 通常代表少掛了 `sharing-cross-namespace`
+- [x] 4.4 探測迴圈每輪重新 ARP 確認選定位址；一旦該位址開始有回應就改選，並把新舊位址寫在 pool 的 annotation 上（`confirmed-at` / `previous` / `reselected-at`）——**記錄放在 pool 而不是只寫 log**，因為 pool 是這個元件唯一的輸出，而沒人看的 pod log 不算記錄。daily-check 讀這三個 annotation，改選時以 warn 呈報（改選代表所有 LAN 服務換位址，快取舊位址的客戶端需要重指）
+- [x] 4.5 `kubernetes/apps/base/network/lan-address/README.md` 明訂替換契約：必須產出名為 `pool-discovered`、僅含一個單位址 block 的 pool，重啟後沿用同一位址，且不得碰其他 pool；**不得要求變更 Cilium 設定、Service 標註、模板或 CUE schema**——若需要，代表契約被打破，該重新檢視邊界而不是放寬它。同時寫明 ARP 為何只是第一版而非最終版（它只能證明「此刻沒人回應」）
 
 ## 5. 內網服務 DNS（jg-base）
 
