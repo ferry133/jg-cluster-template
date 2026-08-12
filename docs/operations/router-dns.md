@@ -28,27 +28,28 @@ kubectl -n network get svc k8s-gateway \
   -o jsonpath='{.status.loadBalancer.ingress[0].ip}{"\n"}'
 ```
 
-There are three ways to deliver that, and they fail very differently.
+Three ways to deliver that. Pick the first one your router supports.
 
-| | internal names | when the cluster is down |
-|---|---|---|
-| **Conditional forwarding** — send only `<domain>` to the cluster | all of them, automatically | only internal names break |
-| Per-host records on the router | each one added by hand | only those names break |
-| DHCP DNS server → the cluster | all of them, automatically | **the whole LAN loses DNS** |
+| | internal names | cluster down | router support |
+|---|---|---|---|
+| **DHCP DNS server → cluster**, plus a secondary | all, automatically | slow but works | every router |
+| Conditional forwarding — only `<domain>` to the cluster | all, automatically | only internal names break | dnsmasq-based (UniFi, OpenWrt, pfSense) |
+| Per-host records on the router | added by hand | only those names break | some models |
 
-**Prefer conditional forwarding.** `k8s-gateway` forwards queries for domains it
-does not serve, so pointing the LAN's DNS server at it puts every lookup in the
-house through this cluster — and a cluster that is down then takes the internet
-with it. That is the failure mode this design rejected elsewhere (D3) when it
-declined to put the appliance in the network path.
+**The default is the DHCP DNS server**, because it is the only one every router
+has, and an appliance ships to whatever router the customer already owns.
 
-UniFi's UDM/UDR run dnsmasq underneath, which supports `server=/<domain>/<addr>`
-natively; whether the UI exposes it depends on the version. If it does not, add
-the handful of internal hostnames as local DNS records instead and accept the
-manual step — it is still safer than making the cluster answer for everything.
+`k8s-gateway` forwards domains it does not serve — verified, `github.com`
+resolves through it — so under normal operation it is transparent to the LAN.
+Always set a **secondary** DNS (the router itself, or 1.1.1.1): if the cluster
+stops answering entirely, clients fall back after a timeout. Note what that does
+*not* cover — if k8s-gateway answers *wrongly* (NXDOMAIN, SERVFAIL) the client
+accepts that answer and never asks the secondary.
 
-Only use the DHCP DNS server route on a cluster where losing DNS with the
-cluster is acceptable, and say so in the handover notes if you do.
+If the router does support conditional forwarding, prefer it: only queries for
+`<domain>` go to the cluster, so a cluster outage cannot affect anything else.
+UniFi's UDM/UDR run dnsmasq and support `server=/<domain>/<addr>` at that layer,
+though whether the UI exposes it depends on the version.
 
 ## Pin the address before you set it
 

@@ -802,25 +802,39 @@ kubectl -n flux-system get secret cluster-secrets \
 
 **通則**：GitOps 裡「我推了」和「叢集套用了」之間永遠有延遲，而任何不可逆的手動步驟都必須以後者為前提，不是前者。
 
-### D39. 把 DHCP 的 DNS 指向叢集，等於讓叢集成為客戶網路的單點
+### D39. 路由器設定的三種做法，以及一次過度悲觀的評估
 
-D32 決定由 operator 設定一次路由器的 DNS。它沒有說清楚**怎麼設**，而不同的設法風險差很多。
+D32 決定由 operator 設定一次路由器，但沒說**怎麼設**。實測（jgt-omni，2026-08-13）釐清了兩件事：
 
-`k8s-gateway` 為它不負責的網域轉發上游。所以把 DHCP 的 DNS server 指向它，等於**整個 LAN 的 DNS 都經過這台叢集**——叢集掛了，客戶不是內網名稱失效而已，是**整個家上不了網**。
+```
+im.janncot.cc  → 10.9.1.243    k8s-gateway 負責的名稱
+github.com     → 20.27.177.113  不負責的網域，確實轉發上游
+```
 
-那對 appliance 是不可接受的失敗模式：D3 早就因為同樣的理由否決過「把叢集放在客戶網路的路徑上」（雙網卡當路由器），而這是同一個錯誤換了個位置。
+**`k8s-gateway` 會轉發。** 我先前假設它不轉發、因而斷言「把 DHCP DNS 指向它 = 全網斷」，那個推論的前提是錯的。正常運作時它對整個 LAN 是透明的。
 
-三種設法，風險完全不同：
+真正的風險縮小成兩個，且性質不同：
 
-| 設法 | 內網名稱 | 叢集掛掉時 |
-|---|---|---|
-| DHCP DNS → k8s-gateway | 自動涵蓋全部 | **全網斷 DNS** |
-| 路由器上逐筆 Local DNS Record | 要手動同步 | 只影響那幾個名稱 |
-| **條件轉發**（只有 `<domain>` 轉給叢集） | 自動涵蓋全部 | 只影響內網名稱 |
+| 失效模式 | secondary DNS 能否接手 |
+|---|---|
+| 叢集完全當掉（無回應） | ✅ 客戶端 timeout 後轉 secondary——**可用但慢**（通常 5 秒） |
+| k8s-gateway 活著但回錯（NXDOMAIN / SERVFAIL） | ❌ 客戶端**接受**那個答案，永遠不會問 secondary |
 
-**條件轉發是唯一同時滿足兩者的**。UniFi 的 UDM/UDR 底層是 dnsmasq，原生支援 `server=/domain/addr`，但 UI 是否暴露該設定要看版本——若沒有，Local DNS Records 是安全的退路，代價是每個 hostname 手動一筆。
+所以 secondary DNS 是部分保險：擋得住停電，擋不住壞答案。
 
-`docs/operations/router-dns.md` 目前只寫「設 DHCP 的 DNS server」，那是三種裡最危險的一種。要改。
+#### 通用性才是決定因素
+
+| 做法 | 內網名稱 | 叢集掛掉 | 路由器支援度 |
+|---|---|---|---|
+| DHCP DNS → 叢集（+ secondary） | 自動涵蓋 | 慢但可用 | **所有路由器** |
+| 條件轉發（只有 `<domain>` 給叢集） | 自動涵蓋 | 只影響內網名稱 | dnsmasq 系（UniFi / OpenWrt / pfSense） |
+| 逐筆 Local DNS Record | 手動同步 | 只影響那幾筆 | 部分機種 |
+
+appliance 是要出貨給零 IT 客戶的，**部署程序必須在最低共同標準上可行**。條件轉發最乾淨，但消費級路由器多半沒有；逐筆記錄也不普遍。**唯一每台路由器都有的是 DHCP 的 DNS server 欄位。**
+
+所以預設程序是：primary 指向叢集、secondary 指向路由器自己或公開 DNS。有條件轉發的（像 ferry133 的 UniFi）就用它，那是嚴格更好的選項，但不能寫成前提。
+
+**通則**：一個要出貨的程序，它的可行性下限由客戶端的設備決定，不由我們手上這台決定。
 
 ## Risks / Trade-offs
 
