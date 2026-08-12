@@ -192,10 +192,14 @@ class Plugin(makejinja.plugin.Plugin):
         # deliberately by setting lan_shared_addr.
         shared = data.get('lan_shared_addr')
         if shared:
+            # Unconditional, not "only if already set". An appliance declares
+            # none of these — validation forbids them — so a conditional
+            # overwrite would leave them empty and the Gateway annotations null,
+            # which is the one shape the Gateway CRD rejects. This field is
+            # documented as superseding them, so it supersedes an absent one too.
             for field in ('cluster_gateway_addr', 'cluster_dns_gateway_addr',
                           'mqtt_lb_ip'):
-                if data.get(field):
-                    data[field] = shared
+                data[field] = shared
         # Empty is not a sharing key that everything shares — Cilium treats it
         # as no key at all, verified on jgt-omni. So the annotations can sit in
         # jg-base unconditionally and stay inert on clusters that do not share.
