@@ -64,12 +64,21 @@
 
 ## 6. jcom 同步
 
-- [ ] 6.1 `cluster.yaml` 補 `provisioning_path: "talos"` 與 `cluster_svc_cidr: "10.43.0.0/16"`
-- [ ] 6.2 `bootstrap-apps.sh` 改用模板版（固定 namespace 清單；jcom 的掃描版在現行目錄結構下會取到錯的 namespace）
-- [ ] 6.3 處理 `makejinja.toml` 的 `trello-notifier.yaml`：jcom 無此檔，需補檔或讓該 data 檔成為可選
-- [ ] 6.4 依清冊採納 / 移除其餘差異
-- [ ] 6.5 **在副本上**完整同步並比對渲染輸出（加密檔解密後比對），逐項解釋差異
-- [ ] 6.6 通過後才對真 repo 執行
+- [x] 6.1 副本上已補齊，且不只那兩個欄位——完整清單：`deployment_profile: full`、`provisioning_path: talos`、`storage_backend: nfs`、`cluster_svc_cidr: "10.43.0.0/16"`、`single_node: true`、`db_storage_class: sc-nas`（DB 仍在 NFS）、`cilium_native_routing: true`、`omni_udp_lb_ip: "10.9.8.8"`、`claude_code_always_on: ["im"]`
+- [x] 6.2 已隨全樹同步採用模板版
+- [x] 6.3 同步 `makejinja.toml` 時一併帶入 `trello-notifier.sample.yaml`；模板版的 `render-configs` 會在渲染前 `cp -n` 建立它，所以 makejinja 的 data 宣告不會缺檔
+- [x] 6.4 全樹同步（`templates/`、`.taskfiles/`、`scripts/`、`makejinja.toml`），漂移從 **13 個檔案降到 1 個**
+  - **唯一刻意保留的是 `templates/config/talos/talenv.yaml.j2`**：jcom 是 Talos v1.12.4 / K8s v1.35.2，模板是 v1.13.8 / v1.35.1——盲目同步會升級 Talos 並**降級 K8s**。它承載的是 per-cluster 的版本狀態，不是模板內容，應排除在漂移比對之外
+  - `01-apps.yaml.j2`：模板版的 bootstrap 完全不含 spegel（交給 Flux/jg-base），jcom 的 `spegel_enabled` 條件是舊世代做法。同步即解決 3.3 記錄的「兩處控制打架」
+- [x] 6.5 副本驗證完成，`task configure` rc=0，渲染差異只有 3 個檔案。**而它抓到三個會壞的東西**：
+  1. **`LB_POOL_BLOCKS` 漏了 `10.9.8.8`**（`omni/omni` 的 udp-gateway）：narrow pool 只含 5 個位址，活叢集有 6 個。依 D26 不會立刻壞，會等到那個 Service 下次重建才無聲失去位址。補 `omni_udp_lb_ip` 後，8.7 的檢查對活叢集 6/6 通過
+  2. **claude-code `replicas: 1 → 0`**：jcom 的 `im` 會被關掉——與我今天在 jgt-omni 踩到的同一件事
+  3. **我的 `claude_code_always_on` 設計不足**：jcom 舊模板寫的是 `1 if instance == "im" else 0`（im 常駐、cc 按需，活叢集確認 `im=1 / cc=0`），全域布林表達不出來。已改為 instance 名稱清單
+  - **Cilium 例外由 `cilium_native_routing` 生成，內容指紋與手寫版完全相同**（`c73f48c3fe`）；`spegel` 的 suspend 同樣相符（`865a2051b0`）。新增的三個 suspend（longhorn / lan-address-probe / spegel）皆為預期
+  - cluster-secrets 為純增鍵（`BACKUP_*`、儲存分層、`LAN_SHARING_*`、`NODE_DEFAULT_GATEWAY` 等），既有值除 `LB_POOL_BLOCKS`（narrow，已驗證）與測試用的 `TTYD_CREDENTIAL` 外未變
+- [ ] 6.6 **等待兩項決定才能對真 repo 執行**：
+  - jcom 現有的 `ttyd_credential` 不合格（使用者名稱 `admin`、密碼 9 字元），會被 `check-ttyd-credential` 擋在渲染之前。副本用的是臨時強憑證，真 repo 需要輪替——那會改變 ferry133 自己的存取
+  - 套用後 `cluster-apps-base` 會新增三個 suspend patch，其中 `spegel` 取代 jcom 手寫的那段（等價，指紋相符）；`longhorn` 與 `lan-address-probe` 是新元件的停用。已在副本驗證，但真 repo 是生產叢集
 
 ## 7. 驗收
 

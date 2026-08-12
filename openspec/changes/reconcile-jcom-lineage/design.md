@@ -93,6 +93,39 @@ jcom       11 DRIFTED   2 BEHIND    schema 255 行、plugin 164 行 — 更舊�
 
 所以結論是**不移除**。這個 spike 的價值不在於它的原始問題，而在於它讓兩個假設同時被檢查：效益（低）與替代方案的成本（已歸零）。**只檢查其中一個都會得到錯的答案。**
 
+
+### 副本驗證抓到三個東西，其中一個是我自己當天造的
+
+6.5 要求「在副本上完整同步並比對渲染輸出，逐項解釋差異」。做完之後漂移從 13 個檔案降到 1 個，而比對抓到三件事——**沒有一件會在套用當下報錯**：
+
+1. **`LB_POOL_BLOCKS` 漏了 `10.9.8.8`**（`omni/omni` 的 udp-gateway）。narrow pool 推導自 cluster.yaml 宣告的位址，而 jcom 從未宣告過這個——它在 jg-base 裡是寫死的，直到 6.1 才變成變數。依 D26，既有配發不會被收回，所以套用後一切正常，直到那個 Service 下次重建。
+2. **claude-code `replicas: 1 → 0`**，會關掉 jcom 的 `im`。
+3. **我當天加的 `claude_code_always_on` 表達不出 jcom 的需求**。它的舊模板寫的是 `1 if instance == "im" else 0`——`im` 常駐供支援用、`cc` 按需 scale，活叢集確認 `im=1 / cc=0`。一個全域布林會不是關掉 `im` 就是開起 `cc`。已改為 instance 名稱清單。
+
+第三項值得單獨記：那個欄位是我在**同一個工作階段**為了解決 jgt-omni 的相同問題而加的，加的時候只看到一個叢集的形狀。**「把漂移收成設定」這個動作本身也會漏掉需求**——而發現它的方式是去讀第二個叢集的漂移在說什麼。jcom 手改模板的那一行，正是需求規格。
+
+### 指紋比對比 diff 有用
+
+`ks.yaml` 的 diff 難讀：手寫的長註解變成一行生成註解、patch 順序改變、三個新的 suspend 混在中間。看起來像大改。
+
+改用「按 target 名稱分組 + patch 內容 sha1」比對後，一眼就清楚：
+
+```
+BEFORE                          AFTER
+<generic>  a847ff96f0           <generic>  a847ff96f0
+cilium     c73f48c3fe           cilium     c73f48c3fe   ← 手寫 → 宣告，內容不變
+spegel     865a2051b0           spegel     865a2051b0
+                                lan-address-probe / longhorn  ← 新增，預期
+```
+
+**Cilium 那個例外從手寫 JSON6902 變成 `cilium_native_routing: true`，產出位元組相同。** 這是「行為不變」最強的證據形式——比讀 diff 判斷「看起來一樣」可靠得多。
+
+### `talenv.yaml.j2` 不是模板內容，是叢集狀態
+
+同步時唯一刻意保留的檔案。jcom 是 Talos v1.12.4 / K8s v1.35.2，模板是 v1.13.8 / v1.35.1——盲目覆蓋會升級 Talos 並**降級 K8s**。
+
+這揭露漂移偵測的一個分類缺口：它把所有 `templates/` 下的檔案一視同仁，但版本宣告檔承載的是每個叢集自己的升級節奏。`check-template-drift.py` 目前會把它報成 DRIFTED，那是誤報——應該有一類「預期分歧」的標記。
+
 ## Goals / Non-Goals
 
 **Goals:**
