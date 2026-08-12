@@ -76,9 +76,15 @@
   3. **我的 `claude_code_always_on` 設計不足**：jcom 舊模板寫的是 `1 if instance == "im" else 0`（im 常駐、cc 按需，活叢集確認 `im=1 / cc=0`），全域布林表達不出來。已改為 instance 名稱清單
   - **Cilium 例外由 `cilium_native_routing` 生成，內容指紋與手寫版完全相同**（`c73f48c3fe`）；`spegel` 的 suspend 同樣相符（`865a2051b0`）。新增的三個 suspend（longhorn / lan-address-probe / spegel）皆為預期
   - cluster-secrets 為純增鍵（`BACKUP_*`、儲存分層、`LAN_SHARING_*`、`NODE_DEFAULT_GATEWAY` 等），既有值除 `LB_POOL_BLOCKS`（narrow，已驗證）與測試用的 `TTYD_CREDENTIAL` 外未變
-- [ ] 6.6 **等待兩項決定才能對真 repo 執行**：
-  - jcom 現有的 `ttyd_credential` 不合格（使用者名稱 `admin`、密碼 9 字元），會被 `check-ttyd-credential` 擋在渲染之前。副本用的是臨時強憑證，真 repo 需要輪替——那會改變 ferry133 自己的存取
-  - 套用後 `cluster-apps-base` 會新增三個 suspend patch，其中 `spegel` 取代 jcom 手寫的那段（等價，指紋相符）；`longhorn` 與 `lan-address-probe` 是新元件的停用。已在副本驗證，但真 repo 是生產叢集
+- [x] 6.6 **已對真 repo 執行並驗證**（2026-08-12）。渲染差異與副本完全一致（同樣 3 個檔案），套用後：
+  - `routing-mode=native  mtu=1500  lb-mode=dsr` — Cilium 例外由 `cilium_native_routing` 生成後仍生效
+  - `spegel` / `longhorn` / `lan-address-probe` 三個 suspend 皆 `true`，`cilium` 未 suspend 且 Ready
+  - claude-code `cc desired=0` / `im desired=1 ready=1` — 與 `claude_code_always_on: ["im"]` 一致
+  - 六個 LB 位址全部不變，spegel 零殘留
+  - `ttyd_credential` 已輪替（原本是 `admin` + 9 字元密碼，守著一個 tunnel 對外曝光的 shell）
+- [x] 6.7 同步時另外兩個**不可盲目同步**的檔案：
+  - `.gitignore`：模板 repo 忽略 `/bootstrap/` 與 `/talos/`（本機產物），但 jcom 追蹤它們。兩者語意不同，同步會改變「什麼被提交」，超出模板同步的範圍。只補了缺的 `/trello-notifier.yaml` 一行
+  - `.sops.yaml`：同步後出現 mode 644→755 的 diff。根因是模板 repo 的 `templates/config/.sops.yaml.j2` 權限是 `700`，而 makejinja 的 `copy_metadata = true` 會把權限帶到渲染產物——**一個模板檔的權限會傳染到每個 repo**。已在模板 repo 改回 644
 
 ## 7. 驗收
 
