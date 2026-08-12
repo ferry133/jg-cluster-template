@@ -753,6 +753,36 @@ D13 把「多節點 + node-local」變成必須明寫的承認（`accept_node_pi
 
 改成單一預設，並讓「忘記把資料庫搬到 longhorn」以正確的方式現形——資料庫仍在 node-local class，閘門觸發，而它問的正好就是被忘記的那件事。**比自動推導更好：自動推導會讓人以為裝了 Longhorn 資料就搬好了。**
 
+### D36. 手動 scale 的漂移，呈現出來是「無法解釋的中斷」
+
+claude-code 的模板寫死 `replicas: 0`，那是刻意的安全姿態——一個帶 cluster-admin RBAC、被 tunnel 對外曝光的 root shell，不該常駐。
+
+但 jgt-omni 的 `im` 先前一直是 `1/1 Running`：那是更早驗證 `im.janncot.cc` 時手動 `kubectl scale` 上去的，從沒寫回宣告。今天為了測 Longhorn 反覆 reconcile，Flux 把它校正回 0，`im.janncot.cc` 從 401 變成 503。
+
+**宣告式系統修正漂移是它的職責，但當事人看到的是服務無故消失。** 而且我當時正在回報「pod 1/1 Running 53 分鐘」當作資料完好的證據——那個 pod 在我報告的前幾分鐘就已經被縮掉了，我讀到的是舊狀態。
+
+修法是把「要不要常駐」變成 `cluster.yaml` 的欄位（`claude_code_always_on`，預設 off），而不是再 scale 一次。
+
+#### 為什麼不照 jg-jiahd 的做法
+
+jg-jiahd 有同樣的需求，處理方式是**手改自己那份 `helmrelease.yaml.j2`** 設 `replicas: 1`。CLAUDE.md 記載那是 2026-08-08 user-confirmed 的，並註明它取代了先前 `kubectl scale` 的漂移——**同一個問題在那邊已經發生過一次**。
+
+但那份本地修改後來成為 3.1 同步時必須逐一保護的分歧之一（與 QUIC workaround 並列）。一個需求出現第二次，就該是欄位而不是第二份分歧。jg-jiahd 未來可以改用這個欄位，把那段本地修改收掉。
+
+**通則**：per-cluster 的差異若反覆出現，它就不是例外，是缺少的設定項。
+
+### D37. `storage_backend: replicated` 幾乎是單向的
+
+2c.8 只驗證了安裝。移除 Longhorn 在 jgt-omni 上撞到三道彼此獨立的牆：
+
+1. **拒絕移除**：`longhorn-uninstall` hook 要求 `deleting-confirmation-flag`。patch Setting CRD 不夠——CRD 顯示 `value: "true"` 且 `status.applied: true`，job 仍讀到 `false`，因為它讀的是 chart 裝下去的 ConfigMap。必須從 Helm values 設。
+2. **webhook 死鎖**：webhook Service 被刪但設定還在，於是 namespace 裡任何刪除都失敗，卡在 `Terminating` 不會自己好。
+3. **三個 CR 的 finalizer**：`backuptargets`、`engineimages`、`nodes.longhorn.io` 撐住 namespace。
+
+之後 CRD 與孤兒 StorageClass（`longhorn`、`longhorn-static`）還要手動清——Helm 兩樣都留著。
+
+**進場前先想好退場。** 這件事的教訓不只是「移除很麻煩」，而是：一個元件的**安裝**驗證通過，不代表它可以被安全地移除，而 profile 這種可切換的軸隱含了雙向承諾。已寫進 `docs/operations/replicated-storage.md`。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。

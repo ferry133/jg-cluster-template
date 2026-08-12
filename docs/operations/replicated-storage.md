@@ -107,3 +107,62 @@ does not help against the failure that actually threatens a home cluster — the
 whole site.
 
 That is what the off-site backup is for, and it is still required.
+
+## Turning it off again is not symmetric
+
+`storage_backend: "replicated"` is close to one-way. Removing Longhorn hit three
+separate walls on jgt-omni (2026-08-12), none of which are in Longhorn's own
+uninstall docs in a form that helps:
+
+**1. It refuses to uninstall without confirmation.** The `longhorn-uninstall`
+pre-delete hook exits with:
+
+```
+cannot uninstall Longhorn because deleting-confirmation-flag is set to `false`
+```
+
+Patching the Setting CRD is not enough. `kubectl -n longhorn-system get setting
+deleting-confirmation-flag` reported `value: "true"` and `status.applied: true`
+while the job kept reading `false` — it reads the ConfigMap the chart installed,
+not the CRD. Set it through Helm values instead:
+
+```yaml
+defaultSettings:
+  deletingConfirmationFlag: true
+```
+
+and let longhorn-manager reconcile it before starting the uninstall.
+
+**2. The admission webhook deadlocks the namespace.** Once the webhook Service
+is gone but its configuration is not, every delete in the namespace fails:
+
+```
+failed calling webhook "validator.longhorn.io": service
+"longhorn-admission-webhook" not found
+```
+
+The namespace sits in `Terminating` indefinitely. Remove the configurations:
+
+```sh
+kubectl delete validatingwebhookconfiguration longhorn-webhook-validator
+kubectl delete mutatingwebhookconfiguration  longhorn-webhook-mutator
+```
+
+**3. Three custom resources hold finalizers.** `backuptargets`, `engineimages`
+and `nodes.longhorn.io` survive the content sweep and keep the namespace alive.
+Clear them:
+
+```sh
+for r in backuptargets engineimages nodes; do
+  for o in $(kubectl -n longhorn-system get "$r.longhorn.io" -o name); do
+    kubectl -n longhorn-system patch "$o" -p '{"metadata":{"finalizers":[]}}' --type=merge
+  done
+done
+```
+
+Then the CRDs and any orphaned StorageClasses (`longhorn`, `longhorn-static`)
+have to go by hand — Helm leaves both behind.
+
+**Plan the exit before the entry.** Switching a live cluster off replicated
+storage means moving every volume off it first, and the removal itself is a
+sequence of manual steps with a deadlock in the middle.

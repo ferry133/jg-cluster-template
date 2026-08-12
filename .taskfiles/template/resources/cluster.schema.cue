@@ -241,6 +241,11 @@ import (
 	// defaults to ["im"] at render time; ttyd_credential is only unused when
 	// claudecode_auth0_* switches the instances to OIDC login.
 	claude_instances?: [...string]
+	// Keep the claude-code terminal running. Off by default — it is a root
+	// shell with cluster-admin RBAC that the tunnel exposes — so a cluster that
+	// wants one standing declares it here. Scaling by hand instead works until
+	// the next reconcile and then disappears without an apparent cause.
+	claude_code_always_on?: bool
 	// Strength is checked by scripts/check-ttyd-credential.py, not here: a CUE
 	// constraint prints the offending value in its error, and a check that leaks
 	// the credential into a terminal and CI log to complain about it is worse

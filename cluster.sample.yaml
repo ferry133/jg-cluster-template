@@ -221,6 +221,15 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 #   - "im"
 #   - "trello"
 #
+# (OPTIONAL) Keep the claude-code terminal running. Defaults to off: it is a
+# root shell with cluster-admin RBAC that the Cloudflare tunnel makes reachable,
+# so it is scaled to 1 only while actively supporting the cluster.
+#
+# Declare it here rather than running `kubectl scale`. A hand-scaled replica
+# survives until the next reconcile and then disappears — which presents as an
+# unexplained outage, not as a setting being enforced.
+# claude_code_always_on: true
+#
 # (REQUIRED unless Auth0 login is configured below) ttyd basic auth.
 ttyd_credential: "user:password"      # also used by the default/ttyd extra
 #

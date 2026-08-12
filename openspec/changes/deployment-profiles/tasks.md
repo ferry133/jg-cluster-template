@@ -75,6 +75,10 @@
 - [x] 2c.14 `accept_node_pinning` 的 predicate 已改為 `_uses_node_local`：`storage_backend == 'local-path'` **或** 啟用了 `#BlockTierExtras`（`claudecode/postgres`、`default/mariadb`、`default/postgres`、`freepbx/freepbx`）任一。有 NAS 的多節點叢集跑 DB 一樣被釘死，只是路徑不同，舊 predicate 會直接放行。`extras` 因此由 optional 改為 `*[] | [...string]`，讓判斷式能無條件讀取。七種組合皆已用 `cue vet` 驗證（含「nfs + 多節點 + 無 DB extra → 通過」與「nfs + 多節點 + postgres → 拒絕」）
 - [x] 2c.15 jg-base README 的 extras→base 遷移 runbook 是錯的，且從未被執行過（jcom 事後補寫）。實跑後 release 照樣被 uninstall：`spec.prune` 不管刪除串聯——CRD 定義 `deletionPolicy` 才是，`MirrorPrune` 才會讀 `prune`，而本模板每個 Kustomization 都明寫 `deletionPolicy: WaitForTermination`；且線上 patch 會被母 Kustomization 的下次 apply 覆蓋，suspend 母體也不可靠（`Kustomization/flux-system` 由 flux-operator 管）。已改為「走 git 分兩次 push」（jg-base `db2568a`），詳見 `design.md` D16
 
+- [x] 2c.16 `claude_code_always_on` 欄位（預設 off）：`replicas` 從模板寫死的 0 改為由 `cluster.yaml` 宣告。起因是 jgt-omni 的 `im` 今天在我反覆 reconcile 時被 Flux 校正回 0 → `im.janncot.cc` 503——先前那個一直活著的 pod 是**漂移**（更早驗證時手動 scale 上去、沒寫回宣告）
+  - **刻意不照 jg-jiahd 的做法**：那邊是手改自己那份 `helmrelease.yaml.j2` 設 `replicas: 1`，而那份本地分歧正是 3.1 同步時要特別保護的東西之一。同一個需求出現第二次就該是欄位，不是第二份分歧；jg-jiahd 未來可改用它把那段收掉
+  - 順帶把 claude-code 的兩個 PV 重建（我在清 Longhorn 時的 `kubectl delete pv --all` 波及了它們，卡在 `Terminating`）。新 PV 無 deletionTimestamp，`.claude` 需重新登入一次
+
 ## 3. 既有叢集遷移（不改變行為）
 
 - [x] 3.1 **已對 jg-jiahd 實際套用**（2026-08-11）。先在完整副本驗過再上線，結果與副本逐字相同：`ks.yaml` **byte-identical**（唯一差異是把過期註解 `jgu5` 改成 `jg-jiahd`——repo 2026-05-30 已改名），`cluster-secrets` **+7 鍵、0 變更、0 移除**：4 個空的 `BACKUP_R2_*`、`DEFAULT_STORAGE_CLASS` 與 `DB_STORAGE_CLASS` 皆為 `sc-nas`、`LOCAL_PATH_IS_DEFAULT=false`。上線後全部 Kustomization Ready、`sc-nas (default)` 未變、`postgres-data` PVC 仍是 2026-06-19 那一個、`cc` pod 未重啟
