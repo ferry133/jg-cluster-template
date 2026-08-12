@@ -4,7 +4,7 @@
 - [x] 1.2 `cilium_bgp_enabled` / `cilium_loadbalancer_mode` 在 jcom 與 jg-jiahd **皆為 0 消費端**（死碼），僅 genie1 仍在用；`spegel_enabled` 在 jcom 有 2 個消費端，仍活著
 - [ ] 1.3 評估 Spegel 在多節點叢集的實際效益——若不明顯，從 jg-base 移除比 gating 簡單。（已知：jg-jiahd 3 節點上 3/3 Ready，功能正常；單節點必壞）
 - [ ] 1.4 決定 per-cluster 例外的機制形式（post-build substitution / overlay 目錄 / cluster.yaml 條件渲染），判準含「能否偵測未宣告漂移」
-- [ ] 1.5 Omni 路徑下渲染期如何得知節點數（`nodes` 恆為空）——與 `deployment-profiles` 的 profile 軸協調
+- [x] 1.5 **已由 ② 解決**：新增 `single_node` 欄位（Omni 路徑渲染期確實無從得知，`nodes` 恆為 `[]`），並衍生 `is_single_node`——appliance 恆真、手動 Talos 依節點數、其他 Omni 叢集未宣告時假設有 peer。詳見 `deployment-profiles` 2c.4
 
 ## 2. 分岔清冊
 
@@ -24,14 +24,14 @@
 
 ## 3. 單節點安全性（jcom 遷移的前提）
 
-- [ ] 3.1 讓 `jg-base/kubernetes/apps/base/kube-system/kustomization.yaml` 的 Spegel 可由設定停用
-- [ ] 3.2 依 1.5 的結論，在模板渲染期表達「是否單節點」
+- [x] 3.1 **已由 ② 的 2.8 解決**，但作法與原本設想的不同：jg-base 那份 `kustomization.yaml` 沒有改，因為 Flux 無法從那一端拒絕建立 Kustomization。改由 per-user repo 依 `cluster.yaml` **生成 suspend patch**——與 jcom 手寫的那段同型，只是來源從漂移變成宣告
+- [x] 3.2 **已由 ② 解決**：`is_single_node` 於 `plugin.py` 衍生，`ks.yaml.j2` 據此生成 spegel 的 suspend patch
 - [ ] 3.3 `01-apps.yaml.j2` 的 bootstrap 側 gating 與 jg-base 側一致（目前兩處控制互相打架：bootstrap 有 `spegel_enabled`、jg-base 無條件）
 - [ ] 3.4 驗證單節點叢集完全不部署 Spegel，且不需任何 per-cluster patch
 - [ ] 3.5 驗證多節點叢集行為不變
 - [ ] 3.6 處理爆炸半徑：元件失敗或被移除時，它寫入的 `hosts.toml` 等節點層設定必須還原，不得留下指向死埠的 registry 轉址
 - [ ] 3.7 驗證元件缺席 / 失敗 / 停用三種情況下，image 仍可從原 registry 拉取
-- [ ] 3.8 回報 `deployment-profiles` task 1.0 已具備所需機制
+- [x] 3.8 已回報：`deployment-profiles` 1.0 已標記完成，並註明 gating 由 2.8 的 suspend patch 承擔、已在 jgt-omni（單節點）確認 `suspend=true` 且 pod 已清除
 
 ## 4. Per-cluster 例外機制
 
@@ -45,8 +45,11 @@
 
 ## 5. 遷移既有例外
 
-- [ ] 5.1 jg-jiahd 的 QUIC workaround 先在新機制上重現並驗證行為不變
-- [ ] 5.2 確認無誤後才移除其 `ks.yaml.j2` 的手寫 patch
+- [x] 5.1 **不需要新機制——這個例外已經不存在了**。jg-base commit `140d14c`（2026-07-23）把 `TUNNEL_TRANSPORT_PROTOCOL: http2` 與 `TUNNEL_POST_QUANTUM: false` 收為全域預設，而 jg-jiahd 的 patch 設的正是同樣兩個值，已經多餘了三個星期
+  - 移除前三方逐字比對：patch 內容、jg-base 預設、活叢集上實際生效的環境變數，完全一致
+  - **這也讓 CLAUDE.md 的 troubleshooting 段落過期**：它寫著「為什麼不改 jg-base？其他 cluster QUIC 正常，default 保留 QUIC 較好」——jg-base 早就改了。待更新
+- [x] 5.2 已移除並推送。渲染後該區段與 jgt-omni **逐字相同**，分歧消除；活叢集上 cloudflared 的兩個環境變數不變、pod 未重啟（140 分鐘未動），是真正的 no-op
+  - 過程中我第一次切割破壞了 YAML 結構（留下孤立的 `spec: values:` 與連續兩個 `target:`），而 `task configure` 仍 rc=0——**YAML 可解析不代表語意正確**。還原後改以完整區塊比對移除
 - [ ] 5.3 jcom 的 Spegel suspend 改由 3.x 的 gating 取代（不是遷移到例外機制——單節點是通則不是例外）
 - [ ] 5.4 驗證 jcom 在 gating 生效後不再需要該 patch
 

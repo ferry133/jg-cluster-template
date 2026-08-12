@@ -31,6 +31,25 @@ jg-jiahd 只有一個檔漂移（QUIC workaround），所以模板改動能乾�
 
 `revive-talos-path` 已經把前四項的前半段拉回模板了——其中 `encrypt-secrets` 含 `TALOS_DIR` 與 kubeconform 接線是**比對 jcom 才發現模板漏掉的**，等於 jcom 已經在幫模板抓 bug，只是沒有人在看。
 
+
+### 例外會自己消失，但沒有人會發現
+
+盤點時 jg-jiahd 只有一個真正的 per-cluster 例外：強制 cloudflared 走 http2，因為該站點的上游防火牆擋 UDP 7844（QUIC）。2.3 把它分類為「真正的例外，待遷移到新機制」。
+
+實作 5.1 時發現**它已經不是例外了**。jg-base commit `140d14c`（2026-07-23）把 `TUNNEL_TRANSPORT_PROTOCOL: http2` 與 `TUNNEL_POST_QUANTUM: false` 收為全域預設——那個 patch 設的正是同樣兩個值，已經多餘了三個星期。
+
+沒有任何機制會告訴你這件事。例外一旦寫下就靜靜留著，而上游採納它的那一刻，沒有東西把兩者連起來。CLAUDE.md 到現在還寫著「為什麼不改 jg-base？其他 cluster QUIC 正常，default 保留 QUIC 較好」——那個判斷在 jg-base 改變的當天就過期了，但它讀起來仍然像現行決策。
+
+**這正是 4.2 要求「例外須記錄什麼條件成立時可移除」的理由**，而這個案例顯示光記錄還不夠：條件成立時要有人去看。4.6 的漂移偵測應該一併回報「已與上游相同的例外」——它們是分歧清冊裡最容易清掉、也最容易被忽略的一類。
+
+順帶：`storage_backend: replicated` 之後只剩 jcom 的 Cilium native-routing 一個真實例外，per-cluster 例外機制（Group 4）的需求規模因此比提案時小得多。
+
+### YAML 可解析，不代表語意正確
+
+移除那段 patch 時，我第一次的切割留下了孤立的 `spec: values:` 區塊和連續兩個 `target:`。`task configure` 回傳 0——`cue vet` 驗的是 `cluster.yaml`，kubeconform 驗的是渲染出的 Kubernetes 物件，而那段壞掉的結構仍是合法 YAML 且仍能組成合法的 Kustomization，只是 patch 目標錯了。
+
+檢查鏈裡沒有一環會問「這個 patch 還是你想要的那個 patch 嗎」。還原後改以**完整區塊比對**移除（前後錨點都驗），並用「渲染後與另一個叢集逐字相同」作為驗收——那才是真正想要的性質。
+
 ## Goals / Non-Goals
 
 **Goals:**
