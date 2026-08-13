@@ -58,9 +58,9 @@ Each profile SHALL supply a default storage class so that PVCs without an explic
 
 ### Requirement: No PVC names infrastructure that only one cluster has
 
-> Revised 2026-08-11. This requirement previously read "No PVC depends on manual pre-provisioning", and asserted that every `storageClassName: ""` in `jg-base` left a claim Pending forever. Inspecting all thirteen occurrences disproved it: each is one half of a static PV/PVC pair declared in the same manifest and bound by `volumeName`, which is the correct idiom for a pre-existing NFS export and binds immediately. The real defect the scan found was a different one, stated below.
-
 A manifest in `jg-base` is read by every cluster, so it SHALL NOT name infrastructure belonging to one of them. NFS coordinates SHALL be supplied by substitution rather than written literally.
+
+> Revised 2026-08-11. This requirement previously read "No PVC depends on manual pre-provisioning", and asserted that every `storageClassName: ""` in `jg-base` left a claim Pending forever. Inspecting all thirteen occurrences disproved it: each is one half of a static PV/PVC pair declared in the same manifest and bound by `volumeName`, which is the correct idiom for a pre-existing NFS export and binds immediately. The real defect the scan found was a different one, stated below.
 
 #### Scenario: NAS address is not baked into the shared repository
 - **WHEN** any PersistentVolume in `jg-base` declares an NFS server
