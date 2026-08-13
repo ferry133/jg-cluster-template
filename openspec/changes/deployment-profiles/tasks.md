@@ -128,7 +128,7 @@
 - [x] 5.3 D32 定案後改為：`k8s_gateway` 開關（原名 `dns_fallback`，那個名字描述的是一個不存在的角色），**所有 profile 預設開**，包括 appliance——它是唯一能回答內網名稱的東西，沒有可以 fall back 的對象。因 4.3 的 sharing-key 與 `envoy-internal`／`mqtt` 共用位址，不額外佔用 LAN 位址
 - [x] 5.4 D32 後重寫：**直接問路由器解不解得出內網名稱**（不再與公開 DNS 比對——D29 之後那邊根本沒有答案可比）。解不出判 FAIL 並指向 `docs/operations/router-dns.md`；FAIL 會扣住 dead-man ping
   - 這個檢查存在的理由：路由器設定是安裝時的一次性動作，叢集無法強制它維持。重設、換機、ISP 推設定都會讓 LAN 上所有內網名稱同時失效，而**叢集本身完全健康**——正是沒人會歸因正確的那種故障
-- [ ] 5.5 D32 後改寫語意：不再有「fallback 前後」可比（k8s-gateway 一直都在）。要驗的是**路由器設定完成後，LAN 客戶端用扁平 hostname 可存取**——需要一台 appliance 與一個可設定的路由器，屬 8.2 的驗收
+- [x] 5.5 D32 後改寫語意：不再有「fallback 前後」可比（k8s-gateway 一直都在）。要驗的是**路由器設定完成後，LAN 客戶端用扁平 hostname 可存取**——需要一台 appliance 與一個可設定的路由器，屬 8.2 的驗收。已於 2026-08-13 隨 8.2 在 jgt-appliance 驗完：LAN 上 `internal.janncot.cc` 回 `10.9.1.254`（envoy-internal 的共用位址），`im` / `external` / `flux-webhook` 回 `10.9.1.253`
 - [x] 5.6 已驗證：第二個 external-dns 實例運行期間，`external.janncot.cc` / `flux-webhook` / `im` 三筆 CNAME 與三筆 `k8s.cname-*` TXT **逐字未變**，proxied 狀態也未變。實例移除後叢集回到原狀（`target: internal.janncot.cc` 已還原、`im.janncot.cc` 仍回 401）
 
 ## 6. 儲存分層（jg-base）
