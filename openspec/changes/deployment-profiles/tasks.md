@@ -167,7 +167,7 @@
 
 - [x] 8.7 收窄 pool 的驗收**不能**問「narrow 之後有沒有壞」——漏列位址時那個問題也會答「沒有」。必須在套用前證明 pool 涵蓋當下每一個已配發位址（`kubectl get svc` 的實際集合 vs 渲染出的 `LB_POOL_BLOCKS`）。已配發的位址不會因來源 pool 消失而被收回，要到 Service 下次重建才失敗。詳見 `design.md` D26。已實作為 `scripts/check-lb-pool-covers-live.py`，套用前對 jgt-omni 與 jg-jiahd 各跑一次皆通過
 
-- [x] 8.1 在 scratch 叢集完成一次 appliance profile 全新部署，客戶端輸入為 0 項。2026-08-13 於實體機（原 jgt-omni，10.9.1.238）跑完：Omni cluster `jgt-appliance` → `task bootstrap:apps` → Flux 全綠。渲染判斷全部正確（`nfs-client-provisioner`/`longhorn`/`spegel` suspended、`lan-address-probe` 與 `k8s-gateway` 未 suspend）。過程暴露三個真實缺陷，全部已修：`0.0.0.0` 的 IPAM fallback、sharing key 綁在未宣告的欄位上、envoy-external 的 ClusterIP 決定（見 D40–D42）
+- [x] 8.1 在 scratch 叢集完成一次 appliance profile 全新部署，客戶端輸入為 0 項。2026-08-13 於實體機（原 jgt-omni，10.9.1.238）跑完：Omni cluster `jgt-appliance` → `task bootstrap:apps` → Flux 全綠。渲染判斷全部正確（`nfs-client-provisioner`/`longhorn`/`spegel` suspended、`lan-address-probe` 與 `k8s-gateway` 未 suspend）。過程暴露四個真實缺陷，全部已修：`0.0.0.0` 的 IPAM fallback、sharing key 綁在未宣告的欄位上、envoy-external 的 ClusterIP 決定、單節點上 envoy 跑 2 replicas 吃掉 94% 記憶體（見 D40–D43）
 - [x] 8.2 從 LAN 用戶端驗證兩件事（原文寫「未變更路由器」，D32 之後改為「僅 operator 設定一次路由器，客戶端零設定」）：
   - 內網名稱（`envoy-internal` 上的）可用扁平 hostname 存取 → `internal.janncot.cc` 回 10.9.1.254
   - **WAN 名稱在 LAN 上解到內網位址**——`im.<domain>` 應回 `envoy-external` 的 LAN IP 而非 Cloudflare 的。這決定對外線路中斷時家裡還能不能用，也是「路由器設定確實生效」的最佳探針 → `im.janncot.cc`、`external.janncot.cc`、`flux-webhook.janncot.cc` 全部回 10.9.1.253（envoy-external 的 LAN 位址），公網則回 Cloudflare 的 172.67.163.198。端對端 `curl --resolve` 走 LAN 位址得 HTTP 401（ttyd 的 basic auth）且憑證有效，走公網同樣 401——兩條路徑並存。`github.com` 經 k8s-gateway 轉發正常（D39）

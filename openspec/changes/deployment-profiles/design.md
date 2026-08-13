@@ -904,6 +904,26 @@ D-level 原本的推理是：`cloudflared` 用 in-cluster DNS 名稱連 `envoy-e
 **通則**：「沒有客戶端連它」不等於「沒有客戶端查它」。只要有 DNS 在宣告某個服務的
 位址，那個位址就必須是可路由的——即使宣告是我們自己的元件做的。
 
+### D43. appliance 的實際限制是記憶體，而預設值是為多節點寫的
+
+jgt-appliance 全綠之後，節點的記憶體 request 是 **94%**。單一最大來源是 envoy：
+兩個 gateway 各 2 replicas，每個 pod request 1056Mi，合計 4.2GiB——一台 7GiB 機器的
+六成。而每個 gateway 的第二個 replica 從一開始就 `Pending / Insufficient memory`，
+掛了 26 分鐘沒人發現，因為 Deployment 報 `2/2`（新 RS 滿足了，卡住的是 surge 出來的
+那個）。
+
+單節點上第二個 replica 不提供任何可用性：它和第一個在同一台機器，一起死。
+
+改成 1 replica 後降到 **64%**，多出 30 個百分點給真正的工作負載——appliance 要跑的是
+客戶的東西，不是四份 envoy。
+
+判準用既有的 `is_single_node`（`spegel` 已經用它），套用在所有 `EnvoyProxy` 上而非
+逐一指名，這樣之後多一個 gateway 不需要有人記得回來改。
+
+**通則**：上游 chart 與 CRD 的預設值是為「有多台機器」寫的。appliance 是單節點，
+每一個 `replicas: 2` 都要重新問一次它在這裡買到了什麼。也要注意 Deployment 的
+`READY` 欄位不會替你發現這件事。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。
