@@ -845,6 +845,65 @@ appliance 是要出貨給零 IT 客戶的，**部署程序必須在最低共同�
 
 **通則**：一個要出貨的程序，它的可行性下限由客戶端的設備決定，不由我們手上這台決定。
 
+### D40. 「宣告位址」的預設值，在不宣告位址的 profile 上是個死結
+
+jg-base 用 `${CLUSTER_DNS_GATEWAY_ADDR:=0.0.0.0}` 之類的 fallback 把位址寫進
+`lbipam.cilium.io/ips`。那個 `0.0.0.0` 的用意只是「讓 envsubst 產生語法有效的
+annotation」——在每個 profile 都宣告位址的年代，它從不會被讀到。
+
+appliance 不宣告位址。於是 8.1 第一次開機時，`lan-address-probe` 正確選到
+10.9.1.254 並發布了 pool，而 `k8s-gateway` 就坐在 `<pending>`，因為它**要求
+0.0.0.0**——一個 LB-IPAM 永遠無法滿足的請求。叢集看起來全綠，LAN 卻沒有 DNS。
+
+修法是在 per-user repo 的 renderer 生成一段 patch，把 annotation 整個移除
+（不是設空值——Gateway CRD 拒絕 null annotation），讓 IPAM 從探測出的 pool 分配。
+與 suspend patches 同一個位置、同一個理由：jg-base 看不到 profile，這個決定只能
+從 user repo 表達。
+
+**通則**：一個「不會被讀到」的預設值，只是在等一個沒人想過的 profile。它不會報錯，
+它會讓某個東西安靜地永遠 pending。
+
+### D41. 共用位址的開關，不能綁在「位址已宣告」上
+
+`lan_sharing_key` 原本是 `'lan' if lan_shared_addr else ''`。appliance 不宣告
+位址，所以它是空的——而 Cilium 把空 key 當作「不共用」。
+
+後果不是「沒有共用」而已：jg-base 的每個服務各自帶著**不同的** default
+（`k8s-gateway` 用 `k8s-gateway`，`envoy-internal` 用 `envoy-internal`），所以第一個
+服務拿走 pool 裡唯一的位址，其餘的全部 `out_of_ips`。實測正是如此。
+
+判準應該是「這個 profile 要不要共用」，而不是「位址填了沒」。appliance 只有一個
+共用位址可用，所以它從第一次開機起就必須共用。
+
+附帶發現：sharing key **事後**變更時，Cilium 不會重建 sharing group——要重啟
+cilium-operator 才會重新評估。全新叢集不會踩到（key 從一開始就對），但除錯時會。
+
+### D42. 「沒有 LAN 客戶端連它」要問的是 DNS，不是連線
+
+D-level 原本的推理是：`cloudflared` 用 in-cluster DNS 名稱連 `envoy-external`，
+所以 LAN 上沒人連它，所以 appliance 可以把它降成 ClusterIP，省一個位址。
+
+那個推理漏了 `k8s-gateway`。它為一個 hostname 回答的是**其 parent Gateway 持有的
+位址**——不管那是不是 LoadBalancer。於是 appliance 上每個對外路由的名稱，在 LAN 上
+都解析到一個 ClusterIP：實測 `im.janncot.cc` → `10.98.111.177`，LAN 客戶端完全連
+不上。而 `im` 正是那條「不依賴 Omni 的遠端支援入口」。
+
+試過兩條路，都不行：
+
+| 做法 | 為什麼不行 |
+|---|---|
+| route 同時掛 `envoy-internal` | k8s-gateway 回**兩筆** A 記錄，客戶端隨機挑，一半失敗 |
+| route 全部改掛 `envoy-internal` | 公網記錄是 external-dns 從 `envoy-external` 產生的，搬走等於刪掉它們，WAN 入口一起斷。且 jg-base 有 18 處參照 |
+
+最後讓 probe 找**兩個**位址，`envoy-external` 維持 LoadBalancer 拿第二個。它不能加入
+共用群組——和 `envoy-internal` 同樣聽 80/443，Cilium 只在 port 不衝突時共用。
+
+代價是多佔一個 LAN 位址（客戶的 /24 有 254 個）。換來的是 appliance 少一個特例：
+它的 gateway 形狀與其他 profile 相同。
+
+**通則**：「沒有客戶端連它」不等於「沒有客戶端查它」。只要有 DNS 在宣告某個服務的
+位址，那個位址就必須是可路由的——即使宣告是我們自己的元件做的。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。

@@ -2,11 +2,15 @@
 
 ### Requirement: Only LAN-reachable services consume LAN addresses
 
-Services that no LAN client ever connects to SHALL NOT consume an address from the customer's LAN subnet, and SHALL NOT be of type LoadBalancer at all where a ClusterIP suffices. `cloudflared` reaches the external gateway by in-cluster DNS name, not by its LoadBalancer address, so under the `appliance` profile `envoy-external` SHALL be a ClusterIP Service and `cloudflare_gateway_addr` SHALL NOT exist. `cluster_api_addr` is reached through the Omni proxy and SHALL NOT consume a LAN address under the `appliance` profile.
+Services that no LAN client ever reaches SHALL NOT consume an address from the customer's LAN subnet. `cluster_api_addr` is reached through the Omni proxy and SHALL NOT consume a LAN address under the `appliance` profile, and `cloudflare_gateway_addr` SHALL NOT exist.
 
-#### Scenario: External gateway consumes no address
-- **WHEN** an appliance cluster is rendered and reconciled
-- **THEN** `envoy-external` has no LoadBalancer address, `cloudflared` still reaches it by its in-cluster DNS name, and public ingress works
+`envoy-external` is not such a service, even though `cloudflared` reaches it by in-cluster DNS name rather than by its address. `k8s-gateway` answers a hostname from whatever address its parent Gateway holds, so every externally routed name resolves, on the LAN, to `envoy-external`'s address. Making it a ClusterIP hands LAN clients an address they cannot reach — measured on jgt-appliance, `im.janncot.cc` resolved to `10.98.111.177`. It SHALL be a LoadBalancer under every profile.
+
+Nor can it share the LAN-facing address: it listens on the same 80/443 as `envoy-internal`, and Cilium only shares an address between services whose ports do not collide. So an appliance consumes two LAN addresses, not one.
+
+#### Scenario: Externally routed names resolve to a reachable address
+- **WHEN** a LAN client resolves a hostname routed through `envoy-external` on an appliance
+- **THEN** it receives a single address within the node's own subnet, and an HTTPS request to that address reaches the backend with a valid certificate
 
 #### Scenario: Operator override retained
 - **WHEN** a `full` profile cluster explicitly sets `cluster_api_addr` or `cloudflare_gateway_addr` in `cluster.yaml`
@@ -14,7 +18,9 @@ Services that no LAN client ever connects to SHALL NOT consume an address from t
 
 ### Requirement: LAN-facing services share a single address
 
-`envoy-internal`, `mqtt`, and (when enabled) `k8s-gateway` SHALL share one LAN address. Their listening ports do not overlap (80/443 TCP, 1883 TCP, 53 UDP+TCP), so a single address serves all three. The number of LAN addresses an appliance consumes SHALL be exactly one.
+`envoy-internal`, `mqtt`, and (when enabled) `k8s-gateway` SHALL share one LAN address. Their listening ports do not overlap (80/443 TCP, 1883 TCP, 53 UDP+TCP), so a single address serves all three. Together with `envoy-external`, which cannot join them, the number of LAN addresses an appliance consumes SHALL be exactly two.
+
+Sharing SHALL be enabled whenever the profile is `appliance`, not only once an address is declared. An appliance discovers its addresses, so keying the sharing key off a declared address left each service on jg-base's own per-service default — and those differ per service, so nothing shared and every service after the first sat `<pending>`.
 
 #### Scenario: One address serves all LAN-facing services
 - **WHEN** an appliance cluster is reconciled with `envoy-internal` and `mqtt` deployed
@@ -46,7 +52,11 @@ For the `appliance` profile the LAN address SHALL be obtained automatically and 
 
 #### Scenario: Address discovered on first reconcile
 - **WHEN** an appliance cluster reconciles for the first time on an unknown LAN
-- **THEN** a `CiliumLoadBalancerIPPool` containing exactly one address within the node's own subnet is created, and LAN-facing Services bind to it
+- **THEN** a `CiliumLoadBalancerIPPool` containing exactly two addresses within the node's own subnet is created, and every LAN-facing Service binds to one of them
+
+#### Scenario: No address is requested while none is declared
+- **WHEN** an appliance renders with no `lan_shared_addr`
+- **THEN** no Service carries an `lbipam.cilium.io/ips` annotation, so allocation comes from the discovered pool — jg-base's `0.0.0.0` fallback is a request LB-IPAM can never satisfy and would leave the service `<pending>` forever
 
 #### Scenario: Discovery result is stable across restarts
 - **WHEN** the discovery component restarts

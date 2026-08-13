@@ -53,9 +53,9 @@ though whether the UI exposes it depends on the version.
 
 ## Pin the address before you set it
 
-On an appliance the address is chosen by ARP probing (`lan-address-probe`),
-which by default re-checks it and may reselect if something else starts
-answering for it. **Once it is written into a router, it is an external
+On an appliance the addresses are chosen by ARP probing (`lan-address-probe`),
+which re-checks them on every pass and may reselect if something else starts
+answering for one. **Once an address is written into a router, it is an external
 contract**: a reselection would leave the router pointing at nothing, and every
 internal name would fail at once with nothing in the cluster looking wrong.
 
@@ -64,8 +64,15 @@ one:
 
 ```yaml
 # cluster.yaml
-lan_shared_addr: "10.9.x.y"   # the address the probe settled on
+lan_shared_addr: "10.9.x.y"   # the address k8s-gateway actually holds
 ```
+
+The probe finds **two** addresses. One is shared by `envoy-internal`,
+`k8s-gateway` and `mqtt`; the other belongs to `envoy-external`, which cannot
+join them because it listens on the same 80/443 as `envoy-internal`. Only the
+shared one is pinned — read it off the running service with the command above,
+do not assume it is the first or the higher of the two. `envoy-external` keeps
+taking whichever address is left, which after pinning is the only one left.
 
 Re-render and push. From then on the address is fixed, and a collision is
 reported for a human to act on rather than silently worked around.
