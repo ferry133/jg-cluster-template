@@ -962,6 +962,31 @@ base app，而該 repo 的 renderer 早於 suspend 條件）。它意外地證�
 HelmRelease 可以在 18 個 pod 全部 Running 的情況下卡在 `Stalled` 四十小時——因為
 兩次安裝都失敗過，沒有可回滾的目標，helm-controller 就不再自己重試。
 
+### D45. 一個只驗得到非預設做法的檢查
+
+5.4 讓 daily-check 直接問路由器：`dig @<node_default_gateway> internal.<domain>`。
+理由是對的——路由器設定是叢集管不到的外部契約，而它壞掉時叢集完全健康。
+
+問題在 `router-dns.md` 同時列了三種把 DNS 指向叢集的做法，而**被標為預設的第一種
+（DHCP 發 k8s-gateway 位址）路由器自己從不轉發**。那種做法下客戶端解得出內網名稱、
+路由器解不出，檢查因此永遠 FAIL。
+
+2026-08-14 在 jg-jiahd 撞到：operator 照文件設了 DHCP DNS → 10.9.9.3，
+從叢集內問 `@10.9.9.3` 得 `internal.jiahd.cc → 10.9.9.4`（正確），問 `@10.9.9.1`
+得 NXDOMAIN，檢查照樣紅。**設定是對的，檢查也不是誤判——它們量的是不同的東西。**
+
+而第一種正是 appliance 的出貨形狀：客戶用什麼路由器不由我們決定，條件式轉發只有
+dnsmasq 系（UniFi、OpenWrt、pfSense）才有。所以現況是**每一台 appliance 都會帶著一個
+永遠紅的健檢出廠**，而那個健檢同時扣著 dead-man switch。
+
+永遠紅的檢查不是保守的預設，它是主動的傷害：它訓練收信的人忽略這個管道，而那個管道
+還負責通報其他 17 項。
+
+**先不改檢查。** 三個方向各有代價：問 k8s-gateway 自己會驗不到那個真正會壞掉的
+外部契約（也就是整個檢查存在的理由）；依做法切換探測目標要求叢集知道一件它管不到的
+事實，而那件事實本身就會漂移；由客戶端回報則需要 zero-it-onboarding 1.4 那個機制先
+存在。把一個真實的故障偵測換成一個總是綠的裝飾，比現在的狀態更難察覺。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。
