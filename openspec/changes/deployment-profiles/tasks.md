@@ -145,6 +145,7 @@
   - 還原 0 錯誤，逐表列數相符，`postgres-data` 現為 `local-path/Bound`，pod `1/1`
   - **順序踩了一次坑**：第一次刪 PVC 後 Flux 立刻重建，但用的是**尚未更新的** cluster-secrets，於是又建成 `sc-nas`——而 `storageClassName` immutable，改不了。正解是先確認叢集上的 `DB_STORAGE_CLASS` 已是新值，再刪 PVC。第二次照此順序一次成功
   - jg-jiahd 維持 `db_storage_class: "sc-nas"`：3 節點，搬到 local-path 是拿「可跨節點重新排程」換「正確的 fsync 語意」，而 2c.8 的複製式儲存兩者都給
+  - **2026-08-14 更新：等的那個東西已經到了**（6.10 / 6.11），所以延後的理由換了一個——不再是「沒有正確的 tier」，而是「搬遷本身還沒排程」。仍未搬，但這兩件事的風險不同：前者無事可做，後者是**已知該做而未做**，而 DB 待在 NFS 上的失效模式是靜默損毀（6.9 的還原演練就是為此而做）
 - [x] 6.8 `_uses_node_local` 再修一次：`db_storage_class` 明寫為非 node-local 的 class 時，DB 就不在 node-local 上，pinning 閘門不該再問。predicate 改為 `storage_backend == "local-path"` **或**（`db_storage_class == "local-path"` **且** 有 block-tier extra）。這個錯誤是由 6.7 的決定當場暴露的——選了「不搬」才發現 schema 會要求承認一件不會發生的事。六種組合已驗證
 - [x] 6.9 **還原演練**（延後搬遷的直接後果：jg-jiahd 的 DB 繼續待在 NFS 上，失效模式是靜默損毀，而唯一的救援就是那份日備份——它的 restore 半邊從未被執行過）。已在 jg-jiahd 以唯讀掛載備份卷的拋棄式 postgres 實測 `linebot-20260810.sql.gz`：10 張表列數與生產**逐表相同**，restore 0 error。前置條件一併查出：**必須先建 `linebot` role**，否則 dump 裡的 `OWNER TO` 全數失敗（表仍會建，但擁有者變成 postgres）。演練 pod 已刪除
 
