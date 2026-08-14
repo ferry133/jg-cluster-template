@@ -108,11 +108,43 @@ whole site.
 
 That is what the off-site backup is for, and it is still required.
 
-## Turning it off again is not symmetric
+## Removing it
 
-`storage_backend: "replicated"` is close to one-way. Removing Longhorn hit three
-separate walls on jgt-omni (2026-08-12), none of which are in Longhorn's own
-uninstall docs in a form that helps:
+Move every volume off Longhorn first — this removes the storage, not just the
+controller. Then, with `kubectl get volumes.longhorn.io -n longhorn-system`
+reporting none:
+
+```sh
+# 1. The uninstall hook reads this from the ConfigMap the chart installs, so it
+#    has to arrive through Helm values. Wait for the release to reconcile.
+kubectl -n longhorn-system patch helmrelease longhorn --type=merge \
+  -p '{"spec":{"values":{"defaultSettings":{"deletingConfirmationFlag":true}}}}'
+flux reconcile helmrelease longhorn -n longhorn-system
+
+# 2. Deleting the HelmRelease runs `helm uninstall`, whose pre-delete hook
+#    sweeps the custom resources that hold finalizers.
+kubectl -n longhorn-system delete helmrelease longhorn
+
+# 3. Helm leaves the namespace and can leave a StorageClass behind.
+kubectl delete sc longhorn longhorn-static --ignore-not-found
+kubectl delete ns longhorn-system
+```
+
+If the Kustomization that owns the HelmRelease is suspended, nothing recreates
+it. If it is not, remove Longhorn from the cluster's configuration first, or
+Flux will put it back.
+
+Verified on jcom (2026-08-14, single node, no volumes): the uninstall hook
+removed every CR, the CRDs, the webhook configurations and the `longhorn`
+StorageClass on its own. Total leftovers were `longhorn-static` and the
+namespace.
+
+## What happens if you skip step 1
+
+The three walls below were hit on jgt-omni (2026-08-12) and are why the order
+above matters. They are not independent problems — **2 and 3 are what a failed
+uninstall hook leaves behind**, so getting the flag right is the whole
+procedure, and the rest is cleaning up after having got it wrong.
 
 **1. It refuses to uninstall without confirmation.** The `longhorn-uninstall`
 pre-delete hook exits with:
@@ -163,6 +195,8 @@ done
 Then the CRDs and any orphaned StorageClasses (`longhorn`, `longhorn-static`)
 have to go by hand — Helm leaves both behind.
 
-**Plan the exit before the entry.** Switching a live cluster off replicated
-storage means moving every volume off it first, and the removal itself is a
-sequence of manual steps with a deadlock in the middle.
+**Plan the exit before the entry.** Removing Longhorn is not hard when the
+confirmation flag is set the way the hook reads it, and it is a manual recovery
+when it is not. What does not get easier either way is the part before any of
+this: every volume has to be somewhere else first, and for a database that is a
+dump and restore.

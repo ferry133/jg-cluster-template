@@ -154,6 +154,8 @@
 - [~] 6.11 jg-jiahd 的 Longhorn **已實測可用**，推翻 2c.8「未在任何叢集實際部署」的紀錄：三個節點的 `nodes.longhorn.io` 條件全綠（`RequiredPackages` / `MountPropagation` / `KernelModulesLoaded` / `Multipathd`），Omni schematic 一直帶著那兩個 extension。冒煙測試的 PVC 7 秒 Bound，volume 2 replica 落在兩台不同節點
   - 修好的是 HelmRelease：2026-08-12 兩次安裝都失敗（rev 1 `longhorn-driver-deployer` 卡住、rev 2 pre-upgrade hook 對著還在重啟的 manager 跑），沒有成功過的 release 可回滾 → `Stalled: MissingRollbackTarget` → 不再自動重試，而 18 個 pod 全部 Running，**沒有任何跡象**。`flux reconcile --force` 後 rev 3 `deployed`
   - 仍為 partial：DB 尚未搬遷（`db_storage_class` 仍是 `sc-nas`），且移除路徑（D37）在此叢集未驗證
+- [x] 6.12 **移除路徑已在 jcom 驗證**（2026-08-14）：該叢集同樣是「suspend 但沒 prune」留下的意外安裝（10 個 pod、43 小時、0 volume）。單節點本來就不該有 Longhorn——CUE 明文拒絕，兩份副本在同一顆碟上是付了代價卻沒有保護。照 `docs/operations/replicated-storage.md` 的順序移除，D37 的三道牆一道都沒出現，殘留只有 `longhorn-static` 與 namespace。移除後 18 個 PVC 全部 Bound、所有 Kustomization 與 HelmRelease 仍 Ready
+  - 連帶修正 D37：那三道牆不是獨立的，第 2、3 道是第一道失敗後的殘骸。原本的寫法會讓人以為移除本來就是五步驟手工活，因而不會特別在意第一步——而第一步是唯一重要的
 
 ## 7. Appliance 備份（jg-base）
 

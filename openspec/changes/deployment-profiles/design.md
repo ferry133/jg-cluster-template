@@ -782,7 +782,8 @@ jg-jiahd 有同樣的需求，處理方式是**手改自己那份 `helmrelease.y
 
 ### D37. `storage_backend: replicated` 幾乎是單向的
 
-2c.8 只驗證了安裝。移除 Longhorn 在 jgt-omni 上撞到三道彼此獨立的牆：
+2c.8 只驗證了安裝。移除 Longhorn 在 jgt-omni 上撞到三道牆——**當時以為彼此獨立，
+2026-08-14 在 jcom 的乾淨移除證明不是**（見本節末）：
 
 1. **拒絕移除**：`longhorn-uninstall` hook 要求 `deleting-confirmation-flag`。patch Setting CRD 不夠——CRD 顯示 `value: "true"` 且 `status.applied: true`，job 仍讀到 `false`，因為它讀的是 chart 裝下去的 ConfigMap。必須從 Helm values 設。
 2. **webhook 死鎖**：webhook Service 被刪但設定還在，於是 namespace 裡任何刪除都失敗，卡在 `Terminating` 不會自己好。
@@ -790,7 +791,18 @@ jg-jiahd 有同樣的需求，處理方式是**手改自己那份 `helmrelease.y
 
 之後 CRD 與孤兒 StorageClass（`longhorn`、`longhorn-static`）還要手動清——Helm 兩樣都留著。
 
-**進場前先想好退場。** 這件事的教訓不只是「移除很麻煩」，而是：一個元件的**安裝**驗證通過，不代表它可以被安全地移除，而 profile 這種可切換的軸隱含了雙向承諾。已寫進 `docs/operations/replicated-storage.md`。
+**2026-08-14 補正（jcom）**：照文件的順序做——先從 Helm values 設 flag、確認
+`longhorn-default-setting` ConfigMap 與 Setting CRD 都是 `true`，再刪 HelmRelease——
+**三道牆一道都沒出現**。uninstall hook 自己掃掉全部 CR、CRD、兩個 webhook
+configuration 與 `longhorn` StorageClass，殘留只有 `longhorn-static` 和 namespace。
+
+所以第 2、3 道牆不是獨立的障礙，是**第一道失敗後留下的殘骸**：hook 沒跑完 →
+webhook Service 被刪但設定還在 → namespace 裡任何刪除都失敗 → CR 的 finalizer 沒人清。
+把它們並列成三個問題會讓下一個人以為移除本來就是五步驟的手工活，於是不會特別在意
+第一步——而第一步正是唯一重要的那步。文件已改寫成「照順序做」與「跳過第一步會遇到
+什麼」兩節。
+
+**進場前先想好退場。** 這件事的教訓不只是「移除很麻煩」，而是：一個元件的**安裝**驗證通過，不代表它可以被安全地移除，而 profile 這種可切換的軸隱含了雙向承諾。已寫進 `docs/operations/replicated-storage.md`。**修正後的版本是**：移除本身不難，難的是移除之前——每個 volume 都得先搬到別處，而資料庫的「搬」是 dump/restore。
 
 ### D38. 換 storage class 的順序：先確認 secret，再刪 PVC
 
