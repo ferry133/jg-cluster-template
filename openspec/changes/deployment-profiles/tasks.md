@@ -148,6 +148,12 @@
 - [x] 6.8 `_uses_node_local` 再修一次：`db_storage_class` 明寫為非 node-local 的 class 時，DB 就不在 node-local 上，pinning 閘門不該再問。predicate 改為 `storage_backend == "local-path"` **或**（`db_storage_class == "local-path"` **且** 有 block-tier extra）。這個錯誤是由 6.7 的決定當場暴露的——選了「不搬」才發現 schema 會要求承認一件不會發生的事。六種組合已驗證
 - [x] 6.9 **還原演練**（延後搬遷的直接後果：jg-jiahd 的 DB 繼續待在 NFS 上，失效模式是靜默損毀，而唯一的救援就是那份日備份——它的 restore 半邊從未被執行過）。已在 jg-jiahd 以唯讀掛載備份卷的拋棄式 postgres 實測 `linebot-20260810.sql.gz`：10 張表列數與生產**逐表相同**，restore 0 error。前置條件一併查出：**必須先建 `linebot` role**，否則 dump 裡的 `OWNER TO` 全數失敗（表仍會建，但擁有者變成 postgres）。演練 pod 已刪除
 
+- [x] 6.10 **拆出 `replicated_storage`**（見 D44）：Longhorn 的部署不再綁在 `storage_backend == "replicated"` 上。同一個欄位原本同時決定 nfs-subdir 跑不跑，所以「多節點 + NAS + Longhorn 當 block tier」——6.7 明講在等的那個組合——在 schema 上表達不出來。預設值取 `storage_backend == "replicated"`，既有叢集渲染結果不變（jg-jiahd 已逐檔比對確認）
+  - 觸發條件刻意**不用** `db_storage_class == "longhorn"`：`storageClassName` immutable，一宣告就會讓 PVC 渲染成還不存在的 class 而 Flux 轉紅。安裝與搬遷必須分得開
+- [~] 6.11 jg-jiahd 的 Longhorn **已實測可用**，推翻 2c.8「未在任何叢集實際部署」的紀錄：三個節點的 `nodes.longhorn.io` 條件全綠（`RequiredPackages` / `MountPropagation` / `KernelModulesLoaded` / `Multipathd`），Omni schematic 一直帶著那兩個 extension。冒煙測試的 PVC 7 秒 Bound，volume 2 replica 落在兩台不同節點
+  - 修好的是 HelmRelease：2026-08-12 兩次安裝都失敗（rev 1 `longhorn-driver-deployer` 卡住、rev 2 pre-upgrade hook 對著還在重啟的 manager 跑），沒有成功過的 release 可回滾 → `Stalled: MissingRollbackTarget` → 不再自動重試，而 18 個 pod 全部 Running，**沒有任何跡象**。`flux reconcile --force` 後 rev 3 `deployed`
+  - 仍為 partial：DB 尚未搬遷（`db_storage_class` 仍是 `sc-nas`），且移除路徑（D37）在此叢集未驗證
+
 ## 7. Appliance 備份（jg-base）
 
 - [~] 7.1 `monitoring/backup` CronJob 已實作（每日 02:00 台北，早於 08:00 健檢，讓失敗當天就被回報）：`pg_dump` 各資料庫 → tar → age 加密 → `aws s3 cp` 上傳 R2 → 依 `BACKUP_RETAIN_DAYS`（預設 30）清理舊檔

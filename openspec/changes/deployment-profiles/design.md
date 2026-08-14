@@ -924,6 +924,32 @@ jgt-appliance 全綠之後，節點的記憶體 request 是 **94%**。單一最�
 每一個 `replicas: 2` 都要重新問一次它在這裡買到了什麼。也要注意 Deployment 的
 `READY` 欄位不會替你發現這件事。
 
+### D44. `storage_backend` 一個欄位承載了兩個互斥的問題
+
+2c.8 把 Longhorn 掛在 `storage_backend == "replicated"` 上。但同一個欄位也決定
+nfs-subdir 跑不跑（`!= "nfs"` 就 suspend），於是「我要 Longhorn」與「我要保留 NAS」
+在 schema 上互斥——而**多節點 + 有 NAS 正是最需要兩者並存的形狀**：NAS 對 bulk 是
+對的、對資料庫是錯的，而 `longhorn` 是唯一 block-backed 又不釘節點的 class。
+6.7 讓 jg-jiahd 的 DB 留在 `sc-nas`，理由寫的是「等能兩者兼得的方案」，那個方案在
+schema 上其實表達不出來。
+
+拆成獨立的 `replicated_storage`（預設 `storage_backend == "replicated"`，所以既有
+叢集行為不變）。`storage_backend: "replicated"` 的語意收窄為「Longhorn，**而且**它也
+是 bulk tier」。
+
+**不用 `db_storage_class == "longhorn"` 當觸發條件**，雖然那看起來更省一個欄位：
+`storageClassName` immutable，宣告它會讓 jg-base 的 PVC 立刻渲染成新 class，Flux
+套不上去而整個 Kustomization 轉紅——而此時 Longhorn 還沒裝。**安裝與搬遷必須可以
+分開**，中間那段正是「裝好了、驗過了、還沒人依賴它」的視窗，D38 的順序要求就活在
+那裡。
+
+**這個缺口是被 jg-jiahd 上一個意外裝上去的 Longhorn 暴露的**（jg-base 無條件列出
+base app，而該 repo 的 renderer 早於 suspend 條件）。它意外地證明了三件事：那三台
+節點的 Talos extension 一直都在（`RequiredPackages` / `MountPropagation` 全 True，
+與 2c.8「未在任何叢集實際部署」的假設相反）、2 replica 確實落在不同節點、以及
+HelmRelease 可以在 18 個 pod 全部 Running 的情況下卡在 `Stalled` 四十小時——因為
+兩次安裝都失敗過，沒有可回滾的目標，helm-controller 就不再自己重試。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。

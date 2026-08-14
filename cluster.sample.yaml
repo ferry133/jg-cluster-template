@@ -36,6 +36,9 @@ deployment_profile: "full"
 # move them.
 #   "local-path"  node-local disk; no NAS needed
 #   "nfs"         NAS-backed; requires nas_server / nas_path below
+#   "replicated"  Longhorn, as the bulk tier as well. To install Longhorn while
+#                 bulk stays on the NAS, leave this at "nfs" and set
+#                 replicated_storage below instead.
 # Forced to "local-path" under the appliance profile.
 #
 # This picks the default, not which provisioners exist: every cluster installs
@@ -78,6 +81,26 @@ storage_backend: "nfs"
 # k8s_gateway: true
 
 # ── Block tier ────────────────────────────────────────────────────────────────
+# (OPTIONAL) Install Longhorn without making it the bulk tier. Defaults to
+# whether storage_backend is "replicated", so most clusters never set it.
+#
+# The combination it exists for is a multi-node cluster with a NAS: the NAS is
+# right for bulk and wrong for a database, and Longhorn is the only class that is
+# block-backed without pinning the pod to one node. storage_backend cannot say
+# that on its own — it also decides whether the NFS provisioner runs, so asking
+# for Longhorn there takes the NAS away from everything already on it.
+#
+# Prerequisites are node-level and no manifest can install them: iscsi-tools and
+# util-linux-tools Talos extensions plus a /var/lib/longhorn rshared mount on
+# every node. Check `kubectl get nodes.longhorn.io -n longhorn-system` — every
+# node should report RequiredPackages / MountPropagation True. Read
+# docs/operations/replicated-storage.md before turning this on: removing Longhorn
+# is considerably harder than installing it.
+#
+# Installing is not moving. Set db_storage_class below to "longhorn" separately,
+# once the tier is verified — that is a dump and restore, not a re-render.
+# replicated_storage: true
+
 # (OPTIONAL) Which storage class databases use. Defaults to "local-path" and
 # deliberately does not follow storage_backend — NFS is never a correct answer
 # for something that needs fsync durability and file locking.
@@ -88,10 +111,11 @@ storage_backend: "nfs"
 # moved" visible instead of silent.
 # db_storage_class: "local-path"
 #
-# With storage_backend "replicated", set this to "longhorn" — installing
-# Longhorn does not move the database onto it by itself. Forgetting is caught
-# rather than silent: the database stays on a node-local class, so
-# accept_node_pinning is demanded and names the thing that was missed.
+# Wherever Longhorn is installed — storage_backend "replicated" or
+# replicated_storage above — set this to "longhorn". Installing Longhorn does not
+# move the database onto it by itself. Forgetting is caught rather than silent:
+# the database stays on a node-local class, so accept_node_pinning is demanded
+# and names the thing that was missed.
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # §1. BASE (required for this profile)
