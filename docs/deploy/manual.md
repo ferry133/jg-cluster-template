@@ -156,6 +156,38 @@ This tells Talos to skip the built-in CNI flannel, coredns and kube-proxy. The r
 
 The tunnel token is embedded into cluster secrets by `task configure`.
 
+3. Provide the Auth0 application that guards this cluster's claude-code terminal.
+
+    Every cluster fronts claude-code with the same Auth0 application, so this is
+    a copy rather than a setup step:
+
+    ```sh
+    cp ../<another-cluster>/auth0.json .
+    ```
+
+    ```json
+    {
+      "domain": "your-tenant.us.auth0.com",
+      "client_id": "...",
+      "client_secret": "...",
+      "allowed_emails": "operator@example.com,second@example.com"
+    }
+    ```
+
+    Gitignored, like `age.key` and `cloudflare-tunnel.json`. `task configure`
+    reads it and stops with a clear message if it is missing.
+
+    Then add this cluster to the Auth0 application's **Allowed Callback URLs**
+    (`https://<instance>.<domain>/oauth2/callback`, or a
+    `https://*.<domain>/oauth2/callback` wildcard for the whole customer
+    domain) and **Allowed Logout URLs / Web Origins**. `task configure` prints
+    the exact URLs it expects. Skipping this leaves the terminal unreachable —
+    in OIDC mode ttyd binds loopback and oauth2-proxy is the only way in.
+
+    A cluster that cannot depend on Auth0 being reachable sets
+    `claudecode_auth0: false` in `cluster.yaml` and supplies `ttyd_credential`
+    instead.
+
 
 ### Stage 5: Cluster configuration
 

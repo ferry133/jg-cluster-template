@@ -25,11 +25,11 @@
 
 ## 2b. 盤點時新發現
 
-- [ ] 2b.1 模板 `cluster.schema.cue` 宣告 `cilium_bgp_router_addr` / `cilium_bgp_router_asn` / `cilium_bgp_node_asn` / `cilium_loadbalancer_mode` 四個欄位，**模板、cluster-secrets、jg-base 皆零消費端**（僅 genie1 在用）——接上或移除
+- [ ] 2b.1 模板 `cluster.schema.cue` 宣告 `cilium_bgp_router_addr` / `cilium_bgp_router_asn` / `cilium_bgp_node_asn` / `cilium_loadbalancer_mode` 四個欄位，**模板、cluster-secrets、jg-base 皆零消費端**——原本唯一的消費端 genie1 已確認為歸檔測試叢集（2026-08-15），所以是**零消費端而非一個**，「接上或移除」不再是取捨：移除。留著會讓人以為填了有用
 - [ ] 2b.2 採納 jcom 的 `validate-talos-config` 任務
 - [x] 2b.3 已採納 jcom 的 `cloudflare-tunnel.json` 前置檢查（由 `revive-talos-path` 5c.3 實作；2026-08-11 實測第二次踩到才修）
 - [ ] 2b.4 單節點的 Cilium 設定（native routing + MTU 1500）與 Spegel 同屬「單節點安全性」，一併納入 3.x
-- [ ] 2b.5 genie1 是第三支更舊的血脈（5 個 namespace 的 app 模板），本 change 不涵蓋，但需記錄以免「模板的後裔」被誤認為只有兩個 repo
+- [x] 2b.5 ~~genie1 是第三支更舊的血脈~~ → **已確認為歸檔的測試叢集（2026-08-15），不需要遷移，也不列入產品的組合矩陣**。它仍是模板的後裔，但沒有活的部署在上面，所以它的存在只影響一件事：2b.1 那四個欄位因此是零消費端
 
 ## 3. 單節點安全性（jcom 遷移的前提）
 

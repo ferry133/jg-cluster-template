@@ -142,12 +142,16 @@ Everything else matches the template. Its comment still says `jgu5:`, the repo's
 name before it was renamed — harmless, but evidence that nothing re-reads these
 blocks once written.
 
-## genie1 — not inventoried
+## genie1 — archived
 
-Oldest generation: renders 5 namespaces of app manifests itself and is the only
+Oldest generation: renders 5 namespaces of app manifests itself and was the only
 repo still consuming `cilium_bgp_enabled` and `cilium_loadbalancer_mode`.
-Reconciling it is a larger job than jcom and is out of scope here. Recorded so
-that "the template's descendants" is not assumed to mean two repos.
+
+**Confirmed archived on 2026-08-15** — a test cluster with nothing deployed on
+it. It is not migrated, not supported, and not part of the product's combination
+matrix. Recorded so that "the template's descendants" is not assumed to mean two
+repos, and because its retirement is what makes the fields below dead rather than
+single-consumer.
 
 ## Dead schema fields in the template
 
@@ -159,8 +163,11 @@ cilium_bgp_router_addr    cilium_bgp_router_asn
 cilium_bgp_node_asn       cilium_loadbalancer_mode
 ```
 
-They are inherited from the generation where cilium was templated in-repo, and
-only `genie1` still consumes them. A declared field nothing reads is the same
-defect class as the divergent `cluster_svc_cidr` default that
-`revive-talos-path` fixed: it looks like configuration and is not. Either wire
-them through `cluster-secrets` to `jg-base` or remove them.
+They are inherited from the generation where cilium was templated in-repo. The
+last repo consuming them was `genie1`, archived on 2026-08-15 — so the count is
+now zero everywhere, not one. A declared field nothing reads is the same defect
+class as the divergent `cluster_svc_cidr` default that `revive-talos-path`
+fixed: it looks like configuration and is not.
+
+With no consumer left this is no longer a choice between wiring them up and
+removing them. Remove them.
