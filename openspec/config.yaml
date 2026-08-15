@@ -1,20 +1,34 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  這是三 repo 架構的其中一個：`jg-base`（全叢集共用的 K8s manifests）、
+  `jg-cluster-template`（本 repo：CUE schema、Jinja2 模板、Taskfile）、
+  以及每座叢集自己的 user repo（`jg-jiahd`、`jcom`、`jgt-appliance` …）。
+  幾乎每個 repo 都有一個 agent 在其中執行，歷史與經驗累積在那裡。
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  工作路由的完整規則見 `docs/agents/work-routing.md`。對 openspec 而言最重要的是：
+
+  **openspec change 是設計紀錄，實作是另一回事，兩者的擁有者可以不同。**
+
+  - change 本身屬於**它所修改的 spec 所在的 repo**。本 repo 持有 `openspec/specs/`，
+    所以修改這些 spec 的 change 留在這裡。
+  - 實作工作項屬於**檔案實際變動的那個 repo**，開成該 repo 的 issue。一個 change 的
+    實作散落在三個 repo 是常態，不是例外。
+  - **驗證地點不等於擁有權**——缺陷在哪台機器上現形、能在哪裡被證明修好，通常都不是
+    會被修改的那個 repo。
+
+  寫下擁有者的理由：任何 session 都能改任何 repo，但改了不屬於自己的 repo，就把知識
+  留在下一個人不會去翻的地方。動手前先問：**這件事完成後，下一個遇到同樣問題的人會
+  在哪裡找？**
+
+rules:
+  proposal:
+    - |
+      在 `## Why` 之前必須有一行 `**Owning repo**：<repo>` 宣告這個 change 的設計紀錄
+      屬於哪個 repo，理由一句話。若實作會落在其他 repo，同一段再寫
+      `**Implementation lands in**：<repo>, <repo>` 並說明各自負責什麼。
+      這是為了不讓「哪個 agent 該做」在每次工作開始時被重新judge一次。
+  tasks:
+    - |
+      任務若要在別的 repo 執行，在該條任務內明寫 repo 名稱。不要假設讀者知道
+      `monitoring/backup` 是 jg-base 的檔案而不是本 repo 的。

@@ -59,6 +59,27 @@ side, an agent working in the collaborating repo still hits the original problem
 A collaborator issue that restates the work is worse than none: two copies of a
 procedure diverge, and the wrong one gets followed.
 
+## openspec changes: the design record and the implementation can differ
+
+A change that spans repos has two things to route, and they do not always land in
+the same place.
+
+- **The change itself** — proposal, design, specs — belongs to the repo that
+  holds the specs it modifies. `jg-cluster-template` holds `openspec/specs/`, so
+  changes amending those stay here even when most of the code lands elsewhere.
+- **Each implementation work item** belongs to the repo whose files change, as an
+  issue in that repo.
+
+The MariaDB gap is the pattern in miniature: D46 and task 7.7 are design record
+and stayed in `jg-cluster-template`'s openspec; the fix is an issue on
+`jg-base`, where the file lives; `jcom` holds a pointer because it is the
+verification bed.
+
+`openspec/config.yaml` makes this a required field rather than a judgement call —
+every proposal declares `**Owning repo**` and, when they differ,
+`**Implementation lands in**`. The point of writing it down at proposal time is
+that it stops being re-decided, differently, at the start of every work session.
+
 ## When ownership is genuinely ambiguous
 
 Some changes edit two repos roughly equally — a new schema field in

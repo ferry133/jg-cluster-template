@@ -1,3 +1,12 @@
+**Owning repo**：`jg-cluster-template` —— 本 change 修改 `deployment-profiles` 的
+`appliance-backup` spec 與 D9，而那些 spec 住在這裡。
+
+**Implementation lands in**：`jg-base`（狀態封存 job、on-demand 備份觸發、rescue instance
+的受限 RBAC——實作的主體）、`jg-cluster-template`（還原/接手程序文件與 spec 修訂）、
+`k8scc`（僅在保留清單要內建進 image 時）。`jgt-appliance` 是**驗證環境不是擁有者**，
+所有實跑在它上面進行。各 repo 的實作工作項開成該 repo 的 issue，見
+`docs/agents/work-routing.md`。
+
 ## Why
 
 `im` 是代客操作的 agent——它住在客戶站點，代替我們操作那座叢集。維運上它必須能整個搬走：
