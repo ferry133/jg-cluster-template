@@ -171,6 +171,17 @@
   - ~~**尚未驗證實際上傳**：手上沒有 R2 憑證~~ → **2026-08-15 驗證時發現它從來不可能成功**，見 D46。Flux 的 postBuild 代換把腳本裡每個 `${...}` 改寫掉，`kubectl exec "deploy/${deploy}"` 變成 `deploy/`，kubectl 直接拒絕；job 接著印 `nothing to back up` 並 exit 0——**與「這台沒有資料庫」同一行訊息**。兩座叢集因此每天回報成功而上傳零位元組
   - 修復後（jg-base `ce1806e` 加上 `substitute: disabled`）於 jgt-appliance 實測：dump 13439 bytes → 加密 2362 bytes → `uploaded s3://jgt-appliance-backup/jgt-appliance/jgt-appliance-20260815T015801Z.tar.gz.age`。**上傳路徑至此首次成立**
   - 密文取回後再驗一次 7.3 的性質：`age-encryption.org/v1` 檔頭，五個明文標記（含表名與資料內容）grep 計數皆為 0
+- [ ] 7.7 **MariaDB／MySQL 完全不在備份範圍內**（2026-08-15 在 jcom 發現）。腳本只有兩行
+  `dump_db db postgres` 與 `dump_db claudecode postgres`，而 schema 的 `#BlockTierExtras`
+  認定四個資料庫 extra，其中 `default/mariadb` 與 `freepbx/freepbx` 是 MariaDB——**兩者都沒有
+  任何 dump 路徑**。jcom 的 `freepbx/mariadb` 已運行 92 天，從未被備份過
+  - 這與 D46 是同一類問題的兩面：D46 是「備份跑不動」，這是「備份跑得動也不涵蓋它」。
+    兩者都不會有任何訊息告訴你，因為 `dump_db` 對不存在的 deployment 是靜默 `return 0`
+  - 修法需決定：mysqldump 要哪些憑證、從哪裡取（`FREEPBX_MYSQL_ROOT_PASSWORD` 已在
+    cluster-secrets）、以及 alpine 要多裝 `mariadb-client`
+  - **同時要修「沒涵蓋到」的靜默**：`dump_db` 找不到 deployment 就跳過，是為了讓沒裝該
+    extra 的叢集不報錯；但那也讓「該備而沒備」與「本來就沒有」無法區分——與 D46 第 1 點
+    完全相同的失敗形狀
 - [x] 7.2 備份內容僅有 `pg_dump` 產出的 `.sql`，腳本不讀取任何 manifest 路徑。理由已寫進腳本註解：manifests 的權威副本在 git，從封存還原只會還原一份較舊的快照
 - [x] 7.3 已實測：用叢集的 recipient 加密一段標記字串後，密文中**找不到明文標記**（grep 計數 0）；用另一把 age key 解密得到 `no identity matched any of the recipients`；用叢集自己的 `age.key` 才解得出。持有 R2 憑證者能取得的就是那段密文
 - [x] 7.4 daily-check 讀最近一次成功的 backup Job 完成時間：>48h 判 FAIL（FAIL 會扣住 dead-man ping，因此即使信件本身沒寄達也會浮現）、>26h 判 warn、其餘 ok。已設定但從未成功過也判 FAIL
