@@ -177,11 +177,15 @@
   任何 dump 路徑**。jcom 的 `freepbx/mariadb` 已運行 92 天，從未被備份過
   - 這與 D46 是同一類問題的兩面：D46 是「備份跑不動」，這是「備份跑得動也不涵蓋它」。
     兩者都不會有任何訊息告訴你，因為 `dump_db` 對不存在的 deployment 是靜默 `return 0`
-  - 修法需決定：mysqldump 要哪些憑證、從哪裡取（`FREEPBX_MYSQL_ROOT_PASSWORD` 已在
-    cluster-secrets）、以及 alpine 要多裝 `mariadb-client`
+  - ~~修法需決定：mysqldump 要哪些憑證、alpine 要多裝 client~~ → **兩個未知數都不存在**：
+    `mariadb-dump` 已在 mariadb container 內，`MYSQL_ROOT_PASSWORD` 已是該 container 的
+    環境變數，做法與 `pg_dump` 完全對稱（都是 `kubectl exec` 進去跑，不在備份 image 裡裝）
   - **同時要修「沒涵蓋到」的靜默**：`dump_db` 找不到 deployment 就跳過，是為了讓沒裝該
     extra 的叢集不報錯；但那也讓「該備而沒備」與「本來就沒有」無法區分——與 D46 第 1 點
     完全相同的失敗形狀
+  - **擁有權已移交 `ferry133/jcom` issue #1**（2026-08-16，由 jcom 的 agent 執行）。本條保留
+    為紀錄與交叉索引，不要在此重複追蹤——實作細節、驗收條件與「不要重蹈 D46」的告誡都在該
+    issue 內。量到的暴露：`asterisk` 資料庫 52 張表、16.5 MB、92 天
 - [x] 7.2 備份內容僅有 `pg_dump` 產出的 `.sql`，腳本不讀取任何 manifest 路徑。理由已寫進腳本註解：manifests 的權威副本在 git，從封存還原只會還原一份較舊的快照
 - [x] 7.3 已實測：用叢集的 recipient 加密一段標記字串後，密文中**找不到明文標記**（grep 計數 0）；用另一把 age key 解密得到 `no identity matched any of the recipients`；用叢集自己的 `age.key` 才解得出。持有 R2 憑證者能取得的就是那段密文
 - [x] 7.4 daily-check 讀最近一次成功的 backup Job 完成時間：>48h 判 FAIL（FAIL 會扣住 dead-man ping，因此即使信件本身沒寄達也會浮現）、>26h 判 warn、其餘 ok。已設定但從未成功過也判 FAIL
