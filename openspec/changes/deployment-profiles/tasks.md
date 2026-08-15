@@ -168,7 +168,9 @@
   - **agent 工作區刻意不備**（依 D8）：工作區檔案可重建，不可重建的每客戶 context 在資料庫層、已被 dump 涵蓋；且該 PVC 在 `claudecode` namespace，跨 namespace 掛不上，硬要備就得把這個 job 放進 claudecode，位置是錯的
   - 資料庫走 `pg_dump` 而非檔案層複製——執行中的 data directory 檔案複製不是備份，是 torn page
   - `BACKUP_AGE_RECIPIENT` 為空時**硬失敗而非略過**：把可讀的客戶資料上傳到別人的物件儲存，比不上傳更糟
-  - **尚未驗證實際上傳**：手上沒有 R2 憑證。已驗證的是「未設定 → 印訊息 → exit 0」（7.5）與加密（7.3）。上傳與還原屬 8.3 的驗收
+  - ~~**尚未驗證實際上傳**：手上沒有 R2 憑證~~ → **2026-08-15 驗證時發現它從來不可能成功**，見 D46。Flux 的 postBuild 代換把腳本裡每個 `${...}` 改寫掉，`kubectl exec "deploy/${deploy}"` 變成 `deploy/`，kubectl 直接拒絕；job 接著印 `nothing to back up` 並 exit 0——**與「這台沒有資料庫」同一行訊息**。兩座叢集因此每天回報成功而上傳零位元組
+  - 修復後（jg-base `ce1806e` 加上 `substitute: disabled`）於 jgt-appliance 實測：dump 13439 bytes → 加密 2362 bytes → `uploaded s3://jgt-appliance-backup/jgt-appliance/jgt-appliance-20260815T015801Z.tar.gz.age`。**上傳路徑至此首次成立**
+  - 密文取回後再驗一次 7.3 的性質：`age-encryption.org/v1` 檔頭，五個明文標記（含表名與資料內容）grep 計數皆為 0
 - [x] 7.2 備份內容僅有 `pg_dump` 產出的 `.sql`，腳本不讀取任何 manifest 路徑。理由已寫進腳本註解：manifests 的權威副本在 git，從封存還原只會還原一份較舊的快照
 - [x] 7.3 已實測：用叢集的 recipient 加密一段標記字串後，密文中**找不到明文標記**（grep 計數 0）；用另一把 age key 解密得到 `no identity matched any of the recipients`；用叢集自己的 `age.key` 才解得出。持有 R2 憑證者能取得的就是那段密文
 - [x] 7.4 daily-check 讀最近一次成功的 backup Job 完成時間：>48h 判 FAIL（FAIL 會扣住 dead-man ping，因此即使信件本身沒寄達也會浮現）、>26h 判 warn、其餘 ok。已設定但從未成功過也判 FAIL
@@ -185,7 +187,11 @@
 - [x] 8.2 從 LAN 用戶端驗證兩件事（原文寫「未變更路由器」，D32 之後改為「僅 operator 設定一次路由器，客戶端零設定」）：
   - 內網名稱（`envoy-internal` 上的）可用扁平 hostname 存取 → `internal.janncot.cc` 回 10.9.1.254
   - **WAN 名稱在 LAN 上解到內網位址**——`im.<domain>` 應回 `envoy-external` 的 LAN IP 而非 Cloudflare 的。這決定對外線路中斷時家裡還能不能用，也是「路由器設定確實生效」的最佳探針 → `im.janncot.cc`、`external.janncot.cc`、`flux-webhook.janncot.cc` 全部回 10.9.1.253（envoy-external 的 LAN 位址），公網則回 Cloudflare 的 172.67.163.198。端對端 `curl --resolve` 走 LAN 位址得 HTTP 401（ttyd 的 basic auth）且憑證有效，走公網同樣 401——兩條路徑並存。`github.com` 經 k8s-gateway 轉發正常（D39）
-- [ ] 8.3 完成還原演練：僅用備份封存 + escrow 的 `age.key`，在新叢集還原並比對資料一致
+- [~] 8.3 完成還原演練：僅用備份封存 + escrow 的 `age.key`，在新叢集還原並比對資料一致
+  - 2026-08-15 於 jgt-appliance 開跑。前三段完成：種入已知資料（`episodes`=137、`knowledge`=42、內容 md5 `8127c5b3…`）→ **真正的 CronJob** dump 13439 bytes、加密 2362 bytes、上傳 R2 → 僅憑 R2 憑證取回密文，且 `age-encryption.org/v1` 檔頭、五個明文標記 grep 皆 0
+  - 這一步就是 D46 的發現處：演練跑不動，因為備份本身從來沒有產出過封存
+  - **剩下**：用 escrow 副本（非 repo 內的工作副本）在另一座叢集還原並逐表比對。用副本是重點——`age-key-escrow.md:39` 要求對副本做 restore-test，而 jgt-appliance 的 `age_key_escrowed: true` 至今未被任何人查證過
+- [ ] 8.3b **輪替 jgt-appliance 的 R2 憑證**：D46 期間它們曾以字面值存在於明文 ConfigMap 中。`ce1806e` 止住了洩漏來源，但沒有使已外洩的憑證失效
 - [ ] 8.4 撰寫還原程序文件，內容須與演練實際步驟逐字一致
 - [ ] 8.5 回寫所有 spike 結論到 `design.md` 與相關 spec，確認無「待驗證」項目遺留
 - [ ] 8.6 每個 profile 的驗收都必須**在該 profile 上實跑到工作負載就緒**，不得只驗 `task configure` 的輸出。2c.9–2c.11 那四道渲染期缺陷全部無聲通過了 `task configure`（見 `design.md` D14）

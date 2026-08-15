@@ -987,6 +987,39 @@ dnsmasq 系（UniFi、OpenWrt、pfSense）才有。所以現況是**每一台 ap
 事實，而那件事實本身就會漂移；由客戶端回報則需要 zero-it-onboarding 1.4 那個機制先
 存在。把一個真實的故障偵測換成一個總是綠的裝飾，比現在的狀態更難察覺。
 
+### D46. Flux 的 postBuild 代換會改寫 ConfigMap 裡的 shell 腳本
+
+`cluster-apps-base` 對每個 Kustomization 掛 `postBuild.substituteFrom: cluster-secrets`。
+代換的對象是**整份 manifest 的文字**，不是只有你想代的那幾個欄位——所以 ConfigMap 裡
+一支 shell 腳本的每一個 `${...}` 都是代換目標。
+
+`monitoring/daily-check` 的 ConfigMap 帶著 `kustomize.toolkit.fluxcd.io/substitute: disabled`，
+`monitoring/backup` 與 `network/lan-address` 沒有。後兩者因此在執行前就被改寫：
+
+| 原始碼 | 叢集上實際跑的 | 後果 |
+|---|---|---|
+| `kubectl exec "deploy/${deploy}"` | `deploy/` | kubectl 拒絕，dump 從未執行 |
+| `"$WORK/${CLUSTER_NAME}-${STAMP}"` | `"$WORK/jgt-appliance-"` | 時間戳消失，每次上傳互相覆蓋 |
+| `KEEP="${BACKUP_RETAIN_DAYS:-30}"` | `KEEP=""` | 保留期為 0，prune 會刪光 |
+| `_prev="${2:-}"` | `_prev=""` | publish 一直丟棄第二個參數 |
+
+**三件事讓它活了這麼久沒被發現：**
+
+1. **失敗訊息與正常訊息相同。** dump 失敗後腳本走到 `nothing to back up` 並 `exit 0`
+   ——那正是「這座叢集沒有資料庫」時該印的話。健檢看到 Job succeeded，記 ok。
+2. **`:-` 預設值會被代換保留。** `lan-address` 因此看起來完全正常，實際上少了一個參數。
+   **部分損壞比全部損壞難發現得多。**
+3. **代換成功的那些反而更糟。** `${BACKUP_R2_SECRET_ACCESS_KEY}` 是 cluster-secrets 的
+   key，於是代換「成功」——把 R2 密鑰以字面值寫進一個明文 ConfigMap。它本來放在 Secret
+   裡是有理由的，而這條路徑把它搬了出來。
+
+**通則**：postBuild 代換的語意是「對整份 YAML 做字串替換」，而 ConfigMap 裡的腳本剛好和它
+共用 `${...}` 這個語法。任何把腳本放進 ConfigMap 的 app 都必須明確 opt out——這不是可選的
+最佳實踐，是預設會壞。
+
+**驗證方式**（因為源碼看不出來）：拿叢集上的 ConfigMap 和 repo 裡的原始碼逐字 diff。
+它們**應該完全相同**；有差異就是被代換過了。
+
 ## Risks / Trade-offs
 
 - ~~**Cilium `sharing-key` 跨 namespace 未經驗證**~~ → **已於 2026-08-09 在 jg-jiahd 實測確認可行**（見 D3 的 spike 結論）。內網位址數確定為 1。
