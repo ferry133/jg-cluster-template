@@ -231,3 +231,9 @@ Default five-role vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `
 ### Domain docs
 
 Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Work routing across repos
+
+擁有者是**檔案實際變動的那個 repo**，不是症狀出現的地方——驗證地點不等於擁有權。
+其他 repo 只留連結指標，不重複追蹤。三 repo 架構讓多數工作本來就跨 repo，所以這條判準
+是必要的而非可選。見 `docs/agents/work-routing.md`。
