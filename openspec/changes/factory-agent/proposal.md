@@ -1,3 +1,7 @@
+**Owning repo**：`jg-cluster-template` —— 本 change 修改的 spec 住在這裡。
+
+**Implementation lands in**：`jg-base`（factory namespace、獨立 SA 與最小權限 RBAC、HelmRelease、HTTPRoute）、`jg-cluster-template`（`task handover`、runbook / skill）。`jcom` 是 factory agent 的**落腳處**——執行環境，不是擁有者。 各 repo 的實作工作項開成該 repo 的 issue，見 `docs/agents/work-routing.md`。
+
 ## Why
 
 目前交付一台客戶叢集需要一個人坐在筆電前，依 README 走完 7 個 stage：開 Omni UI 點選、建 Cloudflare token 與 tunnel、從 template 建 repo、手填 `cluster.yaml`、`task configure`、push、`task bootstrap:apps`。整段 10–40 分鐘、橫跨 Omni / GitHub / Cloudflare / Kubernetes 四個外部系統，而且沒有任何狀態記錄——中途斷掉就得靠人回想走到哪，重跑還會建出第二條 tunnel 或第二個 repo。

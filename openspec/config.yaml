@@ -28,6 +28,13 @@ rules:
       屬於哪個 repo，理由一句話。若實作會落在其他 repo，同一段再寫
       `**Implementation lands in**：<repo>, <repo>` 並說明各自負責什麼。
       這是為了不讓「哪個 agent 該做」在每次工作開始時被重新judge一次。
+    - |
+      某個 repo 的工作量大到需要自己的 tasks 時，在該 repo 開 **sub-change**，不要把
+      別人的任務清單塞進 root。root 用 `**Sub-changes**：` 表格列出
+      `| repo | change | 負責什麼 |`；sub-change 開頭寫 `Part of: <repo> / <change>`。
+      **不存在「複製一份過來看」**——一個 repo 要嘛擁有 sub-change，要嘛什麼都不放。
+      sub-change archived 時由它的作者回頭更新 root；root 在還有 active sub 時不可 archive。
+      驗證：`./scripts/check-change-orchestration.py`
   tasks:
     - |
       任務若要在別的 repo 執行，在該條任務內明寫 repo 名稱。不要假設讀者知道

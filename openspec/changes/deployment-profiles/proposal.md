@@ -1,3 +1,7 @@
+**Owning repo**：`jg-cluster-template` —— 本 change 修改的 spec 住在這裡。
+
+**Implementation lands in**：`jg-base`（儲存分層、lan-address 探測、備份 CronJob、k8s-gateway——實作主體）、`jg-cluster-template`（CUE schema、Jinja2 模板、cluster-secrets 欄位）。`jgt-appliance` / `jg-jiahd` / `jcom` 是**驗證環境不是擁有者**。 各 repo 的實作工作項開成該 repo 的 issue，見 `docs/agents/work-routing.md`。
+
 ## Why
 
 目前 `cluster.yaml` 有 12 個必填欄位，其中 4 個 LB/VIP 位址要求填寫者知道自家 LAN 上哪些 IP 是空的、3 個 NAS 欄位要求已有 NFS 匯出的 NAS。這些都不是零 IT 客戶答得出來的資訊，也不是遠端 agent 在機器上線前推導得出來的——結果就是每一台交付都必須有人到現場或問一輪，無法自動化。

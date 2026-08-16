@@ -1,3 +1,7 @@
+**Owning repo**：`jg-cluster-template` —— 本 change 修改的 spec 住在這裡。
+
+**Implementation lands in**：`jg-cluster-template`（模板、taskfiles、scripts、per-cluster 例外機制——實作主體）、`jg-base`（單節點的 Spegel gating）。`jcom` 是**被同步的對象**，`jg-jiahd` 是回歸驗證用的對照組；兩者都不是擁有者。 各 repo 的實作工作項開成該 repo 的 issue，見 `docs/agents/work-routing.md`。
+
 ## Why
 
 `jcom` 已經無法接收模板更新，而模板也無法從 jcom 取回它獨有的修正。這不是「模板 + 少量客製化」，是兩支互相分岔的血脈——2026-08-09 逐檔比對後量化如下（相對 `revive-talos-path` 動工前的模板 HEAD）：

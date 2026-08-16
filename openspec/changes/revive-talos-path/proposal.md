@@ -1,3 +1,7 @@
+**Owning repo**：`jg-cluster-template` —— 本 change 修改的 spec 住在這裡。
+
+**Implementation lands in**：`jg-cluster-template`（`templates/config/talos/`、`nodes.schema.cue`、`.taskfiles/talos/`、bootstrap 任務——幾乎全部）。`jg-base` 僅受渲染結果影響。 各 repo 的實作工作項開成該 repo 的 issue，見 `docs/agents/work-routing.md`。
+
 ## Why
 
 `README.md` 有完整的 (A) Talos 手動路徑章節，但這個 repo **沒有任何 talos 模板**——`templates/config/` 底下只有 `bootstrap/` 與 `kubernetes/`。README 要求讀者填 `nodes.yaml`（`:164`）並執行 `just bootstrap talos`（`:205`），但此 repo 既無 `nodes.sample.yaml`、無 `nodes.schema.cue`、無 justfile，也無 `.taskfiles/talos/`。整條路徑是死的。

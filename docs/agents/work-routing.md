@@ -80,6 +80,59 @@ every proposal declares `**Owning repo**` and, when they differ,
 `**Implementation lands in**`. The point of writing it down at proposal time is
 that it stops being re-decided, differently, at the start of every work session.
 
+### Root and sub-changes
+
+When a repo's share of the work is large enough to need its own tasks, it gets a
+**sub-change** in its own `openspec/` rather than a list of foreign tasks inside
+the root. The root holds the plan; each sub-change holds the work and points
+home.
+
+Root proposal:
+
+```markdown
+**Sub-changes**：
+
+| repo | change | 負責什麼 |
+|------|--------|---------|
+| `jg-base` | `backup-coverage` | dump 路徑與「沒涵蓋到」的表達 |
+```
+
+Sub-change proposal:
+
+```markdown
+Part of: `jg-cluster-template` / `deployment-profiles`
+```
+
+Rules that keep the two records from disagreeing:
+
+- **The sub-change's author updates the root** when the sub-change is archived.
+  Nobody else is watching it.
+- **A root cannot be archived while any sub-change is still active.** Archiving
+  it early strands work with no plan above it.
+- **No copies.** A repo either owns a sub-change with its own tasks, or it holds
+  nothing. There is no "keep a copy to read" — reading someone else's plan is
+  what the link is for.
+- **Not every cross-repo change needs this.** A one-line fix referenced from a
+  task does not earn a sub-change; an issue in the owning repo is enough.
+  Reach for a sub-change when that repo's share has its own tasks and its own
+  acceptance.
+
+### The links are prose, so something has to walk them
+
+`openspec validate` cannot see past its own repo. `./scripts/check-change-orchestration.py`
+walks both directions across the sibling repos and reports copies, dangling
+parents, missing children, and roots archived ahead of their sub-changes.
+
+It found the reason it exists on its first run: `jgt-appliance` and
+`jgt-omni-accept` each carried five changes copied out of this repo when they
+were generated, frozen on the day of the copy and never touched again. One still
+described the off-site backup upload as "unverified for want of R2 credentials"
+a day after it had been proven impossible for an entirely different reason, and
+listed the restore drill as unstarted when it was three quarters done. Neither
+repo owned a single task in them.
+
+Run it before archiving a root, and when adding a sub-change.
+
 ## When ownership is genuinely ambiguous
 
 Some changes edit two repos roughly equally — a new schema field in

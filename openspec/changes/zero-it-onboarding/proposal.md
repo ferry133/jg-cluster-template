@@ -1,3 +1,7 @@
+**Owning repo**：`jg-cluster-template` —— 本 change 修改的 spec 住在這裡。
+
+**Implementation lands in**：`jg-cluster-template`（文件拆分、`README-zero-IT.md`、紙本產出流程——實作主體）、`jg-base`（onboarding bot 的部署形態）。`jcom` 是 bot 的**落腳處**，不是擁有者。 各 repo 的實作工作項開成該 repo 的 issue，見 `docs/agents/work-routing.md`。
+
 ## Why
 
 `deployment-profiles`（②）讓 appliance 的客戶必填欄位降到 0，`factory-agent`（③）讓部署流程無人介入。但客戶那一端仍然沒有東西：他收到一個紙箱，不知道要做什麼、做完了不知道成功沒有、出錯了不知道找誰。
