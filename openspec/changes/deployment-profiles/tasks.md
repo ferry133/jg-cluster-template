@@ -225,6 +225,14 @@
   - 2026-08-15 於 jgt-appliance 開跑。前三段完成：種入已知資料（`episodes`=137、`knowledge`=42、內容 md5 `8127c5b3…`）→ **真正的 CronJob** dump 13439 bytes、加密 2362 bytes、上傳 R2 → 僅憑 R2 憑證取回密文，且 `age-encryption.org/v1` 檔頭、五個明文標記 grep 皆 0
   - 這一步就是 D46 的發現處：演練跑不動，因為備份本身從來沒有產出過封存
   - **剩下**：用 escrow 副本（非 repo 內的工作副本）在另一座叢集還原並逐表比對。用副本是重點——`age-key-escrow.md:39` 要求對副本做 restore-test，而 jgt-appliance 的 `age_key_escrowed: true` 至今未被任何人查證過
+  - **緊急度已釐清（2026-08-16）：jgt-appliance 是內部機器，不在客戶端。** 因此
+    `factory-agent` 5.5 的排序（「第一次對外交付前必須跑完一次 8.3」）是**尚未到期**，
+    而不是已經被無聲跳過。依據四項，皆為 repo 內既有紀錄而非推測：
+    `node_cidr: 10.9.1.0/24`（與 jgt-omni 10.9.1.238、8.2 實測的 10.9.1.253/254 同一段
+    LAN）、`cloudflare_domain: janncot.cc`（自有網域）、`repository_name: ferry133/jgt-appliance`
+    （自有帳號），以及本 change 8.1 記載它就是「原 jgt-omni」那台實體機重灌而成的 scratch 叢集
+  - 這**只**證明 jgt-appliance 不在客戶端，不證明「從未交付過任何一台」——但目前
+    `docs/deploy/combinations.md` 的參考部署表只有 jgt-appliance / jcom / jg-jiahd 三座，全為內部
   - **2026-08-16 起刻意延後**：escrow 機制本身尚未實作，所以沒有副本可測。這不是漏做——但也表示 **`age_key_escrowed: true` 目前在 jgt-appliance 上是一句無憑據的宣告**，而 CUE 之所以不給它預設值，正是為了讓這種宣告必須有人負責。在 escrow 實作完成前，appliance 的備份在「單碟故障」這個它唯一要對抗的情境下是否可讀，仍然未知
 - [ ] 8.3b **輪替 jgt-appliance 的 R2 憑證**：D46 期間它們曾以字面值存在於明文 ConfigMap 中。`ce1806e` 止住了洩漏來源，但沒有使已外洩的憑證失效
   - **2026-08-16 起與 escrow 一併刻意延後**。同組延後的還有「jg-jiahd 設定 `backup_r2_*`」——它至今沒有任何異地備份。三者都只有 operator 能做（要登入 Cloudflare、要取出 escrow 副本），不是漏做
