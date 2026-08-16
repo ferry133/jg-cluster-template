@@ -1,155 +1,68 @@
-# Work routing across repos
+# Work routing — this repo family
 
-Which repo's agent owns a piece of work, when the work touches more than one.
+The general rule, the openspec root / sub-change format, and the link checker
+live at user level in **`~/.claude/openspec-orchestration.md`**. They apply to
+every project, not just this one, so they are not repeated here.
 
-## Why this needs a rule
+This page holds what is specific to the cluster family.
 
-Every project repo here has an agent working in it, and that agent accumulates
-the history of what was designed, tried, and rejected. Any session can edit any
-repo — but a session that edits a repo it does not belong to leaves the knowledge
-somewhere the next person will not look.
+## Why the rule bites harder here than elsewhere
 
-The concrete failure: someone fixes a backup defect while working on cluster A.
-Months later the same defect surfaces on cluster B, and the agent working there
-has no way to discover that it was already solved. The fix is repeated, or worse,
-solved differently.
+Most projects are one repo. This one is three, by design: every extra app spans
+`jg-base` + `jg-cluster-template` + the per-cluster user repo. So "one repo per
+change" is false most of the time, and the tie-breaker is load-bearing rather
+than theoretical.
 
-This repo's own architecture guarantees the problem. Every extra app spans three
-repos (`jg-base` + `jg-cluster-template` + the user repo), so "one repo per
-change" is false most of the time. A tie-breaker is required, not optional.
+## Who owns what
 
-## The rule
+| Repo | Holds | Typically owns |
+|------|-------|----------------|
+| `jg-base` | Kubernetes manifests every cluster consumes via Flux | Anything under `kubernetes/apps/` — controllers, jobs, RBAC, scripts in ConfigMaps |
+| `jg-cluster-template` | CUE schema, Jinja2 templates, Taskfile, `openspec/specs/` | Schema fields, rendering, per-phase docs, and every openspec change amending those specs |
+| user repo (`jg-jiahd`, `jcom`, `jgt-appliance`, …) | One `cluster.yaml`, its encrypted secrets, the Flux entry point | Only that cluster's own configuration |
 
-**The owner is the repo where the artifact changes** — in practice, the repo
-whose files the change actually edits, and where the design decision lands.
+`jg-base` is upstream of every cluster; `jg-cluster-template` is upstream of
+every user repo. Neither consumes the other, so between those two the tie-break
+is where the decision is recorded — which is usually `openspec/specs/`, here.
 
-Everything else is a collaborator and gets a linked pointer, never a second copy
-of the work.
+**A user repo owns almost nothing.** It is where changes are *verified*, and
+verification is not ownership. A cluster repo that starts accumulating shared
+design is a signal something was routed wrong.
 
-### Verification location is not ownership
+## Worked example: the MariaDB backup gap
 
-The place a defect shows up, and the place it can be proven fixed, are often not
-the repo that changes. Both are real contributions; neither confers ownership.
+2026-08-16. MariaDB databases had no backup path at all.
 
-Worked example (2026-08-16): MariaDB databases had no backup path. The symptom
-appeared on jcom — the only cluster running MariaDB, and therefore the only place
-the fix can be verified. But the file that changes is
-`jg-base/kubernetes/apps/base/monitoring/backup/app/configmap.yaml`, and no file
-in jcom changes at all.
+- The symptom appeared on **jcom** — the only cluster running MariaDB, and
+  therefore the only place a fix can be proven to work.
+- The file that changes is
+  `jg-base/kubernetes/apps/base/monitoring/backup/app/configmap.yaml`. **No file
+  in jcom changes.**
 
-Routing it to jcom would have buried the history in the wrong place: the next
-person to touch backup — adding another database, debugging an empty archive on
-an appliance — is working in jg-base, and would find nothing.
+So `jg-base` owns it (issue ferry133/jg-base#1) and `jcom` holds a pointer
+(ferry133/jcom#1) carrying only what is genuinely local: the data shape, the
+credentials already present in that container, what to run there.
 
-So: **jg-base owns it, jcom holds the verification bed.**
+Routing it to jcom would have buried the history where nobody would look: the
+next person to touch backup — adding a database, debugging an empty archive on an
+appliance — is working in `jg-base`.
 
-## Linking is what actually fixes the scattering
+The design record went to neither. D46 and task 7.7 are in this repo's
+`openspec/`, because they amend `deployment-profiles`' specs, which live here.
+That split — design record here, implementation issue in `jg-base`, pointer in
+the cluster repo — is the pattern to copy.
 
-Correct routing alone is not enough. If the thread cannot be found from the other
-side, an agent working in the collaborating repo still hits the original problem.
+## Blast radius is not ownership either, but it changes the bar
 
-- The **owning repo** gets the full issue: the defect, the constraints, the
-  acceptance criteria.
-- Each **collaborating repo** gets a short issue that states the owner up front
-  (`Owner: <owner>/<repo>#N`) and holds only the facts that genuinely belong to
-  it — the local data shape, what to run there, what is configured there.
-- GitHub cross-repo references (`ferry133/jg-base#1`) work in both directions, so
-  either agent can walk to the other.
+A push to `jg-base` reaches every cluster within the hour, with no per-cluster
+review in between. It still owns the change; it just means the acceptance
+criteria have to include a cluster that does *not* have the thing being fixed.
 
-A collaborator issue that restates the work is worse than none: two copies of a
-procedure diverge, and the wrong one gets followed.
+## Declaring it
 
-## openspec changes: the design record and the implementation can differ
+Every change in this repo declares `**Owning repo**` above `## Why`; the rule is
+in `openspec/config.yaml` so it is asked at proposal time. Verify the links with:
 
-A change that spans repos has two things to route, and they do not always land in
-the same place.
-
-- **The change itself** — proposal, design, specs — belongs to the repo that
-  holds the specs it modifies. `jg-cluster-template` holds `openspec/specs/`, so
-  changes amending those stay here even when most of the code lands elsewhere.
-- **Each implementation work item** belongs to the repo whose files change, as an
-  issue in that repo.
-
-The MariaDB gap is the pattern in miniature: D46 and task 7.7 are design record
-and stayed in `jg-cluster-template`'s openspec; the fix is an issue on
-`jg-base`, where the file lives; `jcom` holds a pointer because it is the
-verification bed.
-
-`openspec/config.yaml` makes this a required field rather than a judgement call —
-every proposal declares `**Owning repo**` and, when they differ,
-`**Implementation lands in**`. The point of writing it down at proposal time is
-that it stops being re-decided, differently, at the start of every work session.
-
-### Root and sub-changes
-
-When a repo's share of the work is large enough to need its own tasks, it gets a
-**sub-change** in its own `openspec/` rather than a list of foreign tasks inside
-the root. The root holds the plan; each sub-change holds the work and points
-home.
-
-Root proposal:
-
-```markdown
-**Sub-changes**：
-
-| repo | change | 負責什麼 |
-|------|--------|---------|
-| `jg-base` | `backup-coverage` | dump 路徑與「沒涵蓋到」的表達 |
+```sh
+~/.claude/scripts/check-change-orchestration.py
 ```
-
-Sub-change proposal:
-
-```markdown
-Part of: `jg-cluster-template` / `deployment-profiles`
-```
-
-Rules that keep the two records from disagreeing:
-
-- **The sub-change's author updates the root** when the sub-change is archived.
-  Nobody else is watching it.
-- **A root cannot be archived while any sub-change is still active.** Archiving
-  it early strands work with no plan above it.
-- **No copies.** A repo either owns a sub-change with its own tasks, or it holds
-  nothing. There is no "keep a copy to read" — reading someone else's plan is
-  what the link is for.
-- **Not every cross-repo change needs this.** A one-line fix referenced from a
-  task does not earn a sub-change; an issue in the owning repo is enough.
-  Reach for a sub-change when that repo's share has its own tasks and its own
-  acceptance.
-
-### The links are prose, so something has to walk them
-
-`openspec validate` cannot see past its own repo. `./scripts/check-change-orchestration.py`
-walks both directions across the sibling repos and reports copies, dangling
-parents, missing children, and roots archived ahead of their sub-changes.
-
-It found the reason it exists on its first run: `jgt-appliance` and
-`jgt-omni-accept` each carried five changes copied out of this repo when they
-were generated, frozen on the day of the copy and never touched again. One still
-described the off-site backup upload as "unverified for want of R2 credentials"
-a day after it had been proven impossible for an entirely different reason, and
-listed the restore drill as unstarted when it was three quarters done. Neither
-repo owned a single task in them.
-
-Run it before archiving a root, and when adding a sub-change.
-
-## When ownership is genuinely ambiguous
-
-Some changes edit two repos roughly equally — a new schema field in
-`jg-cluster-template` plus its consumer in `jg-base`. Then:
-
-1. Prefer the repo where the **decision** is recorded, not the one with more
-   lines changed. A CUE constraint and an openspec design note outrank a
-   mechanical edit.
-2. Failing that, prefer the repo **furthest upstream** — the one others consume.
-   Downstream repos can carry a pointer; upstream cannot easily discover
-   downstream history.
-
-## Agent memory is secondary
-
-Memory gets pruned and does not survive a reset. The durable record is the repo:
-commits, `openspec/`, issues. So the real value of routing work to a repo's agent
-is that the agent **writes the record into the repo where the next person will
-look** — memory should mostly hold pointers into that record.
-
-Stated that way, the rule keeps working after any given agent's memory is gone.
