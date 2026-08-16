@@ -466,11 +466,16 @@ cluster-admin 的 agent 本來就讀得到，所以這不新增暴露面——�
 
 以下是既有叢集，可作為各組合的實例參考。**它們是例子，不是定義**——定義在 CUE schema。
 
+> ⚠️ **這張表是快照，不是權威**（狀態日期 2026-08-16）。每一格的權威來源是該叢集自己的
+> `cluster.yaml`。它已經因此壞過一次：jg-jiahd 的 DB 在 2026-08-16 搬上 longhorn，這張表
+> 仍寫著「未搬」，而同一個事實在 fleet-ops 的 `fleet-index.md` 裡**各自獨立地**過期。
+> 一個活在多張表裡的事實，遲早會有一張是錯的——**改叢集狀態時要回頭改這裡，或者不要相信它**。
+
 | | profile | 節點 | bulk | 供裝 | Longhorn | DB 落在 | 異地備份 |
 |---|---|---|---|---|---|---|---|
 | `jgt-appliance` | `appliance` | 1 | `local-path` | Omni | — | `local-path` | ✅ |
 | `jcom` | `full` | 1 | `nfs` | 手動 Talos | — | `local-path` | ❌ |
-| `jg-jiahd` | `full` | 3 | `nfs` | Omni | ✅ | `sc-nas`（未搬） | ❌ |
+| `jg-jiahd` | `full` | 3 | `nfs` | Omni | ✅ | `longhorn`（2026-08-16 搬遷） | ❌ |
 
 **只有 appliance 有異地備份，因為只有它被 CUE 強制。** 這就是「選配」在實務上的意思，
 也是 §7.2 說交付時要把它當必做的理由。
