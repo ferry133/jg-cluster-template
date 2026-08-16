@@ -119,9 +119,38 @@ cloudflared 因 ISP 封鎖 QUIC 而 CrashLoop 的 workaround 已記錄於 `CLAUD
 
 `.claude/skills/provision-customer-cluster/SKILL.md` 寫成「前置條件 / 指令 / 驗證斷言 / 失敗分支」的形式。人可以照著做，agent 可以照著跑。這樣「SOP」與「agent 的程式」不會分岔——分岔的文件必然有一份是錯的。
 
-### D11. Cloudflare 由 operator 提供；網域屬於客戶，DNS 委派給 operator
+### D11. ~~Cloudflare 由 operator 提供~~ → 客戶自有一個 Google 帳號，公司用它代為註冊
 
-先釐清一個容易搞混的地方：**appliance 的客戶不會給你 Cloudflare 的任何東西**。
+**2026-08-16 由 ferry133 決定改寫**（`ferry133/jg-cluster-template#5`）。原本的形狀是「Cloudflare
+帳號在 operator 側、客戶零輸入」；新的形狀是**客戶申請一個代表這座叢集的 Google 帳號**，
+Cloudflare、Auth0 與其餘外部服務都由公司**用那個帳號**註冊。客戶把密碼告訴公司、取得服務；
+服務結束時客戶改掉密碼。
+
+> 「Google 帳號是客戶自己申請，告知公司密碼，取得公司服務。公司服務結束，客戶就可以修改
+> 他的密碼。」——ferry133，2026-08-16
+
+這一步同時解掉 `proposal.md` 記的那個問題：「客戶隨時能拿回鑰匙」原本只是口頭承諾，因為
+`age.key`、GitHub repo、Omni 控制權與 Cloudflare 帳號散在四個地方，沒有任何單一動作能把它們
+交回去。這個模型把**外部服務**收斂到客戶本來就持有的一個憑證上。
+
+連帶死掉兩個 spike：1.2（Workspace Admin SDK 的最小權限與 domain-wide delegation）整題消失，
+因為帳號是客戶自己申請的，公司不建立任何使用者；1.3 的 Tenant API 資格問題同樣消失，
+連我先前提的「子帳號 vs 委派存取」也一併消失——兩者皆非，那就是客戶自己的帳號。
+
+**零 IT 的三個物理動作不受影響**：申請 Google 帳號發生在簽約時、出貨之前，不是客戶在門口要多
+做的第四件事。明寫在這裡，免得日後有人來「修正」一個並不存在的衝突。
+
+⚠️ **這個模型的中心主張尚未實測**：改密碼會擋住取得**新**憑證，但擋不掉**已簽發**的
+——Cloudflare API token 與 Auth0 client secret 是獨立的 bearer 憑證，有效性不依賴帳號怎麼登入；
+而 escrow 的 `age.key` 完全不受密碼變更影響，它照樣解得開每一份既有封存。**沒有人測過
+Cloudflare API token 在密碼變更後是否存活**——jg-base-90、fleet-ops 與我都只是推論。
+在真帳號上花幾分鐘就能定案，而它決定這個模型成不成立，所以它屬於 ferry133 的待辦而不是
+設計文件裡的假設。撤銷清單見 6.4。
+
+以下段落是**改寫前**的理由，保留因為它解釋了為什麼不能要求 appliance 客戶自製 scoped token
+——那個限制在新模型下依然成立，只是解法從「operator 提供帳號」換成「公司用客戶帳號註冊」：
+
+先前討論中曾提到「請客戶給一個 scoped token 而不是帳號密碼」——那對 prosumer / full 成立，對 appliance 不成立：建一個 scoped token 需要有 Cloudflare 帳號、登入、找到 API Tokens、看懂 `Zone - DNS - Edit` 與 `Account - Cloudflare Tunnel - Read` 該怎麼勾、再安全地把 token 交出來。第三步以後全是 IT 工作，零 IT 客戶做不到。
 
 先前討論中曾提到「請客戶給一個 scoped token 而不是帳號密碼」——那對 prosumer / full 成立，對 appliance 不成立：建一個 scoped token 需要有 Cloudflare 帳號、登入、找到 API Tokens、看懂 `Zone - DNS - Edit` 與 `Account - Cloudflare Tunnel - Read` 該怎麼勾、再安全地把 token 交出來。第三步以後全是 IT 工作，零 IT 客戶做不到。
 
