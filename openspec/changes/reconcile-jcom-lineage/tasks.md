@@ -72,7 +72,7 @@
 
 - [x] 3.1 **已由 ② 的 2.8 解決**，但作法與原本設想的不同：jg-base 那份 `kustomization.yaml` 沒有改，因為 Flux 無法從那一端拒絕建立 Kustomization。改由 per-user repo 依 `cluster.yaml` **生成 suspend patch**——與 jcom 手寫的那段同型，只是來源從漂移變成宣告
 - [x] 3.2 **已由 ② 解決**：`is_single_node` 於 `plugin.py` 衍生，`ks.yaml.j2` 據此生成 spegel 的 suspend patch
-- [x] 3.3 **前提已不存在（2026-08-16 查核）**：`spegel_enabled` 在所有活的程式碼裡已絕跡——jcom 與本 repo 的 `01-apps.yaml.j2` 都沒有 spegel，`plugin.py` 也不再衍生它。只剩文件與 openspec 紀錄仍在描述它（`docs/template-lineage.md:52`、`revive-talos-path` 5.8、本 change 的 design.md），那些敘述已過期
+- [x] 3.3 **前提已不存在（2026-08-16 查核）**：`spegel_enabled` 在所有活的程式碼裡已絕跡——jcom 與本 repo 的 `01-apps.yaml.j2` 都沒有 spegel，`plugin.py` 也不再衍生它。只剩文件與 openspec 紀錄仍在描述它（`docs/template-lineage.md:52`、本 change 的 design.md），那些敘述已過期（`revive-talos-path` 5.8 也在其中，已於 2026-08-16 連同該 task 一併移除）
   - 所以「兩處控制互相打架」沒有東西可以調和：bootstrap 側從不安裝 spegel，gating 完全由 3.1/3.2 生成的 suspend patch 承擔。jcom 的 `ks.yaml` 已帶著模板生成的那段，不是手寫的
 - [x] 3.4 **已在 jcom 驗證**（單節點）：`kustomization/spegel` `suspend=true`、**spegel pod 0 個、全叢集 spegel 相關資源 0 個**，而 `ks.yaml` 的 suspend patch 來自模板生成，repo 內無任何 per-cluster 手寫 patch
 - [x] 3.5 **已在 jg-jiahd 驗證**（3 節點）：`kustomization/spegel` 未 suspend、`Ready=True`、**3 個 pod Running**，每節點一個。多節點行為未受 gating 影響

@@ -67,7 +67,7 @@ makejinja.toml                                          2 行
 - `kubernetes/apps/base/kube-system/kustomization.yaml` — Spegel 改為可由設定停用
 
 **與其他 change 的關係**
-- `revive-talos-path`：其 task 5.8 即本 change 的起點；5c.1 / 5c.2 是比對 jcom 得到的成果。
+- `revive-talos-path`：其「jcom 無法以同法驗證」的觀察即本 change 的起點（原 task 5.8，工作既已由本 change 承接，該項於 2026-08-16 從 ① 移除）；5c.1 / 5c.2 是比對 jcom 得到的成果。
 - `deployment-profiles`：新增 task 1.0（appliance 單節點必須關閉 Spegel）。本 change 提供其所需的 gating 機制。
 
 **待驗證（spike，不得當成既定事實寫入 spec）**

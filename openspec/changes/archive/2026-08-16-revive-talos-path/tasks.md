@@ -45,7 +45,6 @@
 - [x] 5.5 實測：talos 路徑缺 TALOSCONFIG 或缺 talhelper 皆 fail fast；未宣告 provisioning_path 時指名該欄位並列出可接受值
 - [x] 5.6 由 ② 承接：② 只需加 `appliance ⇒ provisioning_path: "omni"`，本 change 的 `omni ⇒ nodes: []` 會讓 appliance 併存手動節點宣告自動被拒，不需另寫規則
 - [x] 5.7 **jg-jiahd（Omni）驗證乾淨**：在副本上同步 ① 的改動（排除其 QUIC workaround 的 `ks.yaml.j2`）+ 加 `provisioning_path: "omni"`，`task configure` 通過，`ks.yaml` 與解密後 `cluster-secrets` **完全相同**、檔案數不變。副作用僅多渲染 gitignored 的 `talos/` 與 `nodes.yaml: []`。已於最終狀態（含 1.13.8、validate-manifests、encrypt-secrets 修正）重跑一次，結果不變
-- [ ] 5.8 jcom 無法以同法驗證——它是保留完整手動 Talos 工具鏈的**較舊血脈**，非「模板+客製化」。直接同步會壞：其模板用到我略過的 `spegel_enabled`（`01-apps.yaml.j2`、`ks.yaml.j2`），且我的 `makejinja.toml` 宣告的 `trello-notifier.yaml` 在 jcom 不存在會讓 makejinja 中止。需獨立的合併工作，不屬 ①
 
 ## 5c. 比對 jcom 後補上的缺口
 
