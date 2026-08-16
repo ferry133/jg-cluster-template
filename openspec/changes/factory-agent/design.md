@@ -45,6 +45,16 @@ CLAUDE.md 已記錄但仍需人工執行的兩件事：
 
 Omni 以 `omni/omni` extra 跑在 jcom 內，factory 放同一個叢集即可用 ClusterIP 直連 gRPC。這一步同時消掉兩個既有痛點：不必 `kubectl port-forward`，也不會踩到 Cloudflare Tunnel 破壞 gRPC trailers（`cluster.sample.yaml` 記錄的 2026-07-30 問題）。
 
+**同叢集的代價已量測並被明示接受**（2026-08-16，`ferry133/jg-cluster-template#3`）：與 factory
+同叢集的還有 `claudecode/claude-code`，而它綁 cluster-wide `cluster-admin`，所以任何通過該終端機
+入口（預設 Auth0 OIDC）的人都讀得到 factory 的 Secret。ferry133 選擇 (a)——接受並記錄於 2.9，
+以「日後可能為 IM 另開叢集」為預定方向。詳見下方 Risks 第一項；那裡也記著為什麼「只搬 IM」
+還不夠。
+
+**部署位置一併更正**：factory 放 `kubernetes/apps/extras/factory/factory/`，由 jcom 的
+`cluster.yaml` 選入，與 `omni/omni` 同一機制。`apps/base/` 是**發佈範圍**而非目錄——它一小時內
+到達每一座叢集且無逐叢集審核，會把這個憑證集中點送上客戶 appliance。
+
 *Alternative considered*：跑在 jg-jiahd。捨棄——與 Omni 不同叢集，等於把剛消掉的兩個問題請回來。
 *Alternative considered*：一次性 Job 而非常駐。捨棄——provisioning 是長時間、事件驅動、需要續跑的流程，常駐比較自然；且常駐實例也是 operator 平時的操作入口。
 
@@ -142,7 +152,25 @@ handover     需要 IT    客戶要接手 Cloudflare zone、GitHub repo、Omni �
 
 ## Risks / Trade-offs
 
-- **factory 是權限集中點**（Omni Admin + GitHub PAT + Cloudflare 母帳號） → 獨立 namespace/SA、憑證不進 image、憑證清單與 blast radius 明文記錄、可輪替。
+- **factory 是權限集中點**（Omni Admin + GitHub PAT + Cloudflare 母帳號） → 獨立 namespace/SA、憑證不進 image、憑證清單與 blast radius 明文記錄。
+  - **獨立 namespace/SA 限制的是 factory 做得到什麼，不是誰讀得到 factory**（2026-08-16 量測，
+    `ferry133/jg-cluster-template#3`）。同叢集的 `claudecode/claude-code` SA 綁的是
+    cluster-wide `cluster-admin`（jg-base `.../claude-code/app/rbac.yaml` 的 ClusterRoleBinding
+    `claudecode-claude-code`），而 RBAC 純加法、沒有 deny，所以它讀得到任何 namespace 的
+    Secret，包含 factory 的。**原文寫的隔離不成立**——不是實作沒做到，是那個手段做不到那件事
+  - **ferry133 於 2026-08-16 選擇 (a)：接受這個暴露，並寫進 2.9 的憑證清單。**
+    因此 **2.9 不再是「記錄殘餘風險」，它就是全部的緩解措施**——清單漏掉的東西不是「已接受的
+    風險」，是「沒被記錄的風險」，而這兩者從外面看完全一樣
+  - **(d) 是預定方向，不是被否決的選項**：日後可能為 IM 另開叢集。所以現況是**選定的中繼點
+    而不是結論**，六個月後讀到這段的人需要知道這件事
+  - ⚠️ **但「把 IM 搬去自己的叢集」本身關不掉這條路**：`cc` 與 `im` 共用同一個 `claude-code`
+    SA，所以少了 `im` 的 jcom 上還有 `cc`，一樣是 cluster-admin。真正關得掉的是 (d) 的完整
+    形式——在 factory 叢集上不選 `claudecode`，而那要先把它移出 jg-base 的 `apps/base/`
+  - **「可輪替」對其中一類憑證是假的**：Omni SA key 與 GitHub PAT 發現外洩後可以撤銷重發；
+    若 factory 承擔 5.5 的 escrow，它同時持有 N 把客戶 `age.key`，而那把鑰匙**輪替不了**——
+    換掉它等於讓既有封存全部變成沒人打得開的密文。集中一個沒有撤銷路徑的憑證，與集中一個
+    有撤銷路徑的憑證，是不同的風險類別而不是同一類的更多量。這一項在 (a) 之下同樣被接受，
+    所以它必須以「已接受」出現在 2.9 的表裡，而不是不出現
 - **jcom 是所有客戶的管理面單點** → 已接受。jcom 失效時客戶叢集本身照常運行，失去的是遠端管理能力。量體成長後再處理高可用。
 - **「機器沒出現」時 agent 全盲** → 本 change 不解決，只要求誠實回報 + 現場檢查清單。缺口留給後續的客戶端探測。
 - **自動修復可能修錯東西** → 只對有明確症狀比對的已知失敗自動處理，其餘一律停下；每次修復都留下症狀、動作與驗證結果。
