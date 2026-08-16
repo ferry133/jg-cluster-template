@@ -33,6 +33,20 @@ kubectl get nodes.longhorn.io -n longhorn-system -o json | jq -r \
   '.items[] | .metadata.name as $n | .status.conditions[] | [$n,.type,.status] | @tsv'
 ```
 
+### 還要檢查 `PGDATA` 是不是掛載點的子目錄
+
+```sh
+kubectl get deploy postgres -n db \
+  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="PGDATA")].value}'; echo
+```
+
+必須像 `/var/lib/postgresql/data/pgdata` 這樣**在掛載點底下再一層**。若它就是掛載點本身，
+新的 Longhorn 卷（ext4）上的 `lost+found` 會讓 `initdb` 拒絕啟動——**而那時舊 PVC 已經
+刪掉了**。NFS 上不會發生，因為 NFS 沒有 `lost+found`，所以這個問題只在搬到 block class
+時才出現。
+
+**在刪除之前檢查，不是之後。**
+
 ---
 
 ## 程序
@@ -121,8 +135,13 @@ kubectl delete pvc postgres-data -n db
 否則 Flux 立刻把它拉回 1。
 
 > **第三道安全網**：`sc-nas` 若設了 `archiveOnDelete: "true"`（nfs-subdir 的預設），NFS 上的
-> 目錄是被**改名**成 `archived-pvc-<uid>` 而不是刪除。確認你的 provisioner 是否如此——
-> 這不是替代 dump，但在最壞的情況下它是最後一份原始資料。
+> 目錄是被**改名**而不是刪除。名稱取決於 provisioner 設定：**有 `pathPattern` 時是
+> `archived-<pathPattern 展開值>`**（例如 `archived-jg-jiahd-db-postgres-data`），
+> 沒有時才是 `archived-pvc-<uid>`。
+>
+> **去掛載那個 export 看一眼，不要從參數推論。** jg-jiahd 那次先照 v4.0.2 的已知行為推論成
+> `archived-pvc-<uid>`，實際掛上去看才發現是 pathPattern 名稱。這不是替代 dump，但在最壞的
+> 情況下它是最後一份原始資料——而你要在需要它的時候找得到它。
 
 ### 7. 確認叢集上的值，再 resume
 
@@ -153,9 +172,25 @@ kubectl exec -n db deploy/postgres -- psql -U <user> -At -c \
 6.9 的失效模式在那裡不可能發生。會需要預先建立的是 dump 引用了 `POSTGRES_USER` 以外的
 owner 的情況。
 
+**還原必須是冪等的——會有東西搶在你前面建表。**
+
+`flux resume` 之後，app 的 migration job 通常會贏得那個競速，在你還原之前先建好一批空表。
+jg-jiahd 那次就是：5 張空表已經在那裡。這不是時序沒抓好，**是預期行為，要用旗標吸收而不是
+用時機閃避**：
+
 ```sh
-kubectl exec -n db deploy/postgres -- psql -U <admin> -c "CREATE ROLE <owner> LOGIN;"
-kubectl exec -i -n db deploy/postgres -- psql -U <admin> <db> < dump.sql
+# custom-format dump
+pg_restore --clean --if-exists --exit-on-error -U <admin> -d <db> restore.dump
+
+# plain SQL：在 dump 時就加，不是還原時
+pg_dump --clean --if-exists -U <user> <db> > restore.sql
+```
+
+**沒有 `--clean` 的天真還原會半途失敗**——在表已存在的叢集上失敗，而在空叢集上成功，
+所以它會在測試時看起來沒問題。
+
+```sh
+kubectl exec -n db deploy/postgres -- psql -U <admin> -c "CREATE ROLE <owner> LOGIN;"  # 只在需要時
 ```
 
 ### 9. 逐表比對
@@ -173,6 +208,19 @@ kubectl get pvc postgres-data -n db   # storageClassName 應為新的 class
 `task configure`、push。叢集回到原狀，沒有任何資料被動過。
 
 第 6 步之後就沒有回退，只有從 dump 重建——所以第 5 步那份 dump 是唯一的資料來源，第 3 步的數字則是比對它的依據。
+
+---
+
+## 這個程序**不**保證什麼
+
+跑完之後仍然沒有被證明的事，寫出來免得被讀成已涵蓋：
+
+- **應用端功能。** pod Ready、沒有 DB 錯誤、資料讀得回來——這些都不等於「服務正常」。
+  要驗就得實際驅動一次業務流程，而那通常需要人。
+- **複製式儲存在節點失效時的行為。** 兩個副本存在於兩個節點，不代表 failover 驗過。
+  要驗得 drain 一個節點。
+- **搬遷後的第一次備份。** 備份 CronJob 從此備的是新卷上的資料庫，**而那一次還沒有人看過**。
+  搬完當天要盯它跑一次。
 
 ---
 
