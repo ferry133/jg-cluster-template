@@ -25,7 +25,11 @@
 
 ## 2b. 盤點時新發現
 
-- [ ] 2b.1 模板 `cluster.schema.cue` 宣告 `cilium_bgp_router_addr` / `cilium_bgp_router_asn` / `cilium_bgp_node_asn` / `cilium_loadbalancer_mode` 四個欄位，**模板、cluster-secrets、jg-base 皆零消費端**——原本唯一的消費端 genie1 已確認為歸檔測試叢集（2026-08-15），所以是**零消費端而非一個**，「接上或移除」不再是取捨：移除。留著會讓人以為填了有用
+- [ ] 2b.1 模板 `cluster.schema.cue` 宣告 `cilium_bgp_router_addr` / `cilium_bgp_router_asn` / `cilium_bgp_node_asn` / `cilium_loadbalancer_mode` 四個欄位，**模板、cluster-secrets、jg-base manifests 皆零功能消費端**——原本唯一的消費端 genie1 已確認為歸檔測試叢集（2026-08-15），所以「接上或移除」不再是取捨：移除
+  - **2026-08-16 修正：這不是單一 repo 的清理。** 四個欄位另外出現在 `jg-base/.github/tests/public.yaml` 與 `private.yaml`，而那兩份 fixture 被 `.github/workflows/e2e.yaml` 複製成 `cluster.yaml` 使用。`#Config` 是 CUE definition（預設封閉），所以**只刪 schema 會讓 fixture 帶著未宣告欄位而驗證失敗**
+  - 該 workflow 觸發條件是 PR to main，而 jg-base 的工作都是直接推 main，`gh run list` 顯示**它從未執行過**。所以今天不會有可觀測的破壞——但會留下一個「下次有人開 PR 才炸」的地雷，這比壞掉更糟
+  - 順序：先移除 fixture 的四行（jg-base），再移除 schema 宣告（本 repo）。反過來會讓 fixture 在中間狀態失效
+  - jg-base 那半已開 issue；schema 那半交由本 repo 另一個 session 執行——它正在同一個檔案裡工作（新增 `claudecode_auth0`），由我插手會撞在一起
 - [ ] 2b.2 採納 jcom 的 `validate-talos-config` 任務
 - [x] 2b.3 已採納 jcom 的 `cloudflare-tunnel.json` 前置檢查（由 `revive-talos-path` 5c.3 實作；2026-08-11 實測第二次踩到才修）
 - [ ] 2b.4 單節點的 Cilium 設定（native routing + MTU 1500）與 Spegel 同屬「單節點安全性」，一併納入 3.x
