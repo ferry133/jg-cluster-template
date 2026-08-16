@@ -22,8 +22,42 @@
     而「API 成本」這一半——若真要輪詢時的間隔與成本——因為結論是事件驅動而不再需要量
 - [ ] 1.2 確認 Google Workspace Admin SDK 建立使用者所需的最小權限範圍，以及是否非用 domain-wide delegation 不可
 - [ ] 1.3 確認 Cloudflare Tenant API 的取得條件；若不可得，評估「單一母帳號 + 每叢集 scoped token」能否支撐交接
-- [ ] 1.4 確認 Omni cluster 控制權可否轉移給客戶自有 Omni 實例；若不可，確定交接改發 Talos client cert 的做法
+- [x] 1.4 **不可轉移。交接走 Talos client cert，而那條路已經在生產中用著**（2026-08-16，讀 Omni 原始碼）
+  - **Management API 完全沒有 export / import / transfer / adopt 這類 RPC**——把
+    `client/api/omni/management/management.proto` 的 `rpc` 逐條看過（20 條），沒有任何一條能把
+    一座 cluster 交出去。這是「介面上不存在」，不是「我沒找到用法」
+  - 機器綁在哪一座 Omni，是**開機參數**決定的：`ConnectionParamsSpec` 帶 `api_endpoint`
+    （該 Omni 的外部 gRPC 端點）、`wireguard_endpoint` 與 `join_token`，以 `args`（kernel
+    arguments）形式送進機器。所以「改連客戶自己的 Omni」＝ 換 kernel args ＝ 換 schematic/ISO
+    後重新註冊，而它在對面會是一台**全新的機器**，不是被交接過去的同一台
+  - cluster 在 Omni 裡的身分（PKI、machine set 定義）沒有匯出路徑，所以「把 Omni cluster 的
+    控制權轉移給客戶」在今天的 API 下不成立
+  - **替代路徑現成**：Management API 有 `Talosconfig` 與 `Kubeconfig` 兩條 RPC，直接簽出 client
+    憑證。而這不是紙上方案——`CLAUDE.md` 已記著 jcom 就是用 Talos client cert kubeconfig、
+    不需要 `kubeconfig-sa`。交接要發的東西，我們自己每天在用
+  - **驗證邊界**：讀的是目前 checkout 的 Omni 原始碼與 proto。「介面上沒有」是強證據但不等於
+    Sidero 的產品承諾——若要「將來也不會有」這種等級的答案，得問 Sidero。以現況決策足夠：
+    今天沒有這條路，交接就得發憑證
+
+- [ ] 1.5 → 見下方改寫；等 `ferry133/jg-cluster-template#3` 定案
 - [ ] 1.5 決定 factory 對客戶叢集憑證的存活期策略（長期持有 vs 每次向 Omni 重新取得），回寫 `design.md` Open Questions
+  - **提案（2026-08-16）：客戶叢集憑證一律用時再取，不留存；factory 只長期持有一把——它自己的
+    Omni SA key。** 理由來自 1.1 與 1.4 兩個結果，缺一個都推不出來：
+    - 1.4 查出 Management API 有 `Talosconfig` / `Kubeconfig` / `CreateServiceAccount`，
+      每座客戶叢集的憑證都能隨時現簽，所以「存起來」買不到任何東西
+    - 1.1 查出 factory 是個握著 watch 的長駐 Go/gRPC 程序，用時取憑證對它是自然動作；
+      如果它是個 shell 腳本，source 一份長期憑證才會是比較省事的寫法。**執行形態決定了
+      哪一種憑證策略比較便宜**，而執行形態到 1.1 才定下來
+  - **但這個提案降不到零，而剩下的那一把正是最敏感的**：Omni SA key 是 Admin 級。所以
+    「Secret 被讀走會失去什麼」不因為這個提案而消失，只是從「一堆客戶叢集憑證」收斂成
+    「一把可以簽出全部客戶叢集憑證的鑰匙」——**收斂了體積，沒有收斂後果**
+  - **因此 1.5 依賴 `ferry133/jg-cluster-template#3`，不能先決**：#3 量出 `claudecode/claude-code`
+    的 SA 綁的是 cluster-wide `cluster-admin`（已自行核對 `jg-base/.../claude-code/app/rbac.yaml`
+    的 ClusterRoleBinding `claudecode-claude-code`），RBAC 純加法無 deny，所以同叢集的 `cc`
+    讀得到任何 namespace 的 Secret，包含 factory 的。若 #3 的結論是「憑證不落 Secret」，
+    本提案幾乎就是答案；若結論是別的方向，那把 SA key 放在哪裡就得重新談
+  - **不要在 #3 定案前改寫 D1 / `design.md:145`**：把它改成任一選項的形狀，等於用文字替
+    ferry133 做了選擇
 
 ## 2. Factory 執行環境（jg-base + jcom）
 
