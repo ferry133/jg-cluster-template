@@ -30,6 +30,17 @@
   - 該 workflow 觸發條件是 PR to main，而 jg-base 的工作都是直接推 main，`gh run list` 顯示**它從未執行過**。所以今天不會有可觀測的破壞——但會留下一個「下次有人開 PR 才炸」的地雷，這比壞掉更糟
   - 順序：先移除 fixture 的四行（jg-base），再移除 schema 宣告（本 repo）。反過來會讓 fixture 在中間狀態失效
   - jg-base 那半已開 issue；schema 那半交由本 repo 另一個 session 執行——它正在同一個檔案裡工作（新增 `claudecode_auth0`），由我插手會撞在一起
+  - **2026-08-16 接手方查證，三點修正**：
+    1. 阻擋的只有 `public.yaml:19-22`。`private.yaml:19-22` 的四行**已經是註解**，不參與驗證，
+       所以 `ferry133/jg-base#2`（仍 OPEN）只需要動一個檔案
+    2. **本 repo 另有一個消費端未被列入**：`cluster.sample.yaml:235` 與 `:243-245` 以註解範例
+       提供這四個欄位。宣告刪掉而範例留著，下一個把它取消註解的人會拿到 `cue vet` 拒絕——
+       **而那個欄位正是範例本身建議的**。這比過時的範例更糟，因為它讀起來像許可。
+       兩者必須同一個 commit
+    3. 查過 `~/coding/*/cluster.yaml` 全部：**沒有任何活的 user repo 設定這四個欄位**（未註解）。
+       這才是「genie1 是最後消費端」可以據以動手的證明——否則刪宣告會讓那些 repo 的
+       `task configure` 當場失敗，與 fixture 同一種失效
+  - 執行時一併翻 `docs/template-lineage.md:53` 的 ⬜ pending 列
 - [ ] 2b.2 採納 jcom 的 `validate-talos-config` 任務
 - [x] 2b.3 已採納 jcom 的 `cloudflare-tunnel.json` 前置檢查（由 `revive-talos-path` 5c.3 實作；2026-08-11 實測第二次踩到才修）
 - [ ] 2b.4 單節點的 Cilium 設定（native routing + MTU 1500）與 Spegel 同屬「單節點安全性」，一併納入 3.x
