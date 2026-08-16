@@ -152,7 +152,9 @@
 - [ ] 5.2 明確禁止任何自動化消費者帳號註冊流程（程式與 runbook 皆須寫明）
 - [ ] 5.3 實作登入身分設定：常駐 agent 白名單放客戶自己的信箱，服務身分不得為可登入身分
 - [ ] 5.4 實作每叢集憑證清單的產生與更新（新增/輪替/移除時同步更新）
-- [ ] 5.5 實作 `age.key` escrow，並讓 escrow 未確認時 provisioning 不得標記完成
+- [~] 5.5 ~~實作~~ **descope 為員工手動動作**（2026-08-17，`ferry133/jg-cluster-template#6` 的
+      追加留言）：自動化「產生、escrow、以確認為閘門」不在出貨關鍵路徑上，改由員工每次交付執行，
+      步驟落在 §7.0。**閘門本身仍須存在**，只是形式從程式碼變成有記錄結果的 runbook 步驟
   - **「已確認」是兩個不同的性質，5.5 只證得了其中一個**（2026-08-16，fleet-ops 提出依賴，
     查證後結論與其敘述不同）：
     1. **金鑰同一性**——escrow 副本是一把有效的 age key，其公鑰與 `.sops.yaml` 的 `age:` 逐字
@@ -198,7 +200,27 @@
 
 ## 7. Runbook / Skill
 
+> **2026-08-17 起，§7 是這個 change 的重心而不是收尾**（`ferry133/jg-cluster-template#6`）。
+> ferry133 決定 DNS 設定、Cloudflare 設定與 `age.key` escrow 三者皆為**交付時由員工手動執行的
+> 動作**，不必為了出貨而自動化。這是排序不是放棄，日後仍可自動化。
+>
+> **descope 是把工作搬走，不是把工作消掉**：§4 與 5.5 少掉的每一步，都變成某個人在客戶現場、
+> 有時間壓力之下要正確執行的 runbook 步驟。§7 因此**照著 §4 卸下的量長大**。把這句寫在這裡，
+> 是為了讓 descope 不被讀成一次「之後再說」的淨減少。
+>
+> 「零 IT」一直都是**零客戶 IT**，從來不是零工作量。客戶側維持三個物理動作加一個到貨前申請的
+> Google 帳號；其餘全部由員工側吸收。
+
+- [ ] 7.0 **手動 escrow 的必要步驟與記錄**（自 5.5 descope 而來）。escrow 改由人手執行之後，
+      `age-keygen -y` 的同一性檢查就是**唯一**把「檔案被複製了」和「這份副本就是那把金鑰」
+      分開的東西——而 `docs/operations/age-key-escrow.md:36-50` 明說被截斷的副本讀起來與好的
+      一模一樣。**沒有驗證的手動步驟，比 5.5 原本要建的閘門更弱**，所以它必須是 runbook 裡
+      一個有記錄結果的必做步驟，而不是一句提醒
+  - 記錄的內容要是「比對過、公鑰逐字相同」，不是「已 escrow」——後者正是 `jgt-appliance` 現在
+    宣告 `age_key_escrowed: true` 的依據，而那份宣告至今沒有任何人查證過
 - [ ] 7.1 撰寫 `.claude/skills/provision-customer-cluster/SKILL.md`，每步含前置條件、指令、驗證斷言、失敗分支
+  - descope 之後這份 runbook 必須涵蓋：DNS 設定（三種做法見 `docs/operations/router-dns.md`）、
+    以客戶 Google 帳號註冊 Cloudflare 與 Auth0（D11）、以及 7.0 的 escrow 與其驗證
 - [ ] 7.2 由人工照 runbook 逐步執行一次完整 provisioning，修正指令與斷言的錯誤
 - [ ] 7.3 交由 factory agent 自動執行同一份 runbook，比對結果一致
 - [ ] 7.4 在 `CLAUDE.md` 新增 factory agent 與交接流程章節，並移除已被 factory 取代的手動 port-forward 說明

@@ -17,6 +17,11 @@
 - **文件依讀者拆分**。`README.md` 收斂為簡短入口；新增 `README-zero-IT.md` 給零 IT 客戶；進階使用者與手動路徑保留獨立文件；operator 的可執行 runbook 由 ③ 的 skill 承擔，本文件只連結不重複。
 - **修正 `README.md` 的既有錯誤**：上游 repo 名稱、不存在的 `just bootstrap talos`、stage 數量不符、與 `CLAUDE.md` 衝突的 kubeconfig 覆蓋指示。
 - **零 IT SOP 以「三個物理動作」為全部內容**：開箱、插網路線、插電開機。其餘一律不出現在客戶文件裡。
+- **「零 IT」是零*客戶* IT，從來不是零工作量**（2026-08-17 明文化，`ferry133/jg-cluster-template#6`）。
+  DNS 設定、Cloudflare 與 Auth0 註冊、`age.key` escrow 都改由員工在交付時手動執行——客戶側
+  維持三個物理動作，加上簽約時申請一個代表叢集的 Google 帳號（D11／#5），**那個帳號在到貨前
+  就辦好了，不是門口的第四個動作**。員工側吸收其餘全部成本。
+  寫成明文是因為這條界線一直是隱含的：日後有人為了「減少步驟」而最佳化時，會刪錯邊。
 - **文件必須在零連線狀態下可用**：客戶收到箱子時網路還沒通，SOP 必須是紙本隨箱出貨，QR code 只是輔助入口而非唯一入口。
 - **新增 onboarding 溝通管道（LINE bot）**，跑在 **factory 側（jcom）而非客戶叢集**——客戶叢集在 onboarding 當下還不存在。重用 `default/linebot` 既有的 webhook gateway 形態與 LINE 憑證欄位，不新建通知基礎設施。
 - **LINE bot 承擔四件事**：三題 intake、部署進度推播、請客戶拍照回傳（燈號/螢幕）、出錯時的對話式排錯與升級。
