@@ -267,6 +267,7 @@ kubectl logs -n monitoring job/daily-check-preflight | tail -30
 | 設定變更 | 改 `cluster.yaml` → `task configure` → commit → push | push 後**必須確認叢集已套用**，見 §7.3 |
 | 模板漂移 | `./scripts/check-template-drift.py <cluster-repo>` | 建議每月。漂移是靜默的 |
 | 強制同步 | `task reconcile` | — |
+| 異地備份還原 | [`docs/operations/backup-restore.md`](../operations/backup-restore.md) | 取回與密文驗證已實跑；**還原半邊尚未執行**，該頁列出未證實的項目 |
 
 ### 7.2 依維度分歧
 
@@ -307,6 +308,142 @@ kubectl get secret cluster-secrets -n flux-system \
 
 跳過第 2 步的後果見 D38。
 
+### 7.5 profile 遷移（`appliance` → `prosumer` / `full`）
+
+**只支援放寬方向。** appliance → prosumer / full 沒有任何 CUE 規則擋。反向不支援：
+已經有 NAS、多節點或已宣告位址的叢集會在 `cue vet` 被拒
+（`cluster.schema.cue:194-200`），而 appliance 的前提是「客戶端零欄位」——那是交付形態，
+不是可以退回去的狀態。
+
+**先分清楚兩件事。** 改 `deployment_profile` 這個欄位很便宜；改它當初替你鎖住的三個衍生值
+（`storage_backend`、`single_node`、Talos schematic）才是代價所在。兩者可以分開做，
+**而且應該分開做**——一次只動一個，各自驗證。建議順序：
+
+1. §7.5.1 換 profile 欄位（不動任何資料與硬體）
+2. 加節點 / 換 schematic（唯一需要重開機的一段）
+3. §7.4 儲存遷移（資料只搬一次，搬到最終形態）
+
+順序顛倒的代價是把 §7.4 的 dump / restore 做兩次。
+
+#### 7.5.1 只換 profile 欄位
+
+**appliance 的 LAN 位址不在 `cluster.yaml` 裡**——它是 `lan-address-probe` 在執行期選的
+（`ks.yaml.j2:127-132`）。改 profile 會把 probe suspend 掉，位址改由 `cluster.yaml` 宣告。
+**第 1 步沒做就跳到第 3 步，路由器指向的位址會指到空氣。**
+
+**1. 先把叢集現在實際持有的兩個位址讀出來**
+
+```sh
+kubectl get gateway -A          # ADDRESS 欄就是實際持有的位址
+kubectl get ciliumloadbalancerippool -o yaml | grep -E 'name:|start:|stop:|cidr:'
+```
+
+appliance 用掉的是**兩個**位址，不是一個：`envoy-internal`（與 k8s-gateway、mqtt 共用）
+和 `envoy-external`——後者聽同樣的 80/443，Cilium 不讓它共用。兩個都要記下來。
+
+**2. 把讀到的值原字寫回 `cluster.yaml`**
+
+prosumer / full 要求四個位址**兩兩相異**（`cluster.schema.cue:186-189`），所以不能把
+`cluster_gateway_addr` 和 `cluster_dns_gateway_addr` 都填成現在那個共用位址。用
+`lan_shared_addr` 表達共用：
+
+| 欄位 | 填什麼 |
+|------|--------|
+| `lan_shared_addr` | 第 1 步讀到的 **envoy-internal 位址**（路由器 DNS 指的就是它）|
+| `cloudflare_gateway_addr` | 第 1 步讀到的 **envoy-external 位址** |
+| `cluster_gateway_addr` / `cluster_dns_gateway_addr` | 兩個相異的未使用位址。渲染時被 `lan_shared_addr` 取代（`plugin.py:280-288`），不會真的被占用 |
+| `cluster_api_addr` | 另一個未使用位址。Omni 路徑上 API 走 Omni proxy，talconfig 不被使用，這個值是宣告性的；但仍不可與上面重複 |
+
+渲染出的 pool 會剛好是那兩個實際位址——`cluster_api_addr` 被刻意排除在 pool 外
+（`plugin.py:329-331`）。
+
+**3. `single_node: true` 必須明寫**
+
+appliance 是靠 profile 推導的（`cluster.schema.cue:81-83`）。改成 full 之後 Omni 叢集永遠
+渲染 `nodes: []`，推導不出來，`plugin.py:396` 會判成 **false**。後果：spegel 恢復、每個
+gateway 的 envoy 從 1 個 replica 變回 2 個——jgt-appliance 實測四個 envoy pod 各要
+1056Mi，7GiB 節點上第二份永遠 Pending（`ks.yaml.j2:153-158`）。
+
+> bulk 仍在 `local-path` 時 `cue vet` 會擋（`cluster.schema.cue:124-125`）。但若同時搬到
+> NFS 且沒有 block-tier extra，`_uses_node_local` 變 false，**就沒有任何東西會提醒你**。
+
+**4. `task configure --yes` → 讀 `git diff` → push**
+
+diff 應該只有：profile、位址欄位、`ks.yaml` 裡 `lan-address-probe` 的 suspend 段落、
+LB pool 的 blocks。出現別的就停下來。
+
+**5. 刪掉 probe 留下的舊 pool**
+
+**suspend 不會 prune，而這個 pool 根本不是 Flux 建的**——它是 probe 在執行期產生的
+（lan-address-allocation spec），所以 suspend 與 prune 都不會移除它。它與新宣告的 pool
+重疊，而 Cilium 以 `PoolConflict=cidr_overlap` 拒絕重疊的 pool（`plugin.py:350-354`）。
+**結果是舊 pool 還在服務、叢集看起來完全正常，而你宣告的位址從來沒有生效。**
+
+```sh
+kubectl get ciliumloadbalancerippool          # 確認哪一個是 probe 產生的
+kubectl delete ciliumloadbalancerippool <probe 產生的那個>
+```
+
+刪除瞬間位址會被釋放再由新 pool 重新配發。值相同（annotation 指名了同樣的位址），但**會有
+數秒的中斷**，且 `im` 的 tunnel 也走這條路——agent 不該自己執行這一步，見 §7.5.3。
+
+**6. 驗證**
+
+```sh
+# probe 已停
+kubectl get kustomization -n flux-system lan-address-probe \
+  -o jsonpath='{.spec.suspend}{"\n"}'                      # true
+# 只剩一個 pool，且沒有任何 status=True 的 conflict 條件
+kubectl get ciliumloadbalancerippool -o json | jq -r \
+  '.items[] | .metadata.name as $n | (.status.conditions // [])[] | [$n,.type,.status,.reason] | @tsv'
+# 位址與第 1 步逐字相同
+kubectl get gateway -A
+# 單節點的兩個保護仍在
+kubectl get deploy -n envoy-gateway-system                  # 每個 gateway 1 個 replica
+kubectl get kustomization -n flux-system spegel \
+  -o jsonpath='{.spec.suspend}{"\n"}'                      # true
+```
+
+最後跑一次 §6.4 的 `dns-check`（**從叢集內部**）與 §6.5 的健檢。位址沒動 ≠ 路由器仍然
+解得出來。
+
+#### 7.5.2 衍生值的遷移
+
+| 要改的 | 怎麼做 | 代價 |
+|--------|--------|------|
+| `local-path` → `nfs` | §7.4 dump / restore | `storageClassName` immutable。**包含 `claude-workspace` 這顆 PVC** |
+| 加節點 | Omni assign 新機器 | 既有 local-path PV 帶 node affinity，會把所有 stateful 釘在原節點 → 必須明寫 `accept_node_pinning: true`（`cluster.schema.cue:124-136`）|
+| 開 Longhorn | 換 schematic → **逐台重開機** | 沒有任何 manifest 裝得起來。驗證見 §5.4 |
+
+**唯一無法事後用軟體補救的是 schematic。** 出貨前的 schematic 就帶上 `iscsi-tools` +
+`util-linux-tools`，日後 appliance 長成任何形態都不必再碰硬體——appliance 被強制
+`single_node: true` + `local-path`，`replicated_storage` 必為 false
+（`cluster.schema.cue:58-60`），那兩個 extension 只是躺著不動。
+
+#### 7.5.3 in-cluster agent（`im`）能執行到哪裡
+
+以「叢集自己的 `im` agent 執行擴充」為前提時：
+
+**前提**：appliance 預設 `claude_code_always_on: []`，`im` 的 replicas 是 **0**
+（`helmrelease.yaml.j2:41`）。要讓它成為執行者，出貨的 `cluster.yaml` 必須明寫
+`claude_code_always_on: ["im"]`。
+
+**它可以做**：讀叢集狀態、跑本文件所有驗證指令、改 `cluster.yaml`、`task configure`、
+push、`flux reconcile`。`age.key` 早就在叢集上（bootstrap 的 `sops-age` secret），
+cluster-admin 的 agent 本來就讀得到，所以這不新增暴露面——前提是 escrow 已經做了，
+而 appliance 本來就強制（`cluster.schema.cue:261-266`）。
+
+**它不能自己做**——這三件會把執行者本身殺掉：
+
+| 步驟 | 為什麼 |
+|------|--------|
+| 節點重開（換 schematic） | 單節點 appliance 上，重開機 = agent 連同叢集一起下線，沒有第二個節點接手 |
+| 刪 PVC（§7.4） | `claude-workspace` 自己就是 `default_storage_class` 上的 20Gi PVC（`helmrelease.yaml.j2:170-174`）。換 storage backend 時它也在遷移名單裡——agent 會刪掉自己的工作目錄 |
+| 刪 probe 的舊 pool（§7.5.1 第 5 步） | 位址釋放的那幾秒，tunnel 到 `im` 的路徑也在上面 |
+
+三項都落在 §2 的第 1、5 條，本來就必須先問人。**扣掉這三項，§7.5.1 全部與 §7.5.2 的
+「加節點」都在 agent 能力範圍內。**
+
 ---
 
 ## 8. 產品化前還缺的東西
@@ -318,8 +455,10 @@ kubectl get secret cluster-secrets -n flux-system \
 | appliance 交付的 operator runbook | `factory-agent`（0/61） | 目前交付靠人記憶跨四個外部系統 |
 | 客戶 onboarding 溝通管道 | `zero-it-onboarding`（16/50） | 客戶出問題時沒有標準管道 |
 | 消費級路由器下的健檢做法 | `deployment-profiles` 5.7 / D45 | **每一台這樣出貨的機器都會帶著一個永遠紅的健檢** |
-| 還原演練與還原程序文件 | `deployment-profiles` 8.3 / 8.4 | 備份的 restore 半邊**從未被執行過** |
+| 還原演練的**還原半邊** | `deployment-profiles` 8.3 | 程序已寫（[`backup-restore.md`](../operations/backup-restore.md)），取回與密文驗證已實跑；解密與逐表比對**仍未執行**——缺 escrow 副本 |
+| 備份保留期 | jg-base，修正未 push | `BACKUP_RETAIN_DAYS` 從未生效，每次執行都刪掉當日以外的全部封存 |
 | 交接演練 | `factory-agent` §6 | 「客戶隨時能拿回鑰匙」目前只是口頭承諾 |
+| profile 遷移實跑 | §7.5 | **§7.5 是從 schema 與 `plugin.py` 推導出來的，沒有在任何叢集跑過。**先在 `jgt-appliance` 演練一次再對客戶使用 |
 
 ---
 
