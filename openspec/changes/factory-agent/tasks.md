@@ -1,6 +1,25 @@
 ## 1. Spikes（先做，結果會改變後面的設計）
 
-- [ ] 1.1 確認 Omni 是否提供「新機器註冊」事件訂閱；若只能輪詢，測出可接受的間隔與 API 成本
+- [x] 1.1 **有事件訂閱，不需要輪詢**（2026-08-16，讀 Omni 原始碼 `~/coding/omni`）
+  - Omni 的資源存取就是 COSI state API，而它原生支援 watch：`safe.StateWatchKind` 訂閱某個
+    resource type 的所有事件，`safe.StateWatch` 只看單一 ID。watch 活到 context 被取消為止，
+    生命週期由消費端掌握（`client/pkg/client/example_test.go:130-141`）
+  - 要訂閱的是 `MachineStatuses.omni.sidero.dev`（`omni.NewMachineStatus("")` 的 metadata 餵給
+    `StateWatchKind`）。機器經 SideroLink 回連後就出現在這裡；同族的還有
+    `Machines.omni.sidero.dev`
+  - **順帶解掉一個本來要另外想辦法的問題**：`MachineStatusSpec` 帶著硬體清單——CPU、記憶體、
+    以及每顆 block device 的 `linux_name` / `serial` / `wwid` / size（`client/api/omni/specs/omni.proto`）。
+    那正是手動 Talos 路徑 `nodes.yaml` 需要的每節點磁碟選擇器。**偵測到新機器的同一個事件，
+    就帶著建它所需的事實**，不必再開第二條查詢路徑
+  - 兩個設計約束，會影響 §2 之後的形狀：
+    1. **factory 不能靠 shell 出去呼叫 `omnictl`**——該 CLI 沒有暴露任何 watch 旗標
+       （整個 `client/cmd/omnictl/` grep 不到 watch）。要用事件就得走 Go SDK 或直接打 gRPC
+    2. watch 會送出 `state.Errored` 事件（範例在 `:151` 明確處理它），所以消費端**必須自己實作
+       重連**。一個沒有重連的 watch 會安靜地停止收事件——與「沒有新機器」外觀完全相同，
+       又是一個「看起來正常的失效」
+  - **驗證邊界照實寫**：以上全部讀自原始碼與 SDK 範例，**沒有對活的 Omni 實跑過**。要實跑需
+    先開 `CLAUDE.md` 記的 port-forward（`omni.janncot.com` 的 gRPC 端點走 localhost:18080），
+    而「API 成本」這一半——若真要輪詢時的間隔與成本——因為結論是事件驅動而不再需要量
 - [ ] 1.2 確認 Google Workspace Admin SDK 建立使用者所需的最小權限範圍，以及是否非用 domain-wide delegation 不可
 - [ ] 1.3 確認 Cloudflare Tenant API 的取得條件；若不可得，評估「單一母帳號 + 每叢集 scoped token」能否支撐交接
 - [ ] 1.4 確認 Omni cluster 控制權可否轉移給客戶自有 Omni 實例；若不可，確定交接改發 Talos client cert 的做法
