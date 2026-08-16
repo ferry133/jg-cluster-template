@@ -25,11 +25,23 @@
 
 ## 2b. 盤點時新發現
 
-- [ ] 2b.1 模板 `cluster.schema.cue` 宣告 `cilium_bgp_router_addr` / `cilium_bgp_router_asn` / `cilium_bgp_node_asn` / `cilium_loadbalancer_mode` 四個欄位，**模板、cluster-secrets、jg-base manifests 皆零功能消費端**——原本唯一的消費端 genie1 已確認為歸檔測試叢集（2026-08-15），所以「接上或移除」不再是取捨：移除
-  - **2026-08-16 修正：這不是單一 repo 的清理。** 四個欄位另外出現在 `jg-base/.github/tests/public.yaml` 與 `private.yaml`，而那兩份 fixture 被 `.github/workflows/e2e.yaml` 複製成 `cluster.yaml` 使用。`#Config` 是 CUE definition（預設封閉），所以**只刪 schema 會讓 fixture 帶著未宣告欄位而驗證失敗**
-  - 該 workflow 觸發條件是 PR to main，而 jg-base 的工作都是直接推 main，`gh run list` 顯示**它從未執行過**。所以今天不會有可觀測的破壞——但會留下一個「下次有人開 PR 才炸」的地雷，這比壞掉更糟
-  - 順序：先移除 fixture 的四行（jg-base），再移除 schema 宣告（本 repo）。反過來會讓 fixture 在中間狀態失效
-  - jg-base 那半已開 issue；schema 那半交由本 repo 另一個 session 執行——它正在同一個檔案裡工作（新增 `claudecode_auth0`），由我插手會撞在一起
+- [x] 2b.1 **已移除（2026-08-16）**。模板 `cluster.schema.cue` 宣告 `cilium_bgp_router_addr` / `cilium_bgp_router_asn` / `cilium_bgp_node_asn` / `cilium_loadbalancer_mode` 四個欄位，**模板、cluster-secrets、jg-base manifests 皆零功能消費端**——原本唯一的消費端 genie1 已確認為歸檔測試叢集（2026-08-15），所以「接上或移除」不再是取捨：移除
+  - ~~**2026-08-16：這不是單一 repo 的清理**——fixture 會因為封閉的 `#Config` 而失效，所以要
+    先刪 fixture 再刪 schema，否則會留下「下次有人開 PR 才炸」的地雷~~
+  - **上面那段是錯的，三個前提逐一查證後全部不成立**（2026-08-16，接手方實測）：
+    1. `.github/workflows/e2e.yaml:17` 帶 `if: github.repository == 'onedr0p/cluster-template'`。
+       在 ferry133/jg-base 上恆為 false，job 是 **skipped**——不是沒被觸發過，是**觸發了也不會跑**。
+       原本從「`gh run list` 是空的」推出「因為都直推 main 所以沒觸發」，是同一觀察的另一個解釋，
+       而真正的原因是這道 guard。地雷不存在，因為引信接在別的 repo 上
+    2. 就算沒有那道 guard 也跑不起來：workflow 的步驟是 `task init` / `task configure --yes`
+       （甚至還有 `task template:tidy --yes`——本模板已明令移除的東西），而 **jg-base 既無
+       `Taskfile.yaml` 也無 `.taskfiles/`**。那是 onedr0p fork 的遺留，jg-base 現在是 manifest repo
+    3. **fixture 在任何編輯之前就已經無效。** 對今天的 schema 跑 `cue vet`：`deployment_profile`
+       缺漏（unresolved disjunction）、`single_node` 被當 optional 欄位引用。刪掉那四個 cilium
+       欄位不會讓它變有效，只是換一種過期。**先跑過未修改的原檔才確認這兩個錯誤不是本次改動的產物**
+  - 所以沒有跨 repo 順序可言。jg-base 刪那四行純粹是整潔，與本 repo 的安全性無關
+  - 教訓與本 change 的其他幾筆同型：**一個合理的推論被以量測的口氣寫下**。這一條在被執行前
+    查證了三次才發現，而它已經讓 2b.1 空等了大半天
   - **2026-08-16 接手方查證，三點修正**：
     1. 阻擋的只有 `public.yaml:19-22`。`private.yaml:19-22` 的四行**已經是註解**，不參與驗證，
        所以 `ferry133/jg-base#2`（仍 OPEN）只需要動一個檔案
@@ -43,7 +55,14 @@
        - **這個掃描的範圍要照實讀**：它證明的是「**我們操作的**任何叢集都沒有設定這四個欄位」，
          不是「不存在設定它們的 repo」。`jg-cluster-template` 是 GitHub template repo，後裔可以
          在任何地方、包括別人的機器上。這個缺口無法從這裡關閉，所以不要讓掃描讀起來像窮舉
-  - 執行時一併翻 `docs/template-lineage.md:53` 的 ⬜ pending 列
+  - **實際移除的內容**：`cluster.schema.cue` 四行宣告 + `cluster.sample.yaml` 四行註解範例
+    （章節標題連帶從「Cilium BGP」改為「Cilium native routing」——BGP 走了之後那節只剩它）
+    + `docs/template-lineage.md` 的「Dead schema fields」節改寫為已移除
+  - 驗證方式是一對 `cue vet`，不是「看起來沒壞」：**不含**這四個欄位的最小 config 通過；
+    **仍設定**其中一個的 config 得到 `field not allowed`。前者證明 schema 沒被改壞，
+    後者證明移除確實生效——只跑前者的話，欄位還在也會通過
+  - 更正一則自己的筆記：先前寫「一併翻 `docs/template-lineage.md:53`」是找錯列了。第 53 列講的是
+    jcom `plugin.py` 的 `cilium_bgp_enabled`，與模板的 schema 欄位是兩件事，仍為 pending
 - [ ] 2b.2 採納 jcom 的 `validate-talos-config` 任務
 - [x] 2b.3 已採納 jcom 的 `cloudflare-tunnel.json` 前置檢查（由 `revive-talos-path` 5c.3 實作；2026-08-11 實測第二次踩到才修）
 - [ ] 2b.4 單節點的 Cilium 設定（native routing + MTU 1500）與 Spegel 同屬「單節點安全性」，一併納入 3.x

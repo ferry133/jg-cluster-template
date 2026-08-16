@@ -153,9 +153,9 @@ matrix. Recorded so that "the template's descendants" is not assumed to mean two
 repos, and because its retirement is what makes the fields below dead rather than
 single-consumer.
 
-## Dead schema fields in the template
+## Dead schema fields in the template — removed 2026-08-16
 
-`cluster.schema.cue` declares four fields with **zero consumers** anywhere —
+`cluster.schema.cue` declared four fields with **zero consumers** anywhere —
 not in templates, not in `cluster-secrets`, not in `jg-base`:
 
 ```
@@ -171,3 +171,17 @@ fixed: it looks like configuration and is not.
 
 With no consumer left this is no longer a choice between wiring them up and
 removing them. Remove them.
+
+**Removed on 2026-08-16**, together with their commented examples in
+`cluster.sample.yaml` — that file is the only catalogue of what a `cluster.yaml`
+may contain, so leaving the examples would keep offering fields the schema now
+rejects. `#Config` is closed, so a `cluster.yaml` still setting one fails
+validation with `field not allowed`; no repo we operate does.
+
+`jg-base/.github/tests/public.yaml` also sets all four, which looked at first
+like a cross-repo ordering constraint. It is not: that fixture is already
+invalid against this schema before any edit — it fails on `deployment_profile`
+being absent — and the workflow reading it is guarded to
+`github.repository == 'onedr0p/cluster-template'`, so it has never run here and
+cannot. Removing the fixture's four lines is tidiness, unrelated to whether this
+removal is safe.

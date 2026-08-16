@@ -218,10 +218,6 @@ import (
 	// stops needing more than 1370 bytes.
 	cilium_native_routing?: bool
 
-	cilium_bgp_router_addr?: net.IPv4 & !=""
-	cilium_bgp_router_asn?: string & !=""
-	cilium_bgp_node_asn?: string & !=""
-	cilium_loadbalancer_mode?: *"dsr" | "snat"
 	// NAS — only meaningful when bulk storage is NFS-backed. nas_coding_path
 	// stays optional even then: without it the claude-code workspace falls back
 	// to the profile's default storage class.
