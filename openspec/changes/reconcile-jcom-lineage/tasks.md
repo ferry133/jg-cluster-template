@@ -40,6 +40,9 @@
     3. 查過 `~/coding/*/cluster.yaml` 全部：**沒有任何活的 user repo 設定這四個欄位**（未註解）。
        這才是「genie1 是最後消費端」可以據以動手的證明——否則刪宣告會讓那些 repo 的
        `task configure` 當場失敗，與 fixture 同一種失效
+       - **這個掃描的範圍要照實讀**：它證明的是「**我們操作的**任何叢集都沒有設定這四個欄位」，
+         不是「不存在設定它們的 repo」。`jg-cluster-template` 是 GitHub template repo，後裔可以
+         在任何地方、包括別人的機器上。這個缺口無法從這裡關閉，所以不要讓掃描讀起來像窮舉
   - 執行時一併翻 `docs/template-lineage.md:53` 的 ⬜ pending 列
 - [ ] 2b.2 採納 jcom 的 `validate-talos-config` 任務
 - [x] 2b.3 已採納 jcom 的 `cloudflare-tunnel.json` 前置檢查（由 `revive-talos-path` 5c.3 實作；2026-08-11 實測第二次踩到才修）
