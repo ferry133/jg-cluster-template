@@ -208,6 +208,11 @@
   - **剩下**：用 escrow 副本（非 repo 內的工作副本）在另一座叢集還原並逐表比對。用副本是重點——`age-key-escrow.md:39` 要求對副本做 restore-test，而 jgt-appliance 的 `age_key_escrowed: true` 至今未被任何人查證過
   - **2026-08-16 起刻意延後**：escrow 機制本身尚未實作，所以沒有副本可測。這不是漏做——但也表示 **`age_key_escrowed: true` 目前在 jgt-appliance 上是一句無憑據的宣告**，而 CUE 之所以不給它預設值，正是為了讓這種宣告必須有人負責。在 escrow 實作完成前，appliance 的備份在「單碟故障」這個它唯一要對抗的情境下是否可讀，仍然未知
 - [ ] 8.3b **輪替 jgt-appliance 的 R2 憑證**：D46 期間它們曾以字面值存在於明文 ConfigMap 中。`ce1806e` 止住了洩漏來源，但沒有使已外洩的憑證失效
+  - **2026-08-16 起與 escrow 一併刻意延後**。同組延後的還有「jg-jiahd 設定 `backup_r2_*`」——它至今沒有任何異地備份。三者都只有 operator 能做（要登入 Cloudflare、要取出 escrow 副本），不是漏做
+- [ ] 8.3c **保留策略從未生效，且會刪掉當日以外的全部**（2026-08-16 實測）：container 是 alpine，`apk add` 未裝 coreutils，busybox `date` 不接受 `-d "30 days ago"`，於是 `|| date -u '+%Y%m%d'` 讓 cutoff 變成今天。`BACKUP_RETAIN_DAYS` 在任何叢集上都沒有作用過
+  - 先前被兩層問題蓋住：變數被 postBuild 吃掉（D46），而且根本沒有東西上傳過。**上傳一修好，它立刻刪掉了這套系統有史以來僅有的兩份備份**
+  - 真正的缺陷是 fallback 的方向：`|| date +%Y%m%d` 把「算不出截止日」變成「刪掉今天以前的全部」。**保留路徑的安全 fallback 是留，不是刪**——算不出來就該中止 prune 並大聲抱怨
+  - 修復在 `ferry133/jg-base#1` 的審查意見內（`monitoring/backup` 屬 jg-base）
 - [ ] 8.4 撰寫還原程序文件，內容須與演練實際步驟逐字一致
 - [ ] 8.5 回寫所有 spike 結論到 `design.md` 與相關 spec，確認無「待驗證」項目遺留
 - [ ] 8.6 每個 profile 的驗收都必須**在該 profile 上實跑到工作負載就緒**，不得只驗 `task configure` 的輸出。2c.9–2c.11 那四道渲染期缺陷全部無聲通過了 `task configure`（見 `design.md` D14）
