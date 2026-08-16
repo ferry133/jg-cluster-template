@@ -144,13 +144,32 @@
 - [x] 6.4 DB 資料卷改用 `${DB_STORAGE_CLASS}`（`claudecode/postgres`、`default/mariadb`、`default/postgres`）。`default/postgres` 原本**完全沒寫 class**，於是在 NFS 叢集上資料目錄靜默落在 `sc-nas`。substitution 預設值取 `sc-nas` 而非正確的 block tier：PVC 的 `storageClassName` 是 immutable，預設值只會在尚未遷移到 profile schema 的叢集上生效，而那些全是 DB 已在 NFS 上的 NFS 叢集——預設值的意思是「維持現狀」，真正的搬遷仍須 dump/restore。freepbx 已在 block tier，不動
 - [x] 6.5 claude-code 工作區改用 profile 預設 class（已於 2c.9/2c.10 完成）
 - [x] 6.6 已驗證：設了 `nas_coding_path` 時 `coding` 掛載渲染結果與先前逐字相同（`type: nfs` + `${NAS_SERVER}`）；未設時整段不存在，兩個 PVC 落在 `local-path`
-- [~] 6.7 **jcom 已完成搬遷（2026-08-13）**；jg-jiahd 仍依 2026-08-11 的決定延後
+- [x] 6.7 **jcom（2026-08-13）與 jg-jiahd（2026-08-16）皆已完成搬遷**
   - jcom 是四個叢集裡唯一無取捨的：單節點，`local-path` 沒有釘死任何原本不會被釘死的東西。前置的模板世代同步由 ⑤ 解決
   - 三張表（`episodes` / `knowledge` / `working_memory`）**全部 0 列**——MCP memory server 從未寫入，所以搬的是 schema。仍先 `pg_dump`（6261 bytes、3 個 CREATE TABLE）
   - 還原 0 錯誤，逐表列數相符，`postgres-data` 現為 `local-path/Bound`，pod `1/1`
   - **順序踩了一次坑**：第一次刪 PVC 後 Flux 立刻重建，但用的是**尚未更新的** cluster-secrets，於是又建成 `sc-nas`——而 `storageClassName` immutable，改不了。正解是先確認叢集上的 `DB_STORAGE_CLASS` 已是新值，再刪 PVC。第二次照此順序一次成功
   - jg-jiahd 維持 `db_storage_class: "sc-nas"`：3 節點，搬到 local-path 是拿「可跨節點重新排程」換「正確的 fsync 語意」，而 2c.8 的複製式儲存兩者都給
   - **2026-08-14 更新：等的那個東西已經到了**（6.10 / 6.11），所以延後的理由換了一個——不再是「沒有正確的 tier」，而是「搬遷本身還沒排程」。仍未搬，但這兩件事的風險不同：前者無事可做，後者是**已知該做而未做**，而 DB 待在 NFS 上的失效模式是靜默損毀（6.9 的還原演練就是為此而做）
+  - **2026-08-16 jg-jiahd 搬遷完成**（`ferry133/jg-jiahd#1` 結案留言，commit `88ef3cb`；由另一 session 執行並獨立量測）：
+    - `db/postgres-data` → longhorn／Bound，volume attached、robustness healthy、2 replicas 落在
+      `talos-iz4-5l6` 與 `talos-dk0-t6p`
+    - 10 張表**逐表**與 dump 相符（314 列），非彙總比對；owner 全為 `linebot`，5 個 sequence 的
+      `setval` 皆保留；抽驗內容繁中未壞，往返無編碼損傷
+    - 全程 **0 個 Flux Kustomization 進入 not-ready**——suspend-before-push 有效，daily-check
+      沒有東西可以失敗
+    - 舊 NFS 資料保留並實際看過：`/volume3/claudecode/archived-jg-jiahd-db-postgres-data`，
+      63.3 MB，`PG_VERSION=16`
+  - **搬完不等於驗完，以下三項尚未成立**：linebot 應用未做端對端操作；Longhorn failover 未以
+    drain 節點實測；**從新 volume 產出的第一份備份是今天 18:00，還沒有人看過任何一次**。
+    第三項要特別記住——6.9 的還原演練之所以存在，正是因為 DB 的失效模式是靜默損毀，而
+    「換了儲存層」不會自己讓備份鏈重新被驗證過
+  - 程序上的三個發現已回寫 `docs/operations/db-storage-migration.md`（`a216382`）：還原必須
+    idempotent（`flux resume` 後應用自己的 migration job 會搶先建出空表，用
+    `pg_restore --clean --if-exists` 吸收；天真的還原只在「別的東西會建表」的叢集上失敗，
+    所以測試時會通過）、`PGDATA` 必須是子目錄（全新 ext4 volume 上的 `lost+found` 會讓 initdb
+    拒絕啟動，且必須在刪除舊 PVC **之前**確認，之後就沒得看了）、封存名稱是
+    `archived-<pathPattern>` 而非參數字面推得的 `archived-pvc-<uid>`
 - [x] 6.8 `_uses_node_local` 再修一次：`db_storage_class` 明寫為非 node-local 的 class 時，DB 就不在 node-local 上，pinning 閘門不該再問。predicate 改為 `storage_backend == "local-path"` **或**（`db_storage_class == "local-path"` **且** 有 block-tier extra）。這個錯誤是由 6.7 的決定當場暴露的——選了「不搬」才發現 schema 會要求承認一件不會發生的事。六種組合已驗證
 - [x] 6.9 **還原演練**（延後搬遷的直接後果：jg-jiahd 的 DB 繼續待在 NFS 上，失效模式是靜默損毀，而唯一的救援就是那份日備份——它的 restore 半邊從未被執行過）。已在 jg-jiahd 以唯讀掛載備份卷的拋棄式 postgres 實測 `linebot-20260810.sql.gz`：10 張表列數與生產**逐表相同**，restore 0 error。前置條件一併查出：**必須先建 `linebot` role**，否則 dump 裡的 `OWNER TO` 全數失敗（表仍會建，但擁有者變成 postgres）。演練 pod 已刪除
 
