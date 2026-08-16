@@ -8,9 +8,25 @@
 
 ## 2. Factory 執行環境（jg-base + jcom）
 
-- [ ] 2.1 在 `jg-base` 新增 `kubernetes/apps/base/factory/`：namespace、獨立 ServiceAccount、最小權限 RBAC
+- [ ] 2.1 在 `jg-base` 新增 `kubernetes/apps/extras/factory/factory/`：namespace、獨立 ServiceAccount、最小權限 RBAC
+  - **`extras/` 而非 `base/`**（2026-08-16 更正，`ferry133/jg-cluster-template#2`）。在 jg-base，
+    `base/` 不是位置而是**發佈範圍**：每座叢集的 Flux 都指著 jg-base、`interval: 1h`、中間沒有
+    逐叢集審核（`jcom/kubernetes/flux/cluster/ks.yaml:25-33` 已核）。原本的寫法會在一小時內把
+    factory 的 namespace / SA / HTTPRoute 一併送到 **jg-jiahd 與 jgt-appliance**——而 factory 正是
+    Omni Admin + GitHub PAT + Cloudflare 母帳號的集中點（D1、`design.md:145`），那三樣東西
+    最不該在客戶 appliance 上有落腳處
+  - 這不是新決定，是把 2.1 拉回本 change 自己的 design：D1 說 factory 跟著 Omni 待在 jcom，而
+    Omni 本來就是以 `omni/omni` 由 `jcom/cluster.yaml:137` 選入的 extra
+  - 路徑形狀取 `extras/factory/factory/`，`cluster.yaml` 寫 `factory/factory`——與 `omni/omni`
+    逐字同型（namespace 名與 app 名相同），也符合 `CLAUDE.md` 的 `extras/<ns>/<app>/` 慣例
 - [ ] 2.2 驗證 factory 的 SA **不是** `claudecode/claude-code/app/rbac.yaml` 那個共用 cluster-admin SA
 - [ ] 2.3 驗證同叢集的 `cc` instance 無法讀取 factory 的 secret（RBAC 拒絕）
+- [ ] 2.3a 驗證 factory 的資源**不存在於** jg-jiahd 與 jgt-appliance——推 jg-base 後在兩座叢集上
+      確認 `namespace/factory` 未被建立。依 fleet-ops `fleet-index.md` 的規則：jg-base 的變更，
+      驗收必須包含一座**不是**目標的叢集
+  - ⚠️ **這一項在授權閘之後才驗得了**：它驗的是「推送之後仍然不存在」，而推 jg-base 需要
+    ferry133 點頭。在「準備但不推」的範圍內它**無法被滿足**——不要因為前面幾項都綠了就把它
+    當成過了
 - [ ] 2.4 建立 factory 的 HelmRelease 與 HTTPRoute（`factory.janncot.com`），登入白名單只含 operator
 - [ ] 2.5 驗證客戶叢集的登入身分無法登入 factory
 - [ ] 2.6 設定經 ClusterIP 直連 Omni，驗證不需 port-forward 且 gRPC streaming 呼叫不出現 trailers 錯誤
