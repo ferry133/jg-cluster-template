@@ -390,8 +390,11 @@
     jg-jiahd 同樣 0 個 tracked 檔案），寫在那裡等於只存在於一台機器上——正是這份 runbook
     自己在講的失效。`.claude/skills/provision-customer-cluster/SKILL.md` 保留為**指標**，
     不重複內容
-  - 遺留問題：**skill 要怎麼隨 repo 散佈**，目前沒有答案。若要讓 `.claude/skills/` 進版控，
-    那是 repo policy 的改動，留給 ferry133 決定；在那之前每台機器要自己放那個指標檔
+  - **這個路徑選擇已定案，不是待決事項**（ferry133，2026-08-17）：**skill 的散佈是一件獨立的
+    工作，與 repo 的散佈無關**，因此既不是 `.gitignore` 的政策決定，也不是 §7 的前置條件。
+    本項唯一的要求是產出要進得了 git，`docs/operations/` 已經滿足；skill 檔維持為指標即可。
+    該獨立工作記在 `fleet-ops/routing-log.md`（`3fa75e3`），目前無擁有者也無人需要它
+  - 寫在這裡是為了讓下一個發現 `.claude/` 被 gitignore 的人**不要把它當成新問題重開一次**
 - [ ] 7.1a 為 runbook 的斷言補上機器可執行的版本（可行的那些）
   - Step 2 的 Cloudflare zone／delegation 比對、Step 3 的 GitRepository revision、Step 4 的
     `nslookup` 加正對照，這三個都能寫成腳本；Step 0 的 `age-keygen -y` 比對也能。
