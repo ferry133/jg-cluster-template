@@ -262,6 +262,18 @@ The middle command is `--all` on purpose. "Genuinely never committed" and
 "nobody ever checked" produce the same empty output from a lazier command, and
 only one of them is safe.
 
+**Consequence nothing in the commit tells you: these commits are not
+self-contained.** Because `cluster.yaml` never enters git, the `extras:` line
+that selects an app, and every value you typed, exist only on the machine that
+rendered. A fresh clone re-rendering **drops them** unless that machine's
+`cluster.yaml` carries the same content. The commit shows the rendered result
+and says nothing about the input that produced it.
+
+So the escrow copy of `cluster.yaml` (step 0) is not belt-and-braces — it is the
+only copy of the cluster's inputs that survives the machine. If you provision
+from a second workstation, copy `cluster.yaml` across first and confirm it
+renders to the same tree before pushing.
+
 **Failure branch — `git log --all` prints anything at all:** stop the delivery.
 The credential is public and already cloned. Rotate the Auth0 client secret
 fleet-wide, the Cloudflare token, and the R2 keys, before doing anything about
