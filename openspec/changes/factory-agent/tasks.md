@@ -180,16 +180,53 @@
 - [ ] 2.6 設定經 ClusterIP 直連 Omni，驗證不需 port-forward 且 gRPC streaming 呼叫不出現 trailers 錯誤
   - 卡在 2.4：目前 `extras/factory/factory/` 只有 namespace 與 SA，**沒有 workload**，
     沒有任何 pod 可以發出這個 gRPC 呼叫。本項無法在推送與 2.4 之前被驗證
-- [ ] 2.7 確認容器內具備完整工具鏈（`omnictl` `gh` `cloudflared` `age` `sops` `cue` `makejinja` `task` `kubectl` `helmfile`、**以及 1.1 那個 COSI watch binary**），版本與 repo pin 一致
+- [x] 2.7 確認容器內具備完整工具鏈（`omnictl` `gh` `cloudflared` `age` `sops` `cue` `makejinja` `task` `kubectl` `helmfile`、**以及 1.1 那個 COSI watch binary**），版本與 repo pin 一致
   - **清單本身站得住，只多一項**（`#4`，2026-08-17）。1.1 排除的是 **`omnictl` 承載 watch**
     ——該 CLI 沒有 watch 旗標——**不是排除 `omnictl` 本身**。§4 仍然整套用得到：4.5 cloudflared、
     4.7 `task configure` → commit → push、4.8 kubeconfig + `task bootstrap:apps`
   - 7.1 要的是 `.claude/skills/provision-customer-cluster/SKILL.md`，7.3 把同一份 runbook 交給
     factory agent 執行——會執行 Claude Code skill 的東西就是一個 Claude Code instance，
     這也是 image 取 k8scc variant 的理由
-  - 卡在 2.4 的同一個 image
-- [ ] 2.8 驗證 image 內不含任何憑證材料，憑證全部 runtime 注入
-  - 不變（`#4`）。卡在 k8scc#1 產出 image
+  - **通過**（2026-08-17，image 已交付：`ghcr.io/ferry133/claude-code:factory-170830f`）。
+    本 session 自行量到的部分：GHCR manifest digest `sha256:b10e9ed5…`（與 jg-base 回報相同）、
+    amd64 manifest **28 層**、label `org.opencontainers.image.revision=170830fb…`
+  - **版本與 repo pin 一致——逐項比對過**（`k8scc` `Dockerfile` 的 `ARG` vs 本 repo `.mise.toml`）：
+    gh 2.87.3、cloudflared 2026.2.0、age 1.3.1、sops 3.12.1、cue 0.15.4、makejinja 2.8.2、
+    task 3.48.0、helmfile 1.3.2 全部相符。**kubectl 與 talosctl 有兩組 ARG 是刻意的**：
+    `KUBECTL_VERSION=v1.36.0` 給 base image，factory stage 用的是
+    `FACTORY_KUBECTL_VERSION=v1.35.2` / `FACTORY_TALOSCTL_VERSION=v1.13.8`（`Dockerfile:295,297`），
+    與本 repo 的 `kubectl = 1.35.2` / `siderolabs/talos = 1.13.8` 完全相同。`omnictl v1.8.1`
+    在 mise 沒有對應 pin，無從比對
+  - `omni-machine-watch` 存在且在 build 階段被實際執行過（`Dockerfile:411-415`，以「缺 endpoint／
+    缺 SA key」的預期錯誤字串當作正向訊號，不是只看 exit code）
+  - **驗證邊界照實寫**：以上是讀 `170830f` 那個 commit 的 `Dockerfile` 與 GHCR metadata 得到的。
+    本機沒有 docker，**沒有在 image 裡實跑過任何一支 binary**。「image 內的 binary 就是這些版本」
+    是從 revision label 對得上 Dockerfile 推出來的，不是量出來的
+- [ ] 2.7a 讓「版本與 repo pin 一致」變成會失敗的斷言，而不是一次性比對
+  - **2.7 今天為真，而且沒有任何東西讓它保持為真。** `k8scc/Dockerfile` 的 ARG 與本 repo
+    `.mise.toml` 是兩個 repo 裡的兩份數字，哪一邊先 bump 都不會有人失敗——2.7 會在打勾狀態下
+    悄悄變假
+  - 而且 build 內的 `verify` **只印版本、不比對**：它只有在指令 exit 非零時才失敗
+    （`Dockerfile:377-387`）。十支工具裡**只有 makejinja 真的斷言了版本**
+    （`installed = MAKEJINJA_VERSION`，`Dockerfile:357-361`）——正因為它是唯一被 `--version`
+    騙過的那一支。其餘九支「版本正確」靠的是版本號寫在下載 URL 裡，即**由建構方式保證**，
+    而 makejinja 那件事正是「由建構方式保證」在另一個方向上失效的實例
+  - 小處但屬同一類：`UV_PYTHON_VERSION=3.14` 而 `.mise.toml` 寫 `python = "3.14.3"`。
+    Dockerfile 註解說它是「driven repo 所 pin 的 Python 版本」，但一個是 minor、一個是 patch，
+    build 時解析到哪個 3.14.x 不固定
+  - 這一項屬 `ferry133/k8scc`（它擁有 Dockerfile），本項只留指標
+- [x] 2.8 驗證 image 內不含任何憑證材料，憑證全部 runtime 注入
+  - **通過，由 `jg-base` 實測**（2026-08-17）：拉 digest `sha256:b10e9ed5…`（本 session 獨立
+    向 GHCR 確認過此 digest 與 28 層）並掃過**全部 28 層**
+  - **兩個必須寫進測試本身的要求**，否則這個檢查下次會退化：
+    1. **必須有 upstream-binary 排除清單。** 掃描在 `/usr/local/bin/age-keygen` 裡找到一個
+       完整長度的 `AGE-SECRET-KEY-1` 字串——那支 binary 與上游 age v1.3.1 checksum 相同，
+       所以那個字串存在於每一份下載副本裡。**紅燈，而且是假的。** 一個每次都狼來了的檢查
+       會被靜音，而被靜音的檢查在外面看起來與「有覆蓋」一模一樣
+    2. **必須掃 layer，不能掃壓平後的檔案系統。** 壓平之後，這個乾淨的 image 與一個
+       「某層寫入憑證、後續層刪掉」的洩漏 image 會給出相同結果
+  - 這兩點與 2.7a 的 makejinja 是同一個缺陷的兩端：**綠的可能是假的，紅的也可能是假的，
+    出問題的是檢查而不是被檢查的東西**
 - [x] 2.9 建立憑證清單文件：每項憑證的用途、範圍、blast radius、輪替方式
   - **已在 `jg-base` `extras/factory/factory/README.md`**（2026-08-17 讀 `origin/main` 確認，
     最後一次更動 `66260d8`）。三項憑證各有用途／範圍／blast radius／輪替方式的表格：
@@ -324,12 +361,55 @@
     真正做過的 escrow 與宣稱做過的 escrow
   - 記錄的內容要是「比對過、公鑰逐字相同」，不是「已 escrow」——後者正是 `jgt-appliance` 現在
     宣告 `age_key_escrowed: true` 的依據，而那份宣告至今沒有任何人查證過
-- [ ] 7.1 撰寫 `.claude/skills/provision-customer-cluster/SKILL.md`，每步含前置條件、指令、驗證斷言、失敗分支
+  - **已寫成 runbook 的 Step 0**（2026-08-17）：含逐字比對指令、要照抄的記錄格式（明寫
+    「compared, public halves match verbatim」而非「escrowed」）、以及兩條失敗分支。刻意排在
+    第一步而不是流程順位上的位置，因為它是唯一沒有第二次機會、也沒有機器後盾的步驟。
+    **本項要等 7.2 真的照著跑過一次才算完成**，寫下來不等於驗證過
+- [x] 7.1 撰寫 `.claude/skills/provision-customer-cluster/SKILL.md`，每步含前置條件、指令、驗證斷言、失敗分支
   - descope 之後這份 runbook 必須涵蓋：DNS 設定（三種做法見 `docs/operations/router-dns.md`）、
     以客戶 Google 帳號註冊 Cloudflare 與 Auth0（D11）、以及 7.0 的 escrow 與其驗證
+  - **已建立**（2026-08-17）。六個步驟：Step 0 escrow、1 客戶 Google 帳號、2 網域／Cloudflare／
+    Auth0、3 叢集與 repo、4 pin LAN 位址後才設 router DNS、5 交付前檢查表。三項都涵蓋了
+  - **開頭放「先讀這個」**，把 2026-08-17 那六個實例收斂成三條適用於每一步的規則：優先斷言
+    checksum／digest／distribution metadata 而非工具的自述版本；**相信任何否定結果之前先證明
+    自己問對了對象**（每個讀「不存在」的斷言都配一個正對照）；記下比對了什麼而不是結論
+  - **只連結不複述**（`CLAUDE.md`）：部署機制指向 `docs/deploy/manual.md` 的 Stage，DNS 三種
+    做法指向 `docs/operations/router-dns.md`，escrow 政策指向
+    `docs/operations/age-key-escrow.md`。runbook 只補這些文件沒有的東西——前置條件、斷言、
+    失敗分支，以及 descope 之後落到人身上的那些動作
+  - **`cluster.yaml` 永不 commit 寫成獨立小節**（2026-08-17，這些 repo 是**刻意公開**的）。
+    初稿把這條寫反了——寫成「斷言 `cluster.yaml` 已被 commit」，那會在一個 public repo 裡
+    要求 operator 確認一份含**全 fleet 共用** Auth0 client secret 的明文檔進了 git。
+    來源是誤讀 §2 缺陷表的那一列：那一列講的是「如何正確驗證它的**不存在**」
+    （`git log --all`，而非只看 HEAD），不是要它存在。已改為斷言仍被 ignore、
+    `git log --all` 為空，並附「若印出任何東西就停止交付、先輪替憑證」的分支
+  - ⚠️ **這份 runbook 本身就是「一份全部由人執行、背後沒有東西的檢查清單」**，所以它繼承了
+    自己在講的那個缺陷。寫完不等於對——7.2 存在的理由就是這個
+  - **正本落在 `docs/operations/provision-customer-cluster.md`，不是本項標題寫的那個路徑。**
+    `.claude/` 在每個 cluster repo 都被 gitignore（本 repo `.gitignore:16`，jg-base 與
+    jg-jiahd 同樣 0 個 tracked 檔案），寫在那裡等於只存在於一台機器上——正是這份 runbook
+    自己在講的失效。`.claude/skills/provision-customer-cluster/SKILL.md` 保留為**指標**，
+    不重複內容
+  - 遺留問題：**skill 要怎麼隨 repo 散佈**，目前沒有答案。若要讓 `.claude/skills/` 進版控，
+    那是 repo policy 的改動，留給 ferry133 決定；在那之前每台機器要自己放那個指標檔
+- [ ] 7.1a 為 runbook 的斷言補上機器可執行的版本（可行的那些）
+  - Step 2 的 Cloudflare zone／delegation 比對、Step 3 的 GitRepository revision、Step 4 的
+    `nslookup` 加正對照，這三個都能寫成腳本；Step 0 的 `age-keygen -y` 比對也能。
+    **人執行的檢查清單會漂移，而它漂移的方式與被正確執行一模一樣**
+  - 不是要取代 7.2，是要讓 7.3 的 factory agent 有東西可以跑
 - [ ] 7.2 由人工照 runbook 逐步執行一次完整 provisioning，修正指令與斷言的錯誤
+  - **需要一次真實交付與一個人**，本 session 做不到。這是 7.0 與 7.1 的收斂條件而不是形式：
+    7.1 初稿的 `cluster.yaml` 那條寫反了，是被別的 session 帶來的一個事實撞出來的，不是被
+    審閱抓出來的。**一份沒被執行過的 runbook，其正確性沒有任何證據**
+  - 跑的時候請記錄「哪一步的指令與現實不符」，那才是本項的產出；「跑完了」不是
 - [ ] 7.3 交由 factory agent 自動執行同一份 runbook，比對結果一致
+  - 卡在 2.4（factory 還沒有 workload）與 2.1a（jcom 尚未選入）。**也卡在 7.2**：
+    在人跑過之前，agent 跑出來的差異無法歸因是 agent 錯還是 runbook 錯
 - [ ] 7.4 在 `CLAUDE.md` 新增 factory agent 與交接流程章節，並移除已被 factory 取代的手動 port-forward 說明
+  - ⚠️ **現在做會刪掉唯一還能用的程序。** factory 尚未部署（2.4 未過、2.1a 未做），
+    所以手動 port-forward 不是「已被取代」，它是目前**唯一**能取得 Omni 存取的方式。
+    本項的前置條件是 factory 真的在跑，不是 factory 被設計完
+  - 另註：本項會動 `CLAUDE.md`（本 repo 的 agent 指示檔）。等 7.3 完成後由 ferry133 過目再改
 
 ## 8. 驗收
 
