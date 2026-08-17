@@ -92,7 +92,11 @@
 
 ## 2. Factory 執行環境（jg-base + jcom）
 
-- [ ] 2.1 在 `jg-base` 新增 `kubernetes/apps/extras/factory/factory/`：namespace、獨立 ServiceAccount、最小權限 RBAC
+- [x] 2.1 在 `jg-base` 新增 `kubernetes/apps/extras/factory/factory/`：namespace、獨立 ServiceAccount、最小權限 RBAC
+  - **已在 `jg-base` `main`**（2026-08-17 於 `origin/main` 實測 tree，非依報告）：`3d54330`
+    feat(factory) 建 `namespace.yaml` 與 `app/rbac.yaml`，目錄現含 `ks.yaml`、
+    `kustomization.yaml`、`app/kustomization.yaml`、`README.md`。**尚無 HelmRelease 與
+    HTTPRoute**——那是 2.4，見該項
   - **`extras/` 而非 `base/`**（2026-08-16 更正，`ferry133/jg-cluster-template#2`）。在 jg-base，
     `base/` 不是位置而是**發佈範圍**：每座叢集的 Flux 都指著 jg-base、`interval: 1h`、中間沒有
     逐叢集審核（`jcom/kubernetes/flux/cluster/ks.yaml:25-33` 已核）。原本的寫法會在一小時內把
@@ -103,20 +107,98 @@
     Omni 本來就是以 `omni/omni` 由 `jcom/cluster.yaml:137` 選入的 extra
   - 路徑形狀取 `extras/factory/factory/`，`cluster.yaml` 寫 `factory/factory`——與 `omni/omni`
     逐字同型（namespace 名與 app 名相同），也符合 `CLAUDE.md` 的 `extras/<ns>/<app>/` 慣例
-- [ ] 2.2 驗證 factory 的 SA **不是** `claudecode/claude-code/app/rbac.yaml` 那個共用 cluster-admin SA
+- [ ] 2.1a 在 `jcom/cluster.yaml` 的 `extras:` 加入 `factory/factory`，`task configure --yes` 後 push
+  - **本節標題寫「jg-base + jcom」，但在此之前每一項都只動 jg-base**（2026-08-17 補）。
+    實測 `jcom/cluster.yaml` 的 `extras:` 清單只有 `ingress-nginx/ingress-nginx`、
+    `network/cloudflare-tunnel-lan`、`default/echo`、`default/homebridge`、`default/mqtt`、
+    `claudecode/postgres`、`freepbx/freepbx`、`omni/omni`——**沒有 `factory/factory`**
+  - 少了這一步，jg-base 推完之後 factory **不存在於任何叢集**，包含它該在的 jcom
+  - **這不會削弱 2.3a**（本項初稿曾這樣寫，是錯的）。jg-jiahd 與 jgt-appliance 本來就永遠
+    不會選 `factory/factory`，所以它們的 NotFound 測的正是「`extras/` 的 app 不會流到沒選它的
+    叢集」——若當初放在 `base/`，兩座都會有，因為 `base/` 是無條件下發的。jcom 尚未選入
+    只表示 factory 還沒被部署，不表示 2.3a 量不到東西
+  - 同樣在授權閘之後：推 jcom 會在一小時內生效
+- [x] 2.2 驗證 factory 的 SA **不是** `claudecode/claude-code/app/rbac.yaml` 那個共用 cluster-admin SA
+  - **成立**（2026-08-17 讀 `jg-base` `origin/main` 的 `extras/factory/factory/app/rbac.yaml`）：
+    `ServiceAccount/factory` 於 `namespace: factory`，**沒有 Role、RoleBinding 或 ClusterRole**，
+    且 `automountServiceAccountToken: false`。與 `claudecode` 的 `ServiceAccount/claude-code`
+    （綁 `ClusterRole/cluster-admin`）是不同主體
+  - **但這只約束 factory 能做什麼，不約束誰能讀 factory**——見 2.3
+  - ⚠️ **目前為真的是「宣告」，不是「使用」**：2.4 被卡住，所以還沒有任何 workload 用到
+    `ServiceAccount/factory`。之後補的 Deployment 若漏了 `serviceAccountName: factory`，
+    會落到 ns `factory` 的 `default` SA，本項就**在打勾狀態下悄悄變成假的**。斷言寫進 2.4
 - [ ] 2.3 驗證同叢集的 `cc` instance 無法讀取 factory 的 secret（RBAC 拒絕）
-- [ ] 2.3a 驗證 factory 的資源**不存在於** jg-jiahd 與 jgt-appliance——推 jg-base 後在兩座叢集上
+  - ⚠️ **這一項已經驗過了，答案是否定的，所以它不該被打勾。** `jg-base`
+    `extras/factory/factory/README.md` 記著在 jcom 上的實測：
+    `kubectl auth can-i '*' '*' --as=system:serviceaccount:claudecode:claude-code --all-namespaces`
+    回 `yes`。`cc` 與 `im` 共用那個綁 cluster-admin 的 SA，而 **Kubernetes RBAC 是可加的、
+    沒有 deny**，所以「獨立 namespace + 最小權限 SA」對這題完全不生效
+  - 換叢集也不解決：`claudecode` 是 base app，每座叢集都有一個同居的 cluster-admin
+  - **ferry133 已決定接受**（`ferry133/jg-cluster-template#3`，2026-08-16，經 fleet-ops 轉達）。
+    後續可能另開一座叢集跑 IM instances，該選項是**延後而非否決**
+  - 因此本項的狀態不是「未做」也不是「已通過」，而是**做了、結論相反、風險被接受**。
+    打勾會讓掃 checkbox 的讀者得到「factory 的 secret 有 RBAC 保護」這個錯誤結論——正是
+    2.3a 自己警告的「因為旁邊都綠了就跟著綠」。要結案請改寫本項的斷言，不要改它的方框
+  - 連帶：README 那份憑證清單因此**就是控制本身**（#3 之後沒有其他緩解措施），所以清單漏掉
+    任何一項就不是「已接受的風險」而是「沒被記錄的風險」，兩者從外面看一模一樣
+- [x] 2.3a 驗證 factory 的資源**不存在於** jg-jiahd 與 jgt-appliance——推 jg-base 後在兩座叢集上
       確認 `namespace/factory` 未被建立。依 fleet-ops `fleet-index.md` 的規則：jg-base 的變更，
       驗收必須包含一座**不是**目標的叢集
-  - ⚠️ **這一項在授權閘之後才驗得了**：它驗的是「推送之後仍然不存在」，而推 jg-base 需要
-    ferry133 點頭。在「準備但不推」的範圍內它**無法被滿足**——不要因為前面幾項都綠了就把它
-    當成過了
+  - **通過**（2026-08-17，本 session 於兩座叢集各自實測，非採信報告）：
+
+    | 叢集 | `ns/factory` | 正對照 | jg-base GitRepository |
+    |---|---|---|---|
+    | jg-jiahd | `NotFound` | `claudecode` / `flux-system` 皆 `Active` | READY `main@sha1:66260d8` |
+    | jgt-appliance | `NotFound` | `claudecode` / `flux-system` 皆 `Active` | READY `main@sha1:66260d8` |
+
+  - **關鍵在第三欄，不在第一欄。** 「隔離成功」與「Flux 根本沒動」produce 一模一樣的
+    `NotFound`。兩座叢集都已經把**含有 `extras/factory/factory/` 的那個 commit** 抓下來
+    （`66260d8` 即 `jg-base` `origin/main` 的 head，該 tree 內確有該目錄），且仍然沒有
+    `namespace/factory`——這才把良性解釋與惡性解釋分開
+  - 因此 2.1 的「`extras/` 而非 `base/`」是**被量出來的**，不是被論證出來的
+  - ⚠️ 原註記「本項在授權閘之後才驗得了、在準備但不推的範圍內無法被滿足」**已不適用**：
+    jg-base 那一側早就推了。這句警告仍然對 2.1a（jcom 選入）與 2.4 之後的驗收有效，
+    但它擋不住 2.3a 本身
 - [ ] 2.4 建立 factory 的 HelmRelease 與 HTTPRoute（`factory.janncot.com`），登入白名單只含 operator
+  - **形狀已定，image ref 未定**（`ferry133/jg-cluster-template#4`，ferry133 於 2026-08-17 回答
+    兩題）：image 是 **k8scc variant**——既有的 `ghcr.io/ferry133/claude-code` 加上 1.1 那個
+    Go/COSI watch；`factory.janncot.com` **確實**出結一個 ttyd terminal，前面擋一份 operator-only
+    白名單
+  - image 工作路由到 **`ferry133/k8scc#1`**（該 repo 擁有 Dockerfile）。該 issue 刻意寫成
+    **credential-blind**：k8scc 是 public repo，所以那邊只放建置需求，不放 factory 集中了什麼。
+    憑證清單留在 2.9
+  - **卡在 k8scc#1 回報 `image.repository` / `image.tag`，不是卡在設計。** 2026-08-17 實測
+    `ferry133/k8scc#1` 仍 OPEN 且無留言，尚未回報
+  - 這也解掉 `jg-base` README「Not yet decided」記的那個缺口——「§2 假設了一個沒有任何一節
+    生產的 artifact」。現在有 k8scc#1 生產它了
+  - **Deployment 必須明寫 `serviceAccountName: factory`**，並把這一行納入本項驗收。
+    漏掉它不會報錯：pod 會拿 ns `factory` 的 `default` SA 跑起來，看起來一切正常，而 2.2
+    在維持打勾的狀態下變成假的。同時保留 `automountServiceAccountToken: false` 的效果
 - [ ] 2.5 驗證客戶叢集的登入身分無法登入 factory
+  - 卡在 2.4：白名單還不存在，沒有東西可以被拒絕。**現在「登不進去」是因為沒有服務，
+    不是因為白名單生效**——這兩者的觀測結果相同，別把前者當成後者
 - [ ] 2.6 設定經 ClusterIP 直連 Omni，驗證不需 port-forward 且 gRPC streaming 呼叫不出現 trailers 錯誤
-- [ ] 2.7 確認容器內具備完整工具鏈（`omnictl` `gh` `cloudflared` `age` `sops` `cue` `makejinja` `task` `kubectl` `helmfile`），版本與 repo pin 一致
+  - 卡在 2.4：目前 `extras/factory/factory/` 只有 namespace 與 SA，**沒有 workload**，
+    沒有任何 pod 可以發出這個 gRPC 呼叫。本項無法在推送與 2.4 之前被驗證
+- [ ] 2.7 確認容器內具備完整工具鏈（`omnictl` `gh` `cloudflared` `age` `sops` `cue` `makejinja` `task` `kubectl` `helmfile`、**以及 1.1 那個 COSI watch binary**），版本與 repo pin 一致
+  - **清單本身站得住，只多一項**（`#4`，2026-08-17）。1.1 排除的是 **`omnictl` 承載 watch**
+    ——該 CLI 沒有 watch 旗標——**不是排除 `omnictl` 本身**。§4 仍然整套用得到：4.5 cloudflared、
+    4.7 `task configure` → commit → push、4.8 kubeconfig + `task bootstrap:apps`
+  - 7.1 要的是 `.claude/skills/provision-customer-cluster/SKILL.md`，7.3 把同一份 runbook 交給
+    factory agent 執行——會執行 Claude Code skill 的東西就是一個 Claude Code instance，
+    這也是 image 取 k8scc variant 的理由
+  - 卡在 2.4 的同一個 image
 - [ ] 2.8 驗證 image 內不含任何憑證材料，憑證全部 runtime 注入
-- [ ] 2.9 建立憑證清單文件：每項憑證的用途、範圍、blast radius、輪替方式
+  - 不變（`#4`）。卡在 k8scc#1 產出 image
+- [x] 2.9 建立憑證清單文件：每項憑證的用途、範圍、blast radius、輪替方式
+  - **已在 `jg-base` `extras/factory/factory/README.md`**（2026-08-17 讀 `origin/main` 確認，
+    最後一次更動 `66260d8`）。三項憑證各有用途／範圍／blast radius／輪替方式的表格：
+    Omni Admin SA、GitHub PAT、Cloudflare 母帳號 token
+  - 另記兩件不在原始要求裡但屬於同一份清單的事：**`age.key` 是被決定排除而非遺漏**
+    （`#6`，2026-08-17「factory doesn't do escrow. employee action.」），以及
+    **檢查憑證要比對材料而非標籤**——`GET /zones` 回 HTTP 200 加空陣列、名稱對但 zone 是
+    另一個帳號裡的 `moved` zone，兩種失效都能通過「API 收下這個 token 嗎」這種檢查
+  - 客戶叢集 kubeconfig 的存活期仍未決（`design.md:167`），是清單裡唯一還開著的憑證問題
 
 ## 3. 工單狀態機
 
