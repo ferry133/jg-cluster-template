@@ -277,7 +277,11 @@ SOPS-encrypted to the cluster's age recipient.
 **Assertion — it is still ignored and still absent from history:**
 
 ```sh
-git check-ignore -v cluster.yaml            # must print the .gitignore rule
+# FIRST: is the rule in the repository, or only on this machine?
+git ls-files --error-unmatch .gitignore     # must succeed — .gitignore is tracked
+git show HEAD:.gitignore | grep cluster.yaml  # must print the rule
+
+git check-ignore -v cluster.yaml            # then: does it apply here
 git status --short                          # cluster.yaml must not appear
 
 # Any path, not just this one — see the config.gen/ case above.
@@ -298,6 +302,28 @@ git rev-list --all --objects \
 and "nobody ever checked" produce the same empty output from a lazier command,
 and only one of them is safe — and a check pinned to one path is a lazier
 command, which is exactly how `config.gen/cluster.yaml` stayed invisible.
+
+**The first two lines are the ones that would have caught jg-jiahd, and the
+version of this check without them would not have.** Measured 2026-08-17:
+jg-jiahd has **no `.gitignore` in `HEAD` at all**. `git check-ignore` there
+reports `.gitignore:18` and looks perfectly healthy, because the file exists on
+that workstation and is untracked — `~/.gitignore_global` ignores `.gitignore`
+itself, so it never shows in `git status`, never lands via `git add`, and
+closing the path needs `git add -f`. A fresh clone of jg-jiahd has no rule for
+`cluster.yaml` or `config.gen/cluster.yaml` whatsoever. That is why eleven
+copies landed there and two in jcom.
+
+Take the general form, because it is the sharpest version of the shared-premise
+problem on this page: **`git check-ignore` measures the machine you are standing
+on, and that is also the machine doing the verifying.** The control and the
+check are not merely correlated — the control exists *only* in the one place
+that would ever test it. Every clone that matters, a colleague's, CI's, a
+rebuilt workstation, has neither. **A protection that lives outside the thing it
+protects is not a protection; it is a local habit that reports as one.**
+
+Consequence for the failure branch below: on a repo in this state, "close the
+path" is `git add -f .gitignore` and a commit, not an edit to the file. Rotating
+first there produces the next published copy.
 
 The content scan is slow on a large history. Run it once per repo, not per
 delivery.
