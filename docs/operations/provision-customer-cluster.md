@@ -240,20 +240,29 @@ It holds plaintext credentials — the Cloudflare token, the R2 keys, and a
 **fleet-wide** Auth0 client secret shared by every cluster. It is gitignored
 (`.gitignore:19`).
 
-**This has already gone wrong once, so do not read the rule as precautionary.**
-Measured 2026-08-17: `config.gen/cluster.yaml` was committed in **jcom** and
-**jg-jiahd**, both public, each carrying a `cloudflare_token`. Both were
-untracked in April 2026 — jcom at `afb510f`, jg-jiahd at `e6803aa`, both titled
-*"chore: untrack sensitive config files"* — and **the blobs are still reachable
-in history**: three distinct versions of the file in jcom, two of which still
-carry a plaintext `cloudflare_token`, confirmed by running the content scan
-below against jcom. Untracking removed the file from the tip and published it
-forever.
+**This has already gone wrong, repeatedly, so do not read the rule as
+precautionary.** Measured 2026-08-17 by running the content scan below:
+`config.gen/cluster.yaml` was committed in **jcom** and **jg-jiahd**, both
+public. jcom holds three versions of the file, two carrying a plaintext
+`cloudflare_token`; jg-jiahd holds **11 token-bearing copies across 8 distinct
+token values**. Both were untracked in April 2026 — jcom at `afb510f`, jg-jiahd
+at `e6803aa`, both titled *"chore: untrack sensitive config files"* — and **the
+blobs are still reachable**. Untracking removed the file from the tip and
+published it forever.
 
-Note the shape of that near-miss, because it is the one to guard against: the
-ignore rule named `/cluster.yaml`, and the file that leaked was at
-`config.gen/cluster.yaml`. **A path-specific rule and a path-specific check
-both pass while the same content sits one directory over.**
+Note the shape, because it is the one to guard against and it is not a simple
+oversight: the ignore rule named `/cluster.yaml`, and the file that leaked was
+at `config.gen/cluster.yaml`. **A path-specific rule and a path-specific check
+both pass while the same content sits one directory over.** The control and the
+verification failed identically because they shared a premise, not because
+either was implemented badly — two safeguards resting on one assumption are one
+safeguard.
+
+> **Incident record lives elsewhere.** These figures are here as the worked
+> example behind the method, and they are deliberately not the tracking record
+> for the exposure. As of 2026-08-17 it is **deferred, not remediated** — no
+> rotation, no liveness testing — by ferry133's decision, and `jcom` and
+> `jg-jiahd` own it, not this repository.
 
 **These repos are public by decision** — `jg-cluster-template`, `jg-base`,
 `k8scc`, `jgt-appliance`, `jg-jiahd` and `jcom`. In a public repo one stray
@@ -306,15 +315,31 @@ from a second workstation, copy `cluster.yaml` across first and confirm it
 renders to the same tree before pushing.
 
 **Failure branch — either check prints anything at all:** stop the delivery.
-The credential is public and already cloned. Rotate the Auth0 client secret
-fleet-wide, the Cloudflare token, and the R2 keys, **before** doing anything
-about the repository.
+The credential is public and already cloned. Then, in this order:
 
-Rotation first, and untracking is not a fix — jcom and jg-jiahd are the worked
-example above. `chore: untrack sensitive config files` reads like remediation
-and is not: it stops the next clone from seeing the file at the tip and leaves
-every existing clone, fork and cached view holding the token. **The only thing
-that reduces exposure is invalidating the credential.**
+1. **Close the path first.** Fix the ignore rule and confirm the file is no
+   longer reachable by *any* path — the glob above, not the one you expected.
+   This takes seconds and it has to come first, for the reason in the next
+   paragraph.
+2. **Then rotate** the Cloudflare token, the fleet-wide Auth0 client secret,
+   and the R2 keys.
+3. **Then re-run both checks** against the new credential, before the next
+   commit.
+
+**Rotating before closing the path publishes the new token too.** That is not a
+hypothetical: jg-jiahd's history holds **11 copies of `config.gen/cluster.yaml`
+carrying a `cloudflare_token`, spanning 8 distinct token values** between
+2026-03-04 and 2026-04-12. Each rotation produced a new secret and committed it
+down the same open path — a remediation loop that felt like progress and
+published one more credential every time round. Enumerated 2026-08-17; jcom has
+2 more, and one value appears in four repositories across two domains, so
+"rotate the affected cluster's token" can also be scoped too narrowly.
+
+**And untracking is not remediation.** `chore: untrack sensitive config files`
+reads like a fix and is not: it stops the next clone from seeing the file at the
+tip and leaves every existing clone, fork and cached view holding the token.
+**Only invalidating the credential reduces exposure** — but do step 1 first, or
+you are just adding to the series.
 
 **Assertion — the render happened against the values you just set.** Re-run
 `task configure --yes` and confirm the tree is clean afterwards; a dirty tree
