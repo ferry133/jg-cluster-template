@@ -238,7 +238,22 @@ Three assertions this runbook adds:
 
 It holds plaintext credentials — the Cloudflare token, the R2 keys, and a
 **fleet-wide** Auth0 client secret shared by every cluster. It is gitignored
-(`.gitignore:19`) and has never been committed in any cluster repo.
+(`.gitignore:19`).
+
+**This has already gone wrong once, so do not read the rule as precautionary.**
+Measured 2026-08-17: `config.gen/cluster.yaml` was committed in **jcom** and
+**jg-jiahd**, both public, each carrying a `cloudflare_token`. Both were
+untracked in April 2026 — jcom at `afb510f`, jg-jiahd at `e6803aa`, both titled
+*"chore: untrack sensitive config files"* — and **the blobs are still reachable
+in history**: three distinct versions of the file in jcom, two of which still
+carry a plaintext `cloudflare_token`, confirmed by running the content scan
+below against jcom. Untracking removed the file from the tip and published it
+forever.
+
+Note the shape of that near-miss, because it is the one to guard against: the
+ignore rule named `/cluster.yaml`, and the file that leaked was at
+`config.gen/cluster.yaml`. **A path-specific rule and a path-specific check
+both pass while the same content sits one directory over.**
 
 **These repos are public by decision** — `jg-cluster-template`, `jg-base`,
 `k8scc`, `jgt-appliance`, `jg-jiahd` and `jcom`. In a public repo one stray
@@ -253,14 +268,30 @@ SOPS-encrypted to the cluster's age recipient.
 **Assertion — it is still ignored and still absent from history:**
 
 ```sh
-git check-ignore -v cluster.yaml         # must print the .gitignore rule
-git log --all --oneline -- cluster.yaml  # must print NOTHING
-git status --short                       # cluster.yaml must not appear
+git check-ignore -v cluster.yaml            # must print the .gitignore rule
+git status --short                          # cluster.yaml must not appear
+
+# Any path, not just this one — see the config.gen/ case above.
+git log --all --oneline -- '*cluster.yaml'  # must print NOTHING
+
+# And by content, since the next leak will be at a filename nobody predicted.
+git rev-list --all --objects \
+  | git cat-file --batch-check='%(objecttype) %(objectname) %(rest)' \
+  | awk '$1=="blob"{print $2, $3}' \
+  | while read -r sha path; do
+      git cat-file blob "$sha" 2>/dev/null \
+        | grep -qE '^(cloudflare_token|claudecode_auth0_client_secret|backup_r2_secret_access_key):[[:space:]]*[^"'"'"' ]' \
+        && echo "CREDENTIAL IN HISTORY: $path ($sha)"
+    done | sort -u
 ```
 
-The middle command is `--all` on purpose. "Genuinely never committed" and
-"nobody ever checked" produce the same empty output from a lazier command, and
-only one of them is safe.
+`--all` and `'*cluster.yaml'` are both deliberate. "Genuinely never committed"
+and "nobody ever checked" produce the same empty output from a lazier command,
+and only one of them is safe — and a check pinned to one path is a lazier
+command, which is exactly how `config.gen/cluster.yaml` stayed invisible.
+
+The content scan is slow on a large history. Run it once per repo, not per
+delivery.
 
 **Consequence nothing in the commit tells you: these commits are not
 self-contained.** Because `cluster.yaml` never enters git, the `extras:` line
@@ -274,10 +305,16 @@ only copy of the cluster's inputs that survives the machine. If you provision
 from a second workstation, copy `cluster.yaml` across first and confirm it
 renders to the same tree before pushing.
 
-**Failure branch — `git log --all` prints anything at all:** stop the delivery.
+**Failure branch — either check prints anything at all:** stop the delivery.
 The credential is public and already cloned. Rotate the Auth0 client secret
-fleet-wide, the Cloudflare token, and the R2 keys, before doing anything about
-the repository. Removing the file or rewriting history does not un-publish it.
+fleet-wide, the Cloudflare token, and the R2 keys, **before** doing anything
+about the repository.
+
+Rotation first, and untracking is not a fix — jcom and jg-jiahd are the worked
+example above. `chore: untrack sensitive config files` reads like remediation
+and is not: it stops the next clone from seeing the file at the tip and leaves
+every existing clone, fork and cached view holding the token. **The only thing
+that reduces exposure is invalidating the credential.**
 
 **Assertion — the render happened against the values you just set.** Re-run
 `task configure --yes` and confirm the tree is clean afterwards; a dirty tree
