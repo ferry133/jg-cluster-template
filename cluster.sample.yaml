@@ -257,21 +257,41 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # claude_code_always_on:
 #   - "im"
 #
-# (REQUIRED unless Auth0 login is configured below) ttyd basic auth.
-ttyd_credential: "user:password"      # also used by the default/ttyd extra
+# ── How the terminal is guarded ───────────────────────────────────────────────
+# Auth0 OIDC by default. Nothing to set here: the shared Auth0 application's
+# domain, client_id and client_secret come from `auth0.json` in this directory
+# (gitignored — see Stage 4 of docs/deploy/manual.md), and the oauth2-proxy
+# cookie secret is derived from age.key + cluster_name at render time.
 #
-# Optional Auth0 login (replaces ttyd basic auth with an oauth2-proxy
-# sidecar). Setting claudecode_auth0_domain switches every instance to
-# OIDC mode: ttyd binds loopback only, the route goes through oauth2-proxy
-# on :4180, and only claudecode_allowed_emails may log in. In the Auth0
-# app (Regular Web Application) add per instance:
+# One step no render can take for you — in the Auth0 application (Regular Web
+# Application), per instance:
 #   Allowed Callback URLs: https://<instance>.<domain>/oauth2/callback
 #   Allowed Logout URLs / Web Origins: https://<instance>.<domain>
-# claudecode_auth0_domain: "your-tenant.us.auth0.com"
+# A wildcard (https://*.<domain>/oauth2/callback) covers a whole customer
+# domain at once. `task configure` prints the exact URLs it expects.
+#
+# Miss that step and login fails with an Auth0 error, not a fallback: in OIDC
+# mode ttyd binds loopback only and the proxy is the sole way in.
+#
+# Overrides, rarely needed — each wins over the matching auth0.json field:
+# claudecode_auth0_domain: ""
 # claudecode_auth0_client_id: ""
 # claudecode_auth0_client_secret: ""
 # claudecode_oauth2_cookie_secret: ""  # 32-byte base64, e.g. `openssl rand -base64 32`
+# Who may log in. Defaults to the operators listed in auth0.json; set it here
+# to add someone for this cluster only, e.g. the client's own address.
 # claudecode_allowed_emails: "a@example.com,b@example.com"
+#
+# Opt out for a cluster that cannot depend on Auth0 being reachable — the
+# terminal is the rescue path when Omni/SideroLink is down, and OIDC mode puts
+# a third party on that path. The fallback is ttyd basic auth: one shared
+# password, no per-person accounts, no revocation short of re-rendering. It is
+# then the entire gate in front of a cluster-admin root shell, so `task
+# configure` refuses to render a weak one — user:password form, at least 20
+# characters after the colon, no default usernames.
+#   python3 -c "import secrets; print('ops:' + secrets.token_urlsafe(24))"
+# claudecode_auth0: false
+# ttyd_credential: "ops:CHANGE-ME"
 # Each instance runs hostNetwork + a network-diagnostics toolkit (nmap,
 # masscan, arp-scan, tcpdump, fping, ...) with CAP_NET_RAW, for remotely
 # supporting a non-technical client's LAN/router. Deployed with

@@ -2,6 +2,8 @@ from pathlib import Path
 from typing import Any
 
 import base64
+import hashlib
+import hmac
 import ipaddress
 import makejinja
 import re
@@ -117,6 +119,53 @@ def github_push_token(file_path: str = 'github-push-token.txt') -> str:
         raise RuntimeError(f"Unexpected error while reading {file_path}: {e}")
 
 
+# Return the shared claude-code Auth0 application's fields from auth0.json
+#
+# A local file rather than cluster.yaml fields because this template repo is
+# public and every cluster fronts claude-code with the same Auth0 application:
+# one copied file per cluster directory beats pasting the same client secret
+# into twenty configs. Same idiom as cloudflare-tunnel.json — gitignored, read
+# at render time, never committed.
+#
+# Missing here is a hard stop, not an empty default: OIDC mode gives ttyd no
+# fallback (it binds loopback), so a cluster rendered with a blank client
+# secret deploys a terminal nobody can reach.
+def auth0_config(file_path: str = 'auth0.json') -> dict[str, str]:
+    try:
+        with open(file_path, 'r') as file:
+            data = json.load(file)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"File not found: {file_path} — claude-code defaults to Auth0 login. "
+            f"Copy auth0.json from another cluster directory, or set "
+            f"`claudecode_auth0: false` in cluster.yaml to use ttyd basic auth.")
+    except json.JSONDecodeError:
+        raise ValueError(f"Could not decode JSON file: {file_path}")
+
+    missing = [k for k in ('domain', 'client_id', 'client_secret')
+               if not data.get(k)]
+    if missing:
+        raise KeyError(f"Missing or empty in {file_path}: {', '.join(missing)}")
+    return data
+
+
+# Derive oauth2-proxy's cookie secret from the cluster's own age key
+#
+# Derived rather than generated so it is stable: a fresh random value on every
+# render would sign every session out at each `task configure` and rewrite the
+# encrypted secret for no reason. Derived rather than shared so a cookie minted
+# for one cluster cannot be replayed at another — jg-jiahd and jgtest were
+# hand-copied the same value, which is the mistake this closes.
+#
+# 32 bytes, base64url — the one length oauth2-proxy accepts besides 16 and 24.
+def oauth2_cookie_secret(cluster_name: str, file_path: str = 'age.key') -> str:
+    key = age_key('private', file_path)
+    digest = hmac.new(key.encode('utf-8'),
+                      f"claudecode-oauth2-cookie:{cluster_name}".encode('utf-8'),
+                      hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest).decode('utf-8')
+
+
 # Return a list of files in the talos patches directory
 def talos_patches(value: str) -> list[str]:
     path = Path(f'templates/config/talos/patches/{value}')
@@ -164,6 +213,44 @@ class Plugin(makejinja.plugin.Plugin):
         # shell with cluster-admin that the tunnel makes reachable. Named here
         # rather than scaled by hand, which works until the next reconcile.
         data.setdefault('claude_code_always_on', [])
+        # Auth0 OIDC in front of every claude-code instance, on by default.
+        #
+        # The alternative is ttyd basic auth, a single shared password in front
+        # of a root shell with cluster-admin that the tunnel publishes to the
+        # internet — one credential for every operator, rotated by editing
+        # twenty configs, and no record of who opened the terminal. OIDC gives
+        # per-person accounts, an email allowlist, and revocation in one place.
+        #
+        # What it costs: OIDC mode leaves ttyd on loopback with no fallback, so
+        # the instance is reachable only while oauth2-proxy can reach Auth0 and
+        # the callback URL is registered. claude-code is the rescue path for a
+        # cluster whose Omni/SideroLink is down, so that path now depends on a
+        # third party being up. A cluster that will not accept the trade turns
+        # it off with `claudecode_auth0: false` and supplies ttyd_credential.
+        data.setdefault(
+            'claudecode_auth0_enabled',
+            bool(data['claudecode_auth0']) if 'claudecode_auth0' in data
+            else True)
+        if data['claudecode_auth0_enabled']:
+            # Read auth0.json only for what cluster.yaml has not already
+            # answered. The clusters that configured Auth0 before the file
+            # existed spell all of it out inline, and requiring the file from
+            # them anyway would break their next `task configure` over a value
+            # they already have.
+            fields = ('domain', 'client_id', 'client_secret')
+            if not all(data.get(f'claudecode_auth0_{f}') for f in fields) \
+                    or not data.get('claudecode_allowed_emails'):
+                auth0 = auth0_config()
+                for field in fields:
+                    data.setdefault(f'claudecode_auth0_{field}', auth0[field])
+                # cluster.yaml wins where a cluster needs someone auth0.json
+                # does not list — the client's own address, say.
+                if auth0.get('allowed_emails'):
+                    data.setdefault('claudecode_allowed_emails',
+                                    auth0['allowed_emails'])
+            if not data.get('claudecode_oauth2_cookie_secret'):
+                data['claudecode_oauth2_cookie_secret'] = oauth2_cookie_secret(
+                    data['cluster_name'])
         # Backups are encrypted to the cluster's own age public key, taken from
         # .sops.yaml rather than added as another field to fill in. The key is
         # already there, it is already the thing that travels with the cluster
