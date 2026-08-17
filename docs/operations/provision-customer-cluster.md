@@ -39,6 +39,30 @@ address or `cluster.yaml` excerpt into this file or into any issue that quotes
 it — see the `cluster.yaml` rule in step 3, which is the one place an operator
 is most likely to do it by reflex.
 
+## Run the checks, do not eyeball them
+
+`scripts/delivery-check.py` executes the assertions on this page. Prefer it over
+reading command output by eye — not because the commands are hard, but because
+the judgement each one needs is the part that decays under time pressure.
+
+```sh
+scripts/delivery-check.py escrow       --escrowed-key /path/to/escrowed-age.key
+scripts/delivery-check.py repo-hygiene --dir . [--deep]
+scripts/delivery-check.py dns          --domain <domain>   # $CLOUDFLARE_TOKEN
+scripts/delivery-check.py flux         --kubeconfig kubeconfig --expect-sha <sha>
+scripts/delivery-check.py lan          --domain <domain> --expect-addr <addr>
+```
+
+**It has three exit codes, and the third is the point.** `0` pass, `1` fail,
+**`2` could not tell** — a missing tool, an unreachable resolver, an absent
+token. With only two codes, "I could not measure this" has to be squeezed into
+one of them, and it always gets squeezed into the green one. **Treat `2` as
+unfinished work, not as a pass with a caveat.**
+
+The prose below stays because it explains *why* each assertion is shaped the
+way it is, and because a step the script cannot run — Auth0 callback URLs, the
+Google account, the escrow store itself — still has to be done by hand.
+
 ## What the customer does, and what you do
 
 The customer performs **three physical actions** (network cable, power, power

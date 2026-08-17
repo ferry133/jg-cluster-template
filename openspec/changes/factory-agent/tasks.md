@@ -151,6 +151,13 @@
     | jg-jiahd | `NotFound` | `claudecode` / `flux-system` 皆 `Active` | READY `main@sha1:66260d8` |
     | jgt-appliance | `NotFound` | `claudecode` / `flux-system` 皆 `Active` | READY `main@sha1:66260d8` |
 
+  - **2026-08-17 稍晚重驗，而且現在是更強的測試**：jg-base `main` 已前進到 `7341965`
+    （merge `84a0a0e`，2.4 的 workload）。jg-jiahd 已抓到該 revision 且 `ns/factory` 仍
+    `NotFound`——所以現在驗的是「連 HelmRelease 與 Deployment 都在的那個 commit 也沒有外洩」，
+    不再只是 namespace 與 SA
+  - ⚠️ **上表的 `66260d8` 在記錄後幾小時內就過期了。** 這本身是個提醒：**一個註明了 commit
+    的量測，它的有效期就到那個 commit 不再是 head 為止**；沒有重驗就引用它，與沒有量過的
+    差別只在於它看起來有出處
   - **關鍵在第三欄，不在第一欄。** 「隔離成功」與「Flux 根本沒動」produce 一模一樣的
     `NotFound`。兩座叢集都已經把**含有 `extras/factory/factory/` 的那個 commit** 抓下來
     （`66260d8` 即 `jg-base` `origin/main` 的 head，該 tree 內確有該目錄），且仍然沒有
@@ -454,11 +461,27 @@
     本項唯一的要求是產出要進得了 git，`docs/operations/` 已經滿足；skill 檔維持為指標即可。
     該獨立工作記在 `fleet-ops/routing-log.md`（`3fa75e3`），目前無擁有者也無人需要它
   - 寫在這裡是為了讓下一個發現 `.claude/` 被 gitignore 的人**不要把它當成新問題重開一次**
-- [ ] 7.1a 為 runbook 的斷言補上機器可執行的版本（可行的那些）
+- [x] 7.1a 為 runbook 的斷言補上機器可執行的版本（可行的那些）
   - Step 2 的 Cloudflare zone／delegation 比對、Step 3 的 GitRepository revision、Step 4 的
     `nslookup` 加正對照，這三個都能寫成腳本；Step 0 的 `age-keygen -y` 比對也能。
     **人執行的檢查清單會漂移，而它漂移的方式與被正確執行一模一樣**
   - 不是要取代 7.2，是要讓 7.3 的 factory agent 有東西可以跑
+  - **`scripts/delivery-check.py`**（2026-08-17），五個子命令：`escrow`、`repo-hygiene`、
+    `dns`、`flux`、`lan`
+  - **三種結束碼而不是兩種**：0 通過、1 失敗、**2 判斷不出來**。第三種是這支腳本的重點——
+    「量不到」與「量到了沒問題」在只有兩種結束碼時會被迫合併，而合併的方向永遠是綠的
+  - 每個檢查都帶正對照或拒絕回報通過：`repo-hygiene` 的歷史查詢會另外確認同樣的查詢形狀
+    找得到 `*.md`（否則空結果可能只是查詢壞了）；`lan` 一定連 `github.com` 一起查
+    （否則一座對所有名字回 NXDOMAIN 的叢集看起來完全正常）；`dns` 沒有 token 時回 2 而不是 0，
+    並明說沒驗到的正是「你的 token 看到的是不是同一個 zone」那一半
+  - **雙向都測過，不是只測會通過的那條路**：
+    - `repo-hygiene` 對本 repo 回 PASS，對 **jg-jiahd 回 FAIL** 並指出 `.gitignore` 未追蹤
+      與 12 個 commit 有 `*cluster.yaml`——真實的缺陷，不是造出來的案例
+    - `escrow` 四種輸入：正確副本 PASS；**截斷副本 FAIL**（它存在的理由）；有效但屬於別座
+      叢集的金鑰 FAIL；檔案不存在 FAIL
+    - `flux` 對 jg-jiahd 用當前 sha PASS、用錯的 sha FAIL
+    - `dns` 對 `jiahd.cc` 兩個 DoH resolver 一致 PASS，對未委派網域 FAIL
+  - `lan` 沒有實測——需要在客戶 LAN 上的一台 client 執行，這裡不具備條件
 - [ ] 7.2 由人工照 runbook 逐步執行一次完整 provisioning，修正指令與斷言的錯誤
   - **需要一次真實交付與一個人**，本 session 做不到。這是 7.0 與 7.1 的收斂條件而不是形式：
     7.1 初稿的 `cluster.yaml` 那條寫反了，是被別的 session 帶來的一個事實撞出來的，不是被
