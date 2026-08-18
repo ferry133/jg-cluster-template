@@ -68,6 +68,7 @@ tasks:
     cmds:
       - task: check-integrity
       - task: check-claudecode-auth
+      - task: check-lb-pool-render
       - task: generate-node-config
       - task: validate-schemas
       - task: render-configs
@@ -106,6 +107,17 @@ tasks:
     cmd: python3 {{.SCRIPTS_DIR}}/check-claudecode-auth.py {{.TEMPLATE_CONFIG_FILE}}
     preconditions:
       - test -f {{.SCRIPTS_DIR}}/check-claudecode-auth.py
+
+  # An appliance emitting a non-empty static pool is #10 returning: it overlaps
+  # lan-address-probe's discovered pool, Cilium disables the whole discovered
+  # pool, and every LAN name goes NXDOMAIN while the public tunnel keeps
+  # answering. The original defect was an unreachable branch, which review does
+  # not catch and no rendered artifact shows.
+  check-lb-pool-render:
+    internal: true
+    cmd: python3 {{.SCRIPTS_DIR}}/check-lb-pool-render.py
+    preconditions:
+      - test -f {{.SCRIPTS_DIR}}/check-lb-pool-render.py
 
   validate-schemas:
     internal: true

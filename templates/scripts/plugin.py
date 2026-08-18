@@ -345,18 +345,37 @@ class Plugin(makejinja.plugin.Plugin):
                 lb_addrs.append(str(data[field]))
         seen: set[str] = set()
         addrs = [a for a in lb_addrs if not (a in seen or seen.add(a))]
-        # There is exactly one pool. A second, narrower pool alongside the wide
-        # one cannot work — being a subset it overlaps, and Cilium rejects any
-        # overlap with PoolConflict=cidr_overlap whether or not the wide one is
-        # disabled. So a cluster with nothing to enumerate writes out the whole
-        # node CIDR here, which is what it was getting implicitly anyway.
-        if addrs:
-            blocks = [{'start': a, 'stop': a} for a in addrs]
-        elif data.get('deployment_profile') == 'appliance':
-            # An appliance declares no addresses; lan-address-probe discovers one
-            # and publishes it as a second pool. This one stays empty so the two
-            # cannot overlap — Cilium rejects overlapping pools outright.
+        # There is exactly one pool per cluster. A second, narrower pool alongside
+        # a wide one cannot work — being a subset it overlaps, and Cilium rejects
+        # any overlap with PoolConflict whether or not the wide one is disabled.
+        # So a cluster with nothing to enumerate writes out the whole node CIDR
+        # here, which is what it was getting implicitly anyway.
+        #
+        # The appliance test comes FIRST, and the order is the whole fix for
+        # ferry133/jg-cluster-template#10.
+        #
+        # It used to sit after `if addrs:` and was therefore unreachable exactly
+        # when it mattered. `lan_shared_addr` back-fills cluster_gateway_addr and
+        # cluster_dns_gateway_addr about eighty lines above, and those are two of
+        # the three fields `addrs` is built from — so declaring the shared address
+        # (which docs/operations/router-dns.md tells every appliance operator to
+        # do before touching the router) silently populated `addrs` and took the
+        # first branch. The result on jgt-appliance: a static `pool` holding
+        # 10.9.1.254 overlapping lan-address-probe's `pool-discovered`
+        # [10.9.1.254, 10.9.1.253], Cilium disabling the whole discovered pool
+        # with PoolConflict=True, and .253 — the only address envoy-external can
+        # use — ceasing to exist. Every LAN name in the cluster's domain went
+        # NXDOMAIN while the same names answered fine over the public tunnel,
+        # because cloudflared's origin is a ClusterIP and never needed the LB.
+        #
+        # An appliance discovers its addresses at runtime and lan-address-probe
+        # owns allocating them, so the static pool must be empty on an appliance
+        # unconditionally — whether or not the operator has since declared the
+        # address he was told to declare.
+        if data.get('deployment_profile') == 'appliance':
             blocks = []
+        elif addrs:
+            blocks = [{'start': a, 'stop': a} for a in addrs]
         else:
             blocks = [{'cidr': str(data.get('node_cidr'))}]
         data.setdefault('lb_pool_blocks',
