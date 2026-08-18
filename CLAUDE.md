@@ -29,6 +29,15 @@ Omni/SideroLink 的遠端支援入口。參考部署是 jg-jiahd 的 `cc.jiahd.c
 - 連帶影響：`nas_server` / `nas_path` / `nas_coding_path` 三個欄位在 CUE schema
   已改為**必填**。
 - `claudecode/postgres`（MCP memory server 用的專屬 DB）仍是 opt-in extra。
+- **oauth2-proxy 的 `--reverse-proxy` 是關的，而且是明寫的**（#9）。開著的話
+  `X-Forwarded-*` 對 0.0.0.0/0 有效；更要緊的是 request log 的 `client` 欄位會改從
+  `--real-client-ip-header`（預設 `X-Real-IP`）讀，**v7.15.3 對那一格不做任何信任
+  檢查，`--trusted-proxy-ip` 也管不到它**。這個 pod 是 hostNetwork，`:4180` 就開在
+  節點的 LAN 位址上，客戶網段上任何裝置都能繞過 envoy 直接塞標頭——所以沒有任何
+  trusted-proxy 清單救得了那一格。代價是叢集內不再留有終端使用者的 IP（Cloudflare
+  與 Auth0 各自有）。`X-Forwarded-Email` 不受影響，它來自 `--pass-basic-auth`。
+  要改回去就得在同一次編輯裡補上 `--trusted-proxy-ip`，
+  `scripts/check-forwarded-header-trust.py` 會擋住只做一半的版本。
 - **既有叢集要遷移**（Flux Kustomization 改名，直接 push 有 prune 掉 PVC 的時序風險）：
   步驟見 `jg-base/README.md` 的「Migration: claude-code + daily-check extras → base」。
   jg-jiahd 與 jcom 的 pre-push annotation 已於 2026-08-08 套用。

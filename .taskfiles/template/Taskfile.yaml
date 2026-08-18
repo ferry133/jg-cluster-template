@@ -69,6 +69,7 @@ tasks:
       - task: check-integrity
       - task: check-claudecode-auth
       - task: check-lb-pool-render
+      - task: check-forwarded-header-trust
       - task: generate-node-config
       - task: validate-schemas
       - task: render-configs
@@ -118,6 +119,17 @@ tasks:
     cmd: python3 {{.SCRIPTS_DIR}}/check-lb-pool-render.py
     preconditions:
       - test -f {{.SCRIPTS_DIR}}/check-lb-pool-render.py
+
+  # Before rendering, for the same reason as check-claudecode-auth above: this
+  # stands in front of the same publicly-reachable root shell. #9 was closed by
+  # a single word -- `--reverse-proxy=false` -- and every way of undoing it
+  # renders a manifest that looks entirely plausible, including the `--trusted-ip`
+  # typo, which skips authentication rather than naming a proxy.
+  check-forwarded-header-trust:
+    internal: true
+    cmd: python3 {{.SCRIPTS_DIR}}/check-forwarded-header-trust.py
+    preconditions:
+      - test -f {{.SCRIPTS_DIR}}/check-forwarded-header-trust.py
 
   validate-schemas:
     internal: true
