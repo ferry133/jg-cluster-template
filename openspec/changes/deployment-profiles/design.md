@@ -1075,7 +1075,18 @@ exit code。工具能分辨的事，人就不必記得去分辨。
 
 - ~~Cilium LB-IPAM 的 `sharing-key` 是否支援跨 namespace 共用？~~ **已解決**：支援，內網位址數為 1（Cilium v1.19.1 實測）。
 - 服務同時匹配窄 pool 與寬 pool 時，Cilium 依什麼順序選擇？影響遷移期間兩種 pool 並存的安全性。須在 scratch 叢集驗證，不可在有真實裝置的 LAN 上測。
-- DNS rebinding protection 的可靠偵測方式為何？從叢集內解析拿不到答案，必須從 LAN 上的用戶端視角測——是靠客戶手機（change ④ 的 LINE bot）回報，還是節點自己以 hostNetwork 查詢路由器指定的 resolver？
-- Cloudflare DNS 對 RFC1918 A 記錄的實際行為（僅確認可 DNS-only，需實測是否有額外限制）。
+- ~~DNS rebinding protection 的可靠偵測方式為何？~~ **已解決（2026-08-20 查證）**：選的是第二條路
+  ——節點自己去問路由器指定的 resolver，不經客戶手機。實作為 `jg-base` daily-check 的第 18 項
+  （`daily-check/app/configmap.yaml:486-492`，註解寫「Asking the router directly is the only way
+  to see it」）。**不是只有程式碼**：jcom 與 jg-jiahd 今天的報告都印出
+  `✅ LAN resolves internal names (10.9.8.4)`，兩座 `FAIL_COUNT=0`。
+  ⚠️ 但這**沒有**連帶解決 tasks 5.7——5.7 說的是這道檢查在 `router-dns.md` 自己標為預設的那種
+  做法下永遠 FAIL。上面兩座叢集都不是用那種做法，所以它們的綠燈**證不了也證不倒 5.7**。
+- ~~Cloudflare DNS 對 RFC1918 A 記錄的實際行為~~ **已失去對象（2026-08-20 實測）**：這條路從未被
+  走過，因此不需要答案。janncot.cc zone 裡 **A 記錄 0 筆**；實際只有 3 筆 CNAME
+  （`external` → `ba6225b6….cfargotunnel.com`，`im` 與 `flux-webhook` → `external`）與 3 筆
+  external-dns 的 TXT。內網解析全部由 k8s-gateway 承擔（D32／D39），沒有任何私有位址被發佈到
+  Cloudflare。正對照：同一 token、同一 zone、同一 API 不限型別時回 6 筆，所以「0 筆」不是權限造成的。
+  **若日後改走發佈 RFC1918 A 記錄的路線，這一題要重新開啟——它是被繞過，不是被回答。**
 - R2 的 bucket 與憑證由誰建立、放在哪一層設定？取決於 change ③ 對「每叢集 Cloudflare 帳號」的最終結論。
 - `prosumer` 的預設 storage class 若為 NFS，DB 的 block 要求如何表達——是強制每個 DB PVC 明寫 class，還是另設一個永遠 block 的次要 class？

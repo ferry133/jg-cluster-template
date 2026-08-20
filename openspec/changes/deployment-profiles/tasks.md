@@ -232,7 +232,7 @@
   - ~~**尚未驗證實際上傳**：手上沒有 R2 憑證~~ → **2026-08-15 驗證時發現它從來不可能成功**，見 D46。Flux 的 postBuild 代換把腳本裡每個 `${...}` 改寫掉，`kubectl exec "deploy/${deploy}"` 變成 `deploy/`，kubectl 直接拒絕；job 接著印 `nothing to back up` 並 exit 0——**與「這台沒有資料庫」同一行訊息**。兩座叢集因此每天回報成功而上傳零位元組
   - 修復後（jg-base `ce1806e` 加上 `substitute: disabled`）於 jgt-appliance 實測：dump 13439 bytes → 加密 2362 bytes → `uploaded s3://jgt-appliance-backup/jgt-appliance/jgt-appliance-20260815T015801Z.tar.gz.age`。**上傳路徑至此首次成立**
   - 密文取回後再驗一次 7.3 的性質：`age-encryption.org/v1` 檔頭，五個明文標記（含表名與資料內容）grep 計數皆為 0
-- [ ] 7.7 **MariaDB／MySQL 完全不在備份範圍內**（2026-08-15 在 jcom 發現）。腳本只有兩行
+- [x] 7.7 **MariaDB／MySQL 完全不在備份範圍內**（2026-08-15 在 jcom 發現）。腳本只有兩行
   `dump_db db postgres` 與 `dump_db claudecode postgres`，而 schema 的 `#BlockTierExtras`
   認定四個資料庫 extra，其中 `default/mariadb` 與 `freepbx/freepbx` 是 MariaDB——**兩者都沒有
   任何 dump 路徑**。jcom 的 `freepbx/mariadb` 已運行 92 天，從未被備份過
@@ -247,6 +247,14 @@
   - **擁有權已移交 `ferry133/jcom` issue #1**（2026-08-16，由 jcom 的 agent 執行）。本條保留
     為紀錄與交叉索引，不要在此重複追蹤——實作細節、驗收條件與「不要重蹈 D46」的告誡都在該
     issue 內。量到的暴露：`asterisk` 資料庫 52 張表、16.5 MB、92 天
+    - **完成（2026-08-20 由 fleet-ops session 查證，`jg-base` `origin/main` = `c481685`）**：
+      `jcom#1` 已於 2026-08-16 CLOSED。`monitoring/backup/app/configmap.yaml:160-161` 有
+      `dump_db mariadb default mariadb` 與 `dump_db mariadb freepbx mariadb`，:129 用
+      `mariadb-dump`（不是 `mysqldump`），與當初判定的做法一致
+    - **不只讀程式碼**：jcom 2026-08-19 的實跑 log 為 `dumping freepbx/mariadb → 10619970 bytes`、
+      `2 dumped, 2 not installed, 0 failed`，daily-check 第 20 項顯示
+      `✅ Off-site backup coverage (claudecode/postgres freepbx/mariadb)`——**涵蓋清單裡指名了
+      mariadb**，正是本條要求的那種「不是只說跑了，而是說涵蓋了誰」
 - [x] 7.2 備份內容僅有 `pg_dump` 產出的 `.sql`，腳本不讀取任何 manifest 路徑。理由已寫進腳本註解：manifests 的權威副本在 git，從封存還原只會還原一份較舊的快照
 - [x] 7.3 已實測：用叢集的 recipient 加密一段標記字串後，密文中**找不到明文標記**（grep 計數 0）；用另一把 age key 解密得到 `no identity matched any of the recipients`；用叢集自己的 `age.key` 才解得出。持有 R2 憑證者能取得的就是那段密文
 - [x] 7.4 daily-check 讀最近一次成功的 backup Job 完成時間：>48h 判 FAIL（FAIL 會扣住 dead-man ping，因此即使信件本身沒寄達也會浮現）、>26h 判 warn、其餘 ok。已設定但從未成功過也判 FAIL
@@ -267,6 +275,21 @@
   - 2026-08-15 於 jgt-appliance 開跑。前三段完成：種入已知資料（`episodes`=137、`knowledge`=42、內容 md5 `8127c5b3…`）→ **真正的 CronJob** dump 13439 bytes、加密 2362 bytes、上傳 R2 → 僅憑 R2 憑證取回密文，且 `age-encryption.org/v1` 檔頭、五個明文標記 grep 皆 0
   - 這一步就是 D46 的發現處：演練跑不動，因為備份本身從來沒有產出過封存
   - **剩下**：用 escrow 副本（非 repo 內的工作副本）在另一座叢集還原並逐表比對。用副本是重點——`age-key-escrow.md:39` 要求對副本做 restore-test，而 jgt-appliance 的 `age_key_escrowed: true` 至今未被任何人查證過
+  - 🚩 **基準沒了（2026-08-20 實測）。本條的比對對象已經不存在於 jgt-appliance 上。**
+    `db/postgres` 的 `$POSTGRES_DB` 就是 `drill`，而它的 public schema 現在**零張表**——
+    `episodes` 與 `knowledge` 都不在，資料庫大小 7519 kB 正是空 PostgreSQL 的基礎值。
+    現場再跑一次 `pg_dump` 得 **643 bytes**
+    - 時間點可以框住：08-18 18:01Z 的 dump 是 13439 bytes（與 8.3 記載的種子量相同），
+      08-19 18:01Z 是 643 bytes。**清空發生在這 24 小時內，沒有任何東西報告它**——
+      job 照樣 `1 dumped, 3 not installed, 0 failed`，daily-check 第 20 項照樣綠
+    - **對本條的實際危險，是它會讓演練「通過」而什麼都沒證明**：現在若取一份新備份、
+      還原、逐表比對，是空的還原進空的，**每一張表都相符（0 = 0）**。
+      一個比對不出東西的演練，讀起來與一個成功的演練一模一樣
+    - **正確的基準是 R2 裡 `jgt-appliance/jgt-appliance-20260818T180107Z.tar.gz.age`（2360 bytes）**，
+      它還在——這是 8.3c 修好之後保留期第一次派上用場。跑演練前先確認取的是那一份，
+      不是最新那份 713 bytes 的
+    - 偵測面的缺口（dump 體積崩塌 95% 而無訊號）屬 `jg-base`，另行路由；本條只記錄它對
+      基準的影響
   - **2026-08-17：8.3 不隨 #6 的 descope 一起下車。** 同一次決策把 `age.key` escrow 的
     **機制**（`factory-agent` 5.5）改為員工手動動作，那個 descope 成立；但**還原演練不因為
     改成手動而改變性質**——它從頭到尾就是 operator-only 的動作，這正是它被延後而不是被
@@ -294,10 +317,38 @@
   - **2026-08-16 起刻意延後**：escrow 機制本身尚未實作，所以沒有副本可測。這不是漏做——但也表示 **`age_key_escrowed: true` 目前在 jgt-appliance 上是一句無憑據的宣告**，而 CUE 之所以不給它預設值，正是為了讓這種宣告必須有人負責。在 escrow 實作完成前，appliance 的備份在「單碟故障」這個它唯一要對抗的情境下是否可讀，仍然未知
 - [ ] 8.3b **輪替 jgt-appliance 的 R2 憑證**：D46 期間它們曾以字面值存在於明文 ConfigMap 中。`ce1806e` 止住了洩漏來源，但沒有使已外洩的憑證失效
   - **2026-08-16 起與 escrow 一併刻意延後**。同組延後的還有「jg-jiahd 設定 `backup_r2_*`」——它至今沒有任何異地備份。三者都只有 operator 能做（要登入 Cloudflare、要取出 escrow 副本），不是漏做
-- [ ] 8.3c **保留策略從未生效，且會刪掉當日以外的全部**（2026-08-16 實測）：container 是 alpine，`apk add` 未裝 coreutils，busybox `date` 不接受 `-d "30 days ago"`，於是 `|| date -u '+%Y%m%d'` 讓 cutoff 變成今天。`BACKUP_RETAIN_DAYS` 在任何叢集上都沒有作用過
+  - ⚠️ **這一條的範圍寫錯了（2026-08-20 由 fleet-ops session 實測更正）。它不是 jgt-appliance
+    一座的事——jcom 用的是同一把金鑰。** 兩座叢集 `offsite-backup-config` 裡的
+    `BACKUP_R2_ACCESS_KEY_ID` 其 SHA-256 前綴同為 `62c9989a00ec`，bucket 同為
+    `jgt-appliance-backup`，endpoint 同為 `b66ae7378ffe…`。因此：
+    - **外洩的那把也是 jcom 的金鑰。** 影響面比本條原文大一座叢集，而 jcom 那份備份正是
+      唯一涵蓋 `freepbx/mariadb`（16.5 MB）的
+    - **輪替不是單座操作。** 換掉舊金鑰的瞬間，沒有換到新金鑰的那一座就停止備份，而它會以
+      `Complete` 的 Job 與上傳失敗的 log 呈現。順序必須是：建新金鑰 → 兩座都填上並各自驗到
+      一次成功上傳 → **才**撤銷舊金鑰
+    - 兩座共用一把金鑰這件事本身也值得單獨決定：一座叢集的憑證外洩，現在等於兩座的
+  - ✅ **同組延後的「jg-jiahd 設定 `backup_r2_*`」已於 2026-08-20 完成**，但目標不是 R2：
+    公司 NAS 上的 MinIO，經 `janncot-default-lan` tunnel（`jg-jiahd` commit `577424a`）。
+    端對端驗過——`uploaded s3://jg-jiahd-backup/jg-jiahd/jg-jiahd-20260820T023345Z.tar.gz.age`，
+    並從 MinIO 那一側確認物件存在（54400 bytes）。**jg-jiahd 不再屬於這組延後**；
+    8.3b 與 escrow 兩項仍在
+- [x] 8.3c **保留策略從未生效，且會刪掉當日以外的全部**（2026-08-16 實測）：container 是 alpine，`apk add` 未裝 coreutils，busybox `date` 不接受 `-d "30 days ago"`，於是 `|| date -u '+%Y%m%d'` 讓 cutoff 變成今天。`BACKUP_RETAIN_DAYS` 在任何叢集上都沒有作用過
   - 先前被兩層問題蓋住：變數被 postBuild 吃掉（D46），而且根本沒有東西上傳過。**上傳一修好，它立刻刪掉了這套系統有史以來僅有的兩份備份**
   - 真正的缺陷是 fallback 的方向：`|| date +%Y%m%d` 把「算不出截止日」變成「刪掉今天以前的全部」。**保留路徑的安全 fallback 是留，不是刪**——算不出來就該中止 prune 並大聲抱怨
   - 修復在 `ferry133/jg-base#1` 的審查意見內（`monitoring/backup` 屬 jg-base）
+  - **完成（2026-08-20 由 fleet-ops session 查證，`jg-base` `origin/main` = `c481685`）。**
+    三層證據，一層比一層難造假：
+    1. **程式碼**：`configmap.yaml:277-278` 改用 `-d @<epoch>`——註解明說那是「busybox 與 GNU
+       date 都接受的唯一寫法」，因此不必為此在 image 裡加 coreutils。另加三道守衛：
+       `BACKUP_RETAIN_DAYS` 非數字時警告（:283）、值會刪光全部時警告（:290）、
+       **算不出可用 cutoff 就保留全部**（:300）——fallback 的方向已經反過來，正是本條要求的
+    2. **cutoff 實測**：jg-jiahd 於 `2026-08-20T02:33:48Z` 印 `pruning archives older than
+       20260721 (30 days)`，jcom 於 08-19 印 `20260720`。兩者都是「今天減 30」，不是「今天」
+    3. **封存實際留存**（在 jcom 叢集內用它自己的憑證列 bucket，憑證不離開叢集）：
+       `jcom/` 底下有 5 份橫跨 `20260816`–`20260819`，`jgt-appliance/` 底下有 6 份同樣橫跨四天。
+       **「刪掉當日以外的全部」若仍成立，這兩個前綴各自都只會有一份**
+  - 第 3 點才是有鑑別力的那個：前兩點證明「程式現在算得對」，只有第 3 點證明**舊的封存真的
+    沒有被刪掉**。這一條描述的損害是資料被刪，所以驗收要驗資料還在，不是驗算式正確
 - [x] 8.4 撰寫還原程序文件，內容須與演練實際步驟逐字一致 → `docs/operations/backup-restore.md`
   - 步驟 1–4（種入基準、跑真正的 CronJob、僅憑 R2 憑證取回、密文不透明性）照 2026-08-15/16
     實跑的指令與輸出逐字寫入。步驟 5 的還原**寫成程序但明標未執行**——缺 escrow 副本，
@@ -308,4 +359,34 @@
   - 保留期以**今天的實際行為**寫入而非設計意圖：`BACKUP_RETAIN_DAYS` 從未生效，每次執行都
     刪掉當日以外的全部封存；jg-base 的修正尚未 push，因此文件要求不要規劃依賴一天以上的封存
 - [ ] 8.5 回寫所有 spike 結論到 `design.md` 與相關 spec，確認無「待驗證」項目遺留
+  - **2026-08-20 進度（fleet-ops session）**：`design.md` 的 Open Questions 從 5 題未決降為 3 題。
+    收掉的兩題都以實測收，不是以推論收：
+    - **DNS rebinding 偵測方式** → 選定「節點問路由器的 resolver」，已實作為 daily-check 第 18 項，
+      jcom 與 jg-jiahd 今日皆綠。**但明確標注它沒有連帶解決 5.7**——見下
+    - **Cloudflare 對 RFC1918 A 記錄** → 失去對象。janncot.cc 的 A 記錄 0 筆（正對照：不限型別時
+      同一 token 回 6 筆），私有位址從未發佈到 Cloudflare。**是被繞過，不是被回答**，改路線就要重開
+  - **剩下的 3 題不是量測能收的，這一點本身就是結論**：
+    1. **Cilium 窄／寬 pool 並存時的選擇順序** —— 需要在 scratch 叢集做實驗。jgt-appliance 具備條件
+       （它是 scratch，且 `drill` 已空），但那是對執行中叢集動 IPAM，要 ferry133 明示才做
+    2. **R2 bucket 與憑證由誰建、放哪一層** —— 是決策不是量測，且今天有兩件新事實改變它的形狀：
+       jg-jiahd 走的是 NAS 上的 MinIO 而非 R2；jcom 與 jgt-appliance **共用同一把 R2 金鑰**（見 8.3b）。
+       交叉索引 `ferry133/jg-cluster-template#11`
+    3. **prosumer 的 storage class 與 DB 的 block 要求** —— 是決策，且與 8.6 的阻塞同源：
+       **沒有任何一座 prosumer 叢集存在**，所以連「預設下會怎樣」都無處觀察
+  - 因此本條**不打勾**：真正的殘留不是沒回寫，是那 3 題各自等著一個不屬於本 change 的東西
 - [ ] 8.6 每個 profile 的驗收都必須**在該 profile 上實跑到工作負載就緒**，不得只驗 `task configure` 的輸出。2c.9–2c.11 那四道渲染期缺陷全部無聲通過了 `task configure`（見 `design.md` D14）
+  - **2026-08-20 盤點（fleet-ops session）——三個 profile 裡有一個沒有叢集可驗**：
+
+    | profile | 叢集 | 狀態 |
+    |---|---|---|
+    | `appliance` | jgt-appliance | ✅ 8.1 已完成全新部署至 Flux 全綠 |
+    | `full` | jg-jiahd、jcom | ✅ 兩座都在跑真實工作負載（jcom 含 freepbx/mariadb、claudecode/postgres；jg-jiahd 含 db/postgres、linebot、synophoto） |
+    | `prosumer` | **無** | ❌ **阻塞：這個 profile 從未被部署過** |
+
+  - 三座叢集的 `deployment_profile` 實際值為 `appliance` / `full` / `full`。schema
+    （`cluster.schema.cue:14`）三個值都合法，但 `prosumer` 在整個 fleet 裡沒有實例
+  - **這一條的重點正是「不得只驗 `task configure` 的輸出」，所以「schema 收得下 prosumer」
+    不能拿來充當它的驗收**——那恰好是本條要排除的那種證據
+  - 解除條件：**要有一座 prosumer 叢集**（有自己 NAS 的客戶情境）。那是 ferry133 的硬體與時程
+    決定，不是本 change 能自行推進的。在那之前 8.6 停在 2/3，而**停的原因要寫著，否則它讀起來
+    像沒人做**

@@ -150,21 +150,37 @@ the rebuilt PVC was wrong in the same way and had to be deleted again (D38).
 
 ## Retention: what it actually does today
 
-`BACKUP_RETAIN_DAYS` (default 30) **has never had any effect**. The image is
-alpine, busybox `date` rejects `-d '30 days ago'`, and the fallback set the
-cutoff to today — so every run pruned every archive except its own. Measured on
-jgt-appliance on 2026-08-16, the first run that ever got as far as pruning: the
-first two archives this system ever produced were deleted the day after they
-were written, with `KEEP` at 30.
+`BACKUP_RETAIN_DAYS` (default 30) works. It did not until jg-base `6403b5c`
+(2026-08-16), and the history is worth keeping, because that failure deleted data
+while reporting success.
 
-The real defect is the direction of the fallback: "could not work out the cutoff"
+The image is alpine, busybox `date` rejects `-d '30 days ago'`, and the old
+fallback set the cutoff to today — so every run pruned every archive except its
+own. Measured on jgt-appliance on 2026-08-16, the first run that ever got as far
+as pruning: the first two archives this system ever produced were deleted the day
+after they were written, with `KEEP` at 30.
+
+The defect was the direction of the fallback: "could not work out the cutoff"
 became "delete everything before today". **The safe fallback on a retention path
-is to keep, not to delete.** A fix (`date -d @<epoch>`, the one spelling busybox
-and GNU both accept) is under review as `ferry133/jg-base#1` — `monitoring/backup`
-belongs to jg-base — and is not yet on any cluster. Until it reconciles:
+is to keep, not to delete.** `6403b5c` switched to `date -d @<epoch>` — the one
+spelling busybox and GNU both accept, so no coreutils in the image — and turned
+the fallback around: no usable cutoff now keeps every archive.
 
-> **Do not plan a restore around an archive older than about a day.** Check what
-> is actually in the bucket before assuming a specific date exists.
+Verified 2026-08-20 against jg-base `origin/main` = `c481685`:
+
+| what was checked | what was observed |
+|---|---|
+| the cutoff is today minus `KEEP`, not today | jg-jiahd at `02:33:48Z` printed `pruning archives older than 20260721 (30 days)`; jcom printed `20260720` on 08-19 |
+| archives older than the current day actually survive | the bucket holds 5 objects under `jcom/` and 6 under `jgt-appliance/`, each set spanning `20260816`–`20260819` |
+
+**Only the second row settles it.** The first shows the arithmetic is right today;
+a correct cutoff says nothing about whether yesterday's archive was already
+deleted. The damage this defect caused was deletion, so the check has to be that
+the data is still there — not that the expression is now correct.
+
+> Check what is actually in the bucket before assuming a specific date exists.
+> A cluster whose backups only started recently has a short history for that
+> reason, not because retention is pruning them.
 
 ## What has not been proven
 
@@ -176,7 +192,6 @@ still open:
 | That any archive can be decrypted with an **escrowed** key copy | `deployment-profiles` 8.3 |
 | That a restored database matches the source table by table | `deployment-profiles` 8.3 |
 | That jgt-appliance's `age_key_escrowed: true` is true | `deployment-profiles` 8.3 |
-| That retention keeps anything beyond the current day | `ferry133/jg-base#1` · `deployment-profiles` 8.3c |
 | That the agent's history survives a total loss | `agent-state-portability` |
 
 A restore procedure that has been written but not run is a hypothesis. Treat
