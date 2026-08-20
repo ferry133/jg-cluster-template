@@ -48,6 +48,82 @@ It must print the same public key as the `age:` line in `.sops.yaml`. If it does
 not, the escrow is wrong and `age_key_escrowed: true` would be a false
 statement.
 
+## Escrowing every cluster at once
+
+`scripts/escrow-secrets.sh` does the above for every cluster on the operator's
+machine in one pass, and then proves the result opens. Run it from anywhere:
+
+```sh
+scripts/escrow-secrets.sh --dry-run   # what would be collected, no crypto, no upload
+scripts/escrow-secrets.sh             # collect, encrypt, upload, read back, verify
+```
+
+**It discovers clusters by looking for `age.key` + `cluster.yaml`, not from a
+list.** A list is a fixture: it cannot report the cluster nobody added to it, and
+the omission renders as a clean run over the clusters that were remembered. The
+first run of this script found 8 such directories on a machine where the
+hand-written list had 4 — `jg-jiahd.keep`, `jgt-omni-accept`, `jgt-talos-accept`
+and `jgtest` were all holding keys nobody had counted.
+
+Three choices are built in rather than left to the operator:
+
+| | why |
+|---|---|
+| **a passphrase, not a keypair** | a keypair protecting `age.key` would itself need escrowing, and that recursion has no bottom. `age -p` reads from the terminal; the script never sees, stores, or passes it |
+| **its own bucket** | the rule above forbids the same bucket as the backups. The stated reason is correlated loss; the sharper one is correlated access — one bucket holding both the ciphertext and the key that opens it is plaintext with extra steps |
+| **verification reads back from the store** | decrypting the local copy proves the local copy works, which was never in question. A truncated upload reads exactly like a good one |
+
+### Exit codes
+
+`0` every restored key matched · `1` at least one mismatched · **`2` at least one
+could not be told either way** — a missing `age.key` in the restored archive, or
+a repo with no `age:` line to compare against. Two empty strings compare equal,
+so a check with nothing on either side would otherwise report success; `2` exists
+so that never becomes a recorded pass.
+
+### The bucket
+
+Separate from the backup buckets. On MinIO, the service account needs an
+inline policy — and it **must include the multipart actions**:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Effect": "Allow",
+      "Action": ["s3:ListBucket", "s3:ListBucketMultipartUploads"],
+      "Resource": ["arn:aws:s3:::fleet-escrow"] },
+    { "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject",
+                 "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"],
+      "Resource": ["arn:aws:s3:::fleet-escrow/*"] }
+  ]
+}
+```
+
+Without the last two, an interrupted upload strands parts the key can neither
+list nor abort, and nothing in `aws s3 ls` or the log will say so. Measured on
+2026-08-20 against a policy that omitted them: `ListParts`,
+`AbortMultipartUpload` and `ListBucketMultipartUploads` all returned 403 while
+the happy path succeeded — so a small test upload passes and the failure waits
+for a large one. Give the bucket a lifecycle rule expiring incomplete multipart
+uploads as well; a server-side rule holds regardless of what the client may do.
+
+### Credentials
+
+`~/.config/fleet-escrow/minio.env`, mode `600` — the script refuses any other
+mode:
+
+```sh
+MINIO_ENDPOINT=https://minio.janncot.com
+MINIO_BUCKET=fleet-escrow
+MINIO_ACCESS_KEY_ID=...
+MINIO_SECRET_ACCESS_KEY=...
+```
+
+The passphrase does **not** go in this file. If it did, the store and the thing
+that opens it would travel together, which is the rule at the top of this page.
+
 ## Handover
 
 Handing the cluster to the customer means handing over `age.key`. From that
