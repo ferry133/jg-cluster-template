@@ -61,9 +61,27 @@ scripts/escrow-secrets.sh             # collect, encrypt, upload, read back, ver
 **It discovers clusters by looking for `age.key` + `cluster.yaml`, not from a
 list.** A list is a fixture: it cannot report the cluster nobody added to it, and
 the omission renders as a clean run over the clusters that were remembered. The
-first run of this script found 8 such directories on a machine where the
-hand-written list had 4 — `jg-jiahd.keep`, `jgt-omni-accept`, `jgt-talos-accept`
-and `jgtest` were all holding keys nobody had counted.
+first run found 8 such directories on a machine where the hand-written list had
+4 — `jg-jiahd.keep`, `jgt-omni-accept`, `jgt-talos-accept` and `jgtest` were all
+holding keys nobody had counted.
+
+Which of them get escrowed is a separate decision from which get looked at.
+`ESCROW_CLUSTERS` (default `jcom jg-jiahd` — the two holding real data; the rest
+are test beds) narrows what is collected, and **everything discovered and not
+collected is printed by name**:
+
+```
+[12:29:01Z] escrowing 2: jcom jg-jiahd
+[12:29:01Z] found but NOT escrowed (6): genie1 jg-jiahd.keep jgt-appliance jgt-omni-accept jgt-talos-accept jgtest
+       If any of those is not a test bed, add it to ESCROW_CLUSTERS.
+```
+
+Deciding not to escrow something is fine. Not noticing it exists is the failure
+this arrangement is shaped to prevent: a real cluster nobody added to the list
+appears in that second line rather than in no line at all.
+
+`jg-jiahd.keep` derives a different public key from `jg-jiahd`, so it is not a
+stale copy of it — worth resolving before it is written off as one.
 
 Three choices are built in rather than left to the operator:
 

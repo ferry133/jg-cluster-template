@@ -27,7 +27,7 @@
 #      exactly like a good one until the morning it is needed.
 #
 # Usage:
-#   scripts/escrow-secrets.sh                 # auto-discover under ~/coding
+#   scripts/escrow-secrets.sh                 # discover under ~/coding, escrow ESCROW_CLUSTERS
 #   scripts/escrow-secrets.sh DIR [DIR...]    # explicit cluster directories
 #   scripts/escrow-secrets.sh --dry-run       # collect and report, no crypto, no upload
 #
@@ -39,6 +39,11 @@
 set -uo pipefail
 
 WORKSPACE="${WORKSPACE:-$HOME/coding}"
+# The clusters that hold real data. Everything else under $WORKSPACE with an
+# age.key is a test bed (ferry133, 2026-08-20). Discovery still walks all of
+# them — see the report below — so this list narrows what is escrowed without
+# narrowing what is looked at.
+ESCROW_CLUSTERS="${ESCROW_CLUSTERS:-jcom jg-jiahd}"
 ENV_FILE="${FLEET_ESCROW_ENV:-$HOME/.config/fleet-escrow/minio.env}"
 DRY_RUN=0
 
@@ -72,17 +77,31 @@ curl --help all 2>/dev/null | grep -q -- '--aws-sigv4' \
 # A list is a fixture, and a fixture cannot report the cluster nobody added to
 # it — the omission would show up as a clean run over the clusters that were
 # remembered.
-CLUSTERS=()
+CLUSTERS=(); EXCLUDED=()
 if [[ ${#ARGS[@]} -gt 0 ]]; then
   CLUSTERS=("${ARGS[@]}")
 else
   for d in "$WORKSPACE"/*/; do
-    [[ -f "${d}age.key" && -f "${d}cluster.yaml" ]] && CLUSTERS+=("${d%/}")
+    [[ -f "${d}age.key" && -f "${d}cluster.yaml" ]] || continue
+    n="$(basename "${d%/}")"
+    if [[ " $ESCROW_CLUSTERS " == *" $n "* ]]; then
+      CLUSTERS+=("${d%/}")
+    else
+      EXCLUDED+=("$n")
+    fi
   done
 fi
-[[ ${#CLUSTERS[@]} -gt 0 ]] || die "no cluster directories found under $WORKSPACE"
+[[ ${#CLUSTERS[@]} -gt 0 ]] || die "no cluster directories found under $WORKSPACE matching: $ESCROW_CLUSTERS"
 
-log "clusters: ${#CLUSTERS[@]}"
+log "escrowing ${#CLUSTERS[@]}: ${CLUSTERS[*]##*/}"
+# Excluded clusters are printed, never silently dropped. Discovery is what makes
+# this list trustworthy: a name absent from ESCROW_CLUSTERS shows up here, so a
+# real cluster that nobody added announces itself instead of vanishing. Deciding
+# not to escrow something is fine; not noticing it exists is the failure mode.
+if [[ ${#EXCLUDED[@]} -gt 0 ]]; then
+  log "found but NOT escrowed (${#EXCLUDED[@]}): ${EXCLUDED[*]}"
+  echo "       If any of those is not a test bed, add it to ESCROW_CLUSTERS."
+fi
 
 # ── Stage ────────────────────────────────────────────────────────────────────
 umask 077
