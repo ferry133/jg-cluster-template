@@ -1,3 +1,15 @@
+> **執行順序：Phase 1 只取兩項**（2026-08-20，見 `openspec/SEQUENCING.md`）
+>
+> - 5.7 —— 等 `zero-it-onboarding` 1.4 的結論。每台 appliance 出廠即帶著一個永遠紅、
+>   且扣住 dead-man switch 的健檢（D45），這是它唯一不把真實偵測換成裝飾的解法
+> - 8.6 —— appliance profile 要在 appliance 上實跑到工作負載就緒，不得只驗
+>   `task configure` 的輸出
+>
+> **延後（2026-08-20 裁定，備份與交接一併）**：7.7、8.3b、8.3c、8.5。延後的條件是
+> **短期內不會有客戶交付**——所以「帶著壞掉的備份出貨」這個風險目前不成立。條件失效
+> （出現交付日期）時要在排程之前重看，不是等箱子寄出之後。期間的事實記在
+> `SEQUENCING.md` 的擱置表，不必每次重問。
+
 ## 1. Spikes（先做，結果會改變後面的設計）
 
 - [x] 1.1 驗證 Cilium LB-IPAM `lbipam.cilium.io/sharing-key` 跨 namespace 支援 — 2026-08-09 於 jg-jiahd (v1.19.1) 實測，可行；結論見 `design.md` D3
@@ -57,7 +69,7 @@
 - [x] 2c.6 `local-path` 叢集原本**沒有 default StorageClass**：`sc-nas` 隨 nfs-subdir 一起移除後，叢集沒有任何 storage class（`storage/local-path-provisioner` 是 extra，未啟用）。已修：`ks.yaml.j2` 在 `storage_backend == 'local-path'` 時把它加進 Kustomization 清單，不論 `extras:` 有沒有列——profile 的預設 class 必須真的存在，而不只是「不是錯的那個」
 
 - [x] 2c.7 `local-path` + 多節點改為明示選擇（方案 B）：CUE 要求 `single_node` 必須宣告；多節點時另需 `accept_node_pinning: true`，缺值或 `false` 皆拒絕。實作上繞過三次 CUE 自我滿足的陷阱，見 `design.md` D13
-- [~] 2c.8 已實作 Longhorn（非 Rook-Ceph——3 節點家用叢集用 Ceph 過重）與第三個值 `storage_backend: "replicated"`：
+- [~] 2c.8 **[擱置]** 已實作 Longhorn（非 Rook-Ceph——3 節點家用叢集用 Ceph 過重）與第三個值 `storage_backend: "replicated"`：
   - jg-base `storage/longhorn`，預設 suspend；2 副本而非 3（一台可停機或 drain，仍有一份副本加一個重建目的地，只花三分之二空間；第三份副本擋不了真正威脅家用叢集的整站失效，那是異地備份的職責）
   - **不設為叢集預設 class**：bulk 資料不需要複製，設成預設會把既有 PVC 全部悄悄搬過去
   - namespace 標 `privileged`：Longhorn 掛 host path 且需要 mount propagation，Talos 預設 `baseline`——與 2c.11 的 storage namespace 同一道牆、同樣的安靜失敗方式
@@ -123,7 +135,7 @@
 
 ## 5. 內網服務 DNS（jg-base）
 
-- [~] 5.1 已實作並在 jgt-omni 實測，**隨後移除**：記錄確實被建立（A → `10.9.1.241`、`proxied=false`、TXT owner 分離），但**沒有任何 resolver 解得到**（見 1.3 / D29）。留著只會發佈解析不了的記錄，因此撤回而非保留
+- [~] 5.1 **[延後：備份]** 已實作並在 jgt-omni 實測，**隨後移除**：記錄確實被建立（A → `10.9.1.241`、`proxied=false`、TXT owner 分離），但**沒有任何 resolver 解得到**（見 1.3 / D29）。留著只會發佈解析不了的記錄，因此撤回而非保留
 - [x] 5.2 分離機制本身已驗證有效（這部分結論不受 1.3 影響）：`txtPrefix: k8s-internal.` + `txtOwnerId: internal`，兩個實例同時 `policy: sync` 於同一 zone，external 側六筆記錄（3 CNAME + 3 TXT owner=default）在第二實例運行期間**逐字未變**。若共用 owner id，彼此會把對方的記錄當成孤兒刪除
 - [x] 5.3 D32 定案後改為：`k8s_gateway` 開關（原名 `dns_fallback`，那個名字描述的是一個不存在的角色），**所有 profile 預設開**，包括 appliance——它是唯一能回答內網名稱的東西，沒有可以 fall back 的對象。因 4.3 的 sharing-key 與 `envoy-internal`／`mqtt` 共用位址，不額外佔用 LAN 位址
 - [x] 5.4 D32 後重寫：**直接問路由器解不解得出內網名稱**（不再與公開 DNS 比對——D29 之後那邊根本沒有答案可比）。解不出判 FAIL 並指向 `docs/operations/router-dns.md`；FAIL 會扣住 dead-man ping
@@ -131,7 +143,7 @@
   - ⚠️ **2026-08-14 發現這個檢查只驗得到三種做法中的兩種**——見 5.7。結論本身沒錯，但適用範圍比寫下時以為的窄
 - [x] 5.5 D32 後改寫語意：不再有「fallback 前後」可比（k8s-gateway 一直都在）。要驗的是**路由器設定完成後，LAN 客戶端用扁平 hostname 可存取**——需要一台 appliance 與一個可設定的路由器，屬 8.2 的驗收。已於 2026-08-13 隨 8.2 在 jgt-appliance 驗完：LAN 上 `internal.janncot.cc` 回 `10.9.1.254`（envoy-internal 的共用位址），`im` / `external` / `flux-webhook` 回 `10.9.1.253`
 - [x] 5.6 已驗證：第二個 external-dns 實例運行期間，`external.janncot.cc` / `flux-webhook` / `im` 三筆 CNAME 與三筆 `k8s.cname-*` TXT **逐字未變**，proxied 狀態也未變。實例移除後叢集回到原狀（`target: internal.janncot.cc` 已還原、`im.janncot.cc` 仍回 401）
-- [ ] 5.7 **5.4 的檢查看不見它自己文件所標的預設做法**（見 D45）。`router-dns.md` 列三種做法，第一種「DHCP 發 k8s-gateway 位址」被標為預設，**因為便宜路由器只有那一種**；而檢查問的是路由器自己解不解得出內網名稱，那種做法下路由器從不轉發，於是**永遠 FAIL、永遠扣住 dead-man ping**
+- [ ] 5.7 **[P1]** **5.4 的檢查看不見它自己文件所標的預設做法**（見 D45）。`router-dns.md` 列三種做法，第一種「DHCP 發 k8s-gateway 位址」被標為預設，**因為便宜路由器只有那一種**；而檢查問的是路由器自己解不解得出內網名稱，那種做法下路由器從不轉發，於是**永遠 FAIL、永遠扣住 dead-man ping**
   - 在 jg-jiahd 上實際撞到（2026-08-14）：operator 照文件設了 DHCP DNS → 10.9.9.3，客戶端能解，路由器不能，檢查照樣紅
   - **這是 appliance 的出廠預設狀態**，不是邊緣情況：出貨對象正是沒有條件式轉發的路由器。永遠紅的健檢會訓練所有人忽略它，而它同時扣著 dead-man switch——比沒有檢查更糟
   - **2026-08-16：還有第二條通往同一個結果的路，而且方向相反——永遠綠。** 由
@@ -217,7 +229,7 @@
 
 - [x] 6.10 **拆出 `replicated_storage`**（見 D44）：Longhorn 的部署不再綁在 `storage_backend == "replicated"` 上。同一個欄位原本同時決定 nfs-subdir 跑不跑，所以「多節點 + NAS + Longhorn 當 block tier」——6.7 明講在等的那個組合——在 schema 上表達不出來。預設值取 `storage_backend == "replicated"`，既有叢集渲染結果不變（jg-jiahd 已逐檔比對確認）
   - 觸發條件刻意**不用** `db_storage_class == "longhorn"`：`storageClassName` immutable，一宣告就會讓 PVC 渲染成還不存在的 class 而 Flux 轉紅。安裝與搬遷必須分得開
-- [~] 6.11 jg-jiahd 的 Longhorn **已實測可用**，推翻 2c.8「未在任何叢集實際部署」的紀錄：三個節點的 `nodes.longhorn.io` 條件全綠（`RequiredPackages` / `MountPropagation` / `KernelModulesLoaded` / `Multipathd`），Omni schematic 一直帶著那兩個 extension。冒煙測試的 PVC 7 秒 Bound，volume 2 replica 落在兩台不同節點
+- [~] 6.11 **[擱置]** jg-jiahd 的 Longhorn **已實測可用**，推翻 2c.8「未在任何叢集實際部署」的紀錄：三個節點的 `nodes.longhorn.io` 條件全綠（`RequiredPackages` / `MountPropagation` / `KernelModulesLoaded` / `Multipathd`），Omni schematic 一直帶著那兩個 extension。冒煙測試的 PVC 7 秒 Bound，volume 2 replica 落在兩台不同節點
   - 修好的是 HelmRelease：2026-08-12 兩次安裝都失敗（rev 1 `longhorn-driver-deployer` 卡住、rev 2 pre-upgrade hook 對著還在重啟的 manager 跑），沒有成功過的 release 可回滾 → `Stalled: MissingRollbackTarget` → 不再自動重試，而 18 個 pod 全部 Running，**沒有任何跡象**。`flux reconcile --force` 後 rev 3 `deployed`
   - 仍為 partial：DB 尚未搬遷（`db_storage_class` 仍是 `sc-nas`），且移除路徑（D37）在此叢集未驗證
 - [x] 6.12 **移除路徑已在 jcom 驗證**（2026-08-14）：該叢集同樣是「suspend 但沒 prune」留下的意外安裝（10 個 pod、43 小時、0 volume）。單節點本來就不該有 Longhorn——CUE 明文拒絕，兩份副本在同一顆碟上是付了代價卻沒有保護。照 `docs/operations/replicated-storage.md` 的順序移除，D37 的三道牆一道都沒出現，殘留只有 `longhorn-static` 與 namespace。移除後 18 個 PVC 全部 Bound、所有 Kustomization 與 HelmRelease 仍 Ready
@@ -225,14 +237,14 @@
 
 ## 7. Appliance 備份（jg-base）
 
-- [~] 7.1 `monitoring/backup` CronJob 已實作（每日 02:00 台北，早於 08:00 健檢，讓失敗當天就被回報）：`pg_dump` 各資料庫 → tar → age 加密 → `aws s3 cp` 上傳 R2 → 依 `BACKUP_RETAIN_DAYS`（預設 30）清理舊檔
+- [~] 7.1 **[延後：備份]** `monitoring/backup` CronJob 已實作（每日 02:00 台北，早於 08:00 健檢，讓失敗當天就被回報）：`pg_dump` 各資料庫 → tar → age 加密 → `aws s3 cp` 上傳 R2 → 依 `BACKUP_RETAIN_DAYS`（預設 30）清理舊檔
   - **agent 工作區刻意不備**（依 D8）：工作區檔案可重建，不可重建的每客戶 context 在資料庫層、已被 dump 涵蓋；且該 PVC 在 `claudecode` namespace，跨 namespace 掛不上，硬要備就得把這個 job 放進 claudecode，位置是錯的
   - 資料庫走 `pg_dump` 而非檔案層複製——執行中的 data directory 檔案複製不是備份，是 torn page
   - `BACKUP_AGE_RECIPIENT` 為空時**硬失敗而非略過**：把可讀的客戶資料上傳到別人的物件儲存，比不上傳更糟
   - ~~**尚未驗證實際上傳**：手上沒有 R2 憑證~~ → **2026-08-15 驗證時發現它從來不可能成功**，見 D46。Flux 的 postBuild 代換把腳本裡每個 `${...}` 改寫掉，`kubectl exec "deploy/${deploy}"` 變成 `deploy/`，kubectl 直接拒絕；job 接著印 `nothing to back up` 並 exit 0——**與「這台沒有資料庫」同一行訊息**。兩座叢集因此每天回報成功而上傳零位元組
   - 修復後（jg-base `ce1806e` 加上 `substitute: disabled`）於 jgt-appliance 實測：dump 13439 bytes → 加密 2362 bytes → `uploaded s3://jgt-appliance-backup/jgt-appliance/jgt-appliance-20260815T015801Z.tar.gz.age`。**上傳路徑至此首次成立**
   - 密文取回後再驗一次 7.3 的性質：`age-encryption.org/v1` 檔頭，五個明文標記（含表名與資料內容）grep 計數皆為 0
-- [ ] 7.7 **MariaDB／MySQL 完全不在備份範圍內**（2026-08-15 在 jcom 發現）。腳本只有兩行
+- [ ] 7.7 **[延後：備份]** **MariaDB／MySQL 完全不在備份範圍內**（2026-08-15 在 jcom 發現）。腳本只有兩行
   `dump_db db postgres` 與 `dump_db claudecode postgres`，而 schema 的 `#BlockTierExtras`
   認定四個資料庫 extra，其中 `default/mariadb` 與 `freepbx/freepbx` 是 MariaDB——**兩者都沒有
   任何 dump 路徑**。jcom 的 `freepbx/mariadb` 已運行 92 天，從未被備份過
@@ -263,7 +275,7 @@
 - [x] 8.2 從 LAN 用戶端驗證兩件事（原文寫「未變更路由器」，D32 之後改為「僅 operator 設定一次路由器，客戶端零設定」）：
   - 內網名稱（`envoy-internal` 上的）可用扁平 hostname 存取 → `internal.janncot.cc` 回 10.9.1.254
   - **WAN 名稱在 LAN 上解到內網位址**——`im.<domain>` 應回 `envoy-external` 的 LAN IP 而非 Cloudflare 的。這決定對外線路中斷時家裡還能不能用，也是「路由器設定確實生效」的最佳探針 → `im.janncot.cc`、`external.janncot.cc`、`flux-webhook.janncot.cc` 全部回 10.9.1.253（envoy-external 的 LAN 位址），公網則回 Cloudflare 的 172.67.163.198。端對端 `curl --resolve` 走 LAN 位址得 HTTP 401（ttyd 的 basic auth）且憑證有效，走公網同樣 401——兩條路徑並存。`github.com` 經 k8s-gateway 轉發正常（D39）
-- [~] 8.3 完成還原演練：僅用備份封存 + escrow 的 `age.key`，在新叢集還原並比對資料一致
+- [~] 8.3 **[延後：備份]** 完成還原演練：僅用備份封存 + escrow 的 `age.key`，在新叢集還原並比對資料一致
   - 2026-08-15 於 jgt-appliance 開跑。前三段完成：種入已知資料（`episodes`=137、`knowledge`=42、內容 md5 `8127c5b3…`）→ **真正的 CronJob** dump 13439 bytes、加密 2362 bytes、上傳 R2 → 僅憑 R2 憑證取回密文，且 `age-encryption.org/v1` 檔頭、五個明文標記 grep 皆 0
   - 這一步就是 D46 的發現處：演練跑不動，因為備份本身從來沒有產出過封存
   - **剩下**：用 escrow 副本（非 repo 內的工作副本）在另一座叢集還原並逐表比對。用副本是重點——`age-key-escrow.md:39` 要求對副本做 restore-test，而 jgt-appliance 的 `age_key_escrowed: true` 至今未被任何人查證過
@@ -292,9 +304,9 @@
   - 這**只**證明 jgt-appliance 不在客戶端，不證明「從未交付過任何一台」——但目前
     `docs/deploy/combinations.md` 的參考部署表只有 jgt-appliance / jcom / jg-jiahd 三座，全為內部
   - **2026-08-16 起刻意延後**：escrow 機制本身尚未實作，所以沒有副本可測。這不是漏做——但也表示 **`age_key_escrowed: true` 目前在 jgt-appliance 上是一句無憑據的宣告**，而 CUE 之所以不給它預設值，正是為了讓這種宣告必須有人負責。在 escrow 實作完成前，appliance 的備份在「單碟故障」這個它唯一要對抗的情境下是否可讀，仍然未知
-- [ ] 8.3b **輪替 jgt-appliance 的 R2 憑證**：D46 期間它們曾以字面值存在於明文 ConfigMap 中。`ce1806e` 止住了洩漏來源，但沒有使已外洩的憑證失效
+- [ ] 8.3b **[延後：備份]** **輪替 jgt-appliance 的 R2 憑證**：D46 期間它們曾以字面值存在於明文 ConfigMap 中。`ce1806e` 止住了洩漏來源，但沒有使已外洩的憑證失效
   - **2026-08-16 起與 escrow 一併刻意延後**。同組延後的還有「jg-jiahd 設定 `backup_r2_*`」——它至今沒有任何異地備份。三者都只有 operator 能做（要登入 Cloudflare、要取出 escrow 副本），不是漏做
-- [ ] 8.3c **保留策略從未生效，且會刪掉當日以外的全部**（2026-08-16 實測）：container 是 alpine，`apk add` 未裝 coreutils，busybox `date` 不接受 `-d "30 days ago"`，於是 `|| date -u '+%Y%m%d'` 讓 cutoff 變成今天。`BACKUP_RETAIN_DAYS` 在任何叢集上都沒有作用過
+- [ ] 8.3c **[延後：備份]** **保留策略從未生效，且會刪掉當日以外的全部**（2026-08-16 實測）：container 是 alpine，`apk add` 未裝 coreutils，busybox `date` 不接受 `-d "30 days ago"`，於是 `|| date -u '+%Y%m%d'` 讓 cutoff 變成今天。`BACKUP_RETAIN_DAYS` 在任何叢集上都沒有作用過
   - 先前被兩層問題蓋住：變數被 postBuild 吃掉（D46），而且根本沒有東西上傳過。**上傳一修好，它立刻刪掉了這套系統有史以來僅有的兩份備份**
   - 真正的缺陷是 fallback 的方向：`|| date +%Y%m%d` 把「算不出截止日」變成「刪掉今天以前的全部」。**保留路徑的安全 fallback 是留，不是刪**——算不出來就該中止 prune 並大聲抱怨
   - 修復在 `ferry133/jg-base#1` 的審查意見內（`monitoring/backup` 屬 jg-base）
@@ -307,5 +319,5 @@
     值（D38）
   - 保留期以**今天的實際行為**寫入而非設計意圖：`BACKUP_RETAIN_DAYS` 從未生效，每次執行都
     刪掉當日以外的全部封存；jg-base 的修正尚未 push，因此文件要求不要規劃依賴一天以上的封存
-- [ ] 8.5 回寫所有 spike 結論到 `design.md` 與相關 spec，確認無「待驗證」項目遺留
-- [ ] 8.6 每個 profile 的驗收都必須**在該 profile 上實跑到工作負載就緒**，不得只驗 `task configure` 的輸出。2c.9–2c.11 那四道渲染期缺陷全部無聲通過了 `task configure`（見 `design.md` D14）
+- [ ] 8.5 **[延後：備份]** 回寫所有 spike 結論到 `design.md` 與相關 spec，確認無「待驗證」項目遺留
+- [ ] 8.6 **[P1]** 每個 profile 的驗收都必須**在該 profile 上實跑到工作負載就緒**，不得只驗 `task configure` 的輸出。2c.9–2c.11 那四道渲染期缺陷全部無聲通過了 `task configure`（見 `design.md` D14）

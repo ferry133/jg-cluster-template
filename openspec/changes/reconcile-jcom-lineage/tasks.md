@@ -1,4 +1,11 @@
-## 1. Spikes（先做，結果會改變範圍）
+> **執行順序：全部擱置**（2026-08-20，見 `openspec/SEQUENCING.md`）
+>
+> jcom 是 factory 的落腳處與血脈同步對象，不在「箱子到客戶手上」的路徑上。
+>
+> 接受的風險：jcom 繼續無法接收模板更新，分岔繼續擴大——時間成本會漲，但不擋出貨。
+> 工作項一項未刪，proposal 與 design 未改；被重排的是順序，不是判斷。
+
+## 1. Spikes（先做，結果會改變範圍）  **[擱置]**
 
 - [x] 1.1 jcom `ks.yaml.j2` 的 54 行**全數為新增**，兩個區塊、皆附事故說明，無舊版殘留：Cilium native-routing override（jcom 託管 Omni，MTU 1370 過小導致 SideroLink WireGuard `sendmmsg: message too long`）與 Spegel suspend。兩者根因相同——單節點
 - [x] 1.2 `cilium_bgp_enabled` / `cilium_loadbalancer_mode` 在 jcom 與 jg-jiahd **皆為 0 消費端**（死碼），僅 genie1 仍在用；`spegel_enabled` 在 jcom 有 2 個消費端，仍活著
@@ -15,7 +22,7 @@
   - 腳本的輸出刻意同時提醒**反方向**：一個因上游採納而變得多餘的例外，讀起來仍然像現行決策（5.1 的教訓）
 - [x] 1.5 **已由 ② 解決**：新增 `single_node` 欄位（Omni 路徑渲染期確實無從得知，`nodes` 恆為 `[]`），並衍生 `is_single_node`——appliance 恆真、手動 Talos 依節點數、其他 Omni 叢集未宣告時假設有 peer。詳見 `deployment-profiles` 2c.4
 
-## 2. 分岔清冊
+## 2. 分岔清冊  **[擱置]**
 
 - [x] 2.1 清冊格式定為：項目 / 位置 / 分類（收進模板・從叢集移除・宣告為例外）/ 現況。產出於 `docs/template-lineage.md`
 - [x] 2.2 jcom 全部 7 個漂移檔逐項分類完成，共 17 項；其中 9 項已由 ① 收回模板
@@ -23,7 +30,7 @@
 - [x] 2.4 無「不知道為什麼在這裡」的項目——每一項都有可追溯的理由，兩個 `ks.yaml.j2` 區塊皆附事故註解
 - [x] 2.5 已收回模板的 9 項列於清冊並標記完成，避免重複處理
 
-## 2b. 盤點時新發現
+## 2b. 盤點時新發現  **[擱置]**
 
 - [x] 2b.1 **已移除（2026-08-16）**。模板 `cluster.schema.cue` 宣告 `cilium_bgp_router_addr` / `cilium_bgp_router_asn` / `cilium_bgp_node_asn` / `cilium_loadbalancer_mode` 四個欄位，**模板、cluster-secrets、jg-base manifests 皆零功能消費端**——原本唯一的消費端 genie1 已確認為歸檔測試叢集（2026-08-15），所以「接上或移除」不再是取捨：移除
   - ~~**2026-08-16：這不是單一 repo 的清理**——fixture 會因為封閉的 `#Config` 而失效，所以要
@@ -68,7 +75,7 @@
 - [ ] 2b.4 單節點的 Cilium 設定（native routing + MTU 1500）與 Spegel 同屬「單節點安全性」，一併納入 3.x
 - [x] 2b.5 ~~genie1 是第三支更舊的血脈~~ → **已確認為歸檔的測試叢集（2026-08-15），不需要遷移，也不列入產品的組合矩陣**。它仍是模板的後裔，但沒有活的部署在上面，所以它的存在只影響一件事：2b.1 那四個欄位因此是零消費端
 
-## 3. 單節點安全性（jcom 遷移的前提）
+## 3. 單節點安全性（jcom 遷移的前提）  **[擱置]**
 
 - [x] 3.1 **已由 ② 的 2.8 解決**，但作法與原本設想的不同：jg-base 那份 `kustomization.yaml` 沒有改，因為 Flux 無法從那一端拒絕建立 Kustomization。改由 per-user repo 依 `cluster.yaml` **生成 suspend patch**——與 jcom 手寫的那段同型，只是來源從漂移變成宣告
 - [x] 3.2 **已由 ② 解決**：`is_single_node` 於 `plugin.py` 衍生，`ks.yaml.j2` 據此生成 spegel 的 suspend patch
@@ -83,7 +90,7 @@
 - [ ] 3.7 驗證元件缺席 / 失敗 / 停用三種情況下，image 仍可從原 registry 拉取
 - [x] 3.8 已回報：`deployment-profiles` 1.0 已標記完成，並註明 gating 由 2.8 的 suspend patch 承擔、已在 jgt-omni（單節點）確認 `suspend=true` 且 pod 已清除
 
-## 4. Per-cluster 例外機制
+## 4. Per-cluster 例外機制  **[擱置]**
 
 - [ ] 4.1 依 1.4 實作機制
 - [ ] 4.2 例外宣告須記錄「解決什麼問題」與「什麼條件成立時可移除」
@@ -93,7 +100,7 @@
 - [x] 4.6 `scripts/check-template-drift.py` 已實作並對三個叢集實跑（見 1.4）。DRIFTED 涵蓋任何手改共用檔案；BEHIND 額外回答一個原本沒被問的問題——**這個叢集正在錯過哪些改進**
 - [ ] 4.7 定義「同一例外出現於多個叢集 → 升格為設定選項」的流程
 
-## 5. 遷移既有例外
+## 5. 遷移既有例外  **[擱置]**
 
 - [x] 5.1 **不需要新機制——這個例外已經不存在了**。jg-base commit `140d14c`（2026-07-23）把 `TUNNEL_TRANSPORT_PROTOCOL: http2` 與 `TUNNEL_POST_QUANTUM: false` 收為全域預設，而 jg-jiahd 的 patch 設的正是同樣兩個值，已經多餘了三個星期
   - 移除前三方逐字比對：patch 內容、jg-base 預設、活叢集上實際生效的環境變數，完全一致
@@ -103,7 +110,7 @@
 - [ ] 5.3 jcom 的 Spegel suspend 改由 3.x 的 gating 取代（不是遷移到例外機制——單節點是通則不是例外）
 - [ ] 5.4 驗證 jcom 在 gating 生效後不再需要該 patch
 
-## 6. jcom 同步
+## 6. jcom 同步  **[擱置]**
 
 - [x] 6.1 副本上已補齊，且不只那兩個欄位——完整清單：`deployment_profile: full`、`provisioning_path: talos`、`storage_backend: nfs`、`cluster_svc_cidr: "10.43.0.0/16"`、`single_node: true`、`db_storage_class: sc-nas`（DB 仍在 NFS）、`cilium_native_routing: true`、`omni_udp_lb_ip: "10.9.8.8"`、`claude_code_always_on: ["im"]`
 - [x] 6.2 已隨全樹同步採用模板版
@@ -127,7 +134,7 @@
   - `.gitignore`：模板 repo 忽略 `/bootstrap/` 與 `/talos/`（本機產物），但 jcom 追蹤它們。兩者語意不同，同步會改變「什麼被提交」，超出模板同步的範圍。只補了缺的 `/trello-notifier.yaml` 一行
   - `.sops.yaml`：同步後出現 mode 644→755 的 diff。根因是模板 repo 的 `templates/config/.sops.yaml.j2` 權限是 `700`，而 makejinja 的 `copy_metadata = true` 會把權限帶到渲染產物——**一個模板檔的權限會傳染到每個 repo**。已在模板 repo 改回 644
 
-## 7. 驗收
+## 7. 驗收  **[擱置]**
 
 - [ ] 7.1 對已同步的 jcom 再套用一次後續模板變更，確認**不需手動合併**且其宣告的例外仍在
 - [ ] 7.2 jg-jiahd 重跑 5.7 式比對，確認機制變更未影響它

@@ -1,4 +1,14 @@
-## 1. 前置與裁定
+> **執行順序：全部擱置**（2026-08-20，見 `openspec/SEQUENCING.md`）
+>
+> 本 change 整個就是備份範圍的擴張，2026-08-20 隨備份與交接一併延後。
+>
+> 接受的風險：客戶機器全損時，agent 的 session 歷史與 memory 不在任何備份裡，只能重建出
+> 「半個 agent」——看起來還記得，實際上少了三個月。交接封裝（`factory-agent` 6.3）也一併
+> 延後了，所以這件事目前**沒有任何地方寫給客戶看**，只記在 `SEQUENCING.md` 的擱置表。
+>
+> 註：本 change 的 1.1 就是 `deployment-profiles` 8.3b，與 escrow 一併延後中。
+
+## 1. 前置與裁定  **[擱置]**
 
 - [ ] 1.1 輪替 jgt-appliance 的 R2 憑證（即 `deployment-profiles` 8.3b）。本 change 會讓更多
       資料流經這條管線，而那組憑證曾以明文存在於 ConfigMap（`deployment-profiles` D46）。
@@ -8,7 +18,7 @@
 - [ ] 1.3 在 `deployment-profiles` D8 補一行指向本 change：D8 的「工作區可重建」仍成立，但
       推導不出「其餘不必搬」——session 歷史與 memory 既不可重建也不在 DB 裡
 
-## 2. agent 狀態封存（jg-base）
+## 2. agent 狀態封存（jg-base）  **[擱置]**
 
 - [ ] 2.1 在 `claudecode` namespace 新增封存 job：掛 `claude-config` 與 `claude-workspace`，
       tar → age 加密 → 寫入**與 `monitoring/backup` 相同的 R2 prefix、相同 recipient**
@@ -22,7 +32,7 @@
 - [ ] 2.6 在 jgt-appliance 實跑：確認兩個成員都產出、都可解密、排除清單真的排除了東西
       （比對封存內容清單，不是只看體積）
 
-## 3. on-demand 觸發（design D8）
+## 3. on-demand 觸發（design D8）  **[擱置]**
 
 - [ ] 3.1 確認兩個封存 job 都可用 `kubectl create job --from=cronjob/<name>` 直接觸發，
       且行為與排程一致。若不行，修到可行，不新增第二條管線
@@ -30,7 +40,7 @@
       **空上傳回報成功正是 D46 的失效模式**，這一項要專門驗
 - [ ] 3.3 daily-check 的新鮮度把 on-demand 產物一併算入
 
-## 4. office rescue instance（design D5 / D7）
+## 4. office rescue instance（design D5 / D7）  **[擱置]**
 
 - [ ] 4.1 **先決定 rescue instance 住在哪座公司叢集**（design Open Questions 第一題）。
       未答則本組其餘任務無法開始
@@ -46,7 +56,7 @@
       記在該客戶的 repo，不是只在 agent 記憶裡
 - [ ] 4.7 接手時在來源端登出 / 失效化（design D4），與 4.6 的記錄同一個動作完成
 
-## 5. 還原演練（同時完成 `deployment-profiles` 8.3 的剩餘部分）
+## 5. 還原演練（同時完成 `deployment-profiles` 8.3 的剩餘部分）  **[擱置]**
 
 - [ ] 5.1 用 **escrow 副本**（非 repo 內的工作副本）的 `age.key` 取回並解密 jgt-appliance 的
       封存。用副本是重點——`docs/operations/age-key-escrow.md:39` 要求對副本做 restore-test，
@@ -59,7 +69,7 @@
       唯一有效證明
 - [ ] 5.5 回頭把 `deployment-profiles` 8.3 標為完成並註明由本 change 5.1–5.4 承擔
 
-## 6. 文件
+## 6. 文件  **[擱置]**
 
 - [ ] 6.1 撰寫還原/接手程序文件（承接 `deployment-profiles` 8.4），兩種觸發各一節：
       遷移交接（叢集還活著，走 on-demand 封存）與災難重建（叢集沒了，走最近一次排程封存）。
@@ -69,7 +79,7 @@
 - [ ] 6.3 §8 缺口表更新：`profile 遷移實跑` 與還原演練兩列依實際狀態改寫，
       不留下已完成卻仍列為缺口的項目
 
-## 7. 驗收
+## 7. 驗收  **[擱置]**
 
 - [ ] 7.1 端到端一次：在 jgt-appliance 上完成一次真實的 §7.5.1 profile 遷移，其中
       「刪 probe 舊 pool」與驗證半邊由 office rescue instance 接手。這是本 change 與
