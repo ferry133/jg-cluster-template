@@ -38,7 +38,10 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+QR_RE = re.compile(r"^\[QR:\s*(\S+)\s*\]$")
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "README-zero-IT.md"
@@ -103,7 +106,10 @@ def render_body(md: str) -> str:
             quote.append(inline(line[2:].strip()))
             continue
         close_quote()
-        if re.fullmatch(r"-{3,}", line):
+        if m := QR_RE.match(line):
+            close_list()
+            out.append(qr_block(m.group(1)))
+        elif re.fullmatch(r"-{3,}", line):
             close_list()
             out.append('<hr class="rule">')
         elif m := re.match(r"^(#{1,4})\s+(.*)$", line):
@@ -125,6 +131,44 @@ def render_body(md: str) -> str:
     close_list()
     close_quote()
     return "\n".join(out)
+
+
+def qr_block(url: str) -> str:
+    """Render the QR inline, or abort.
+
+    The URL lives in the Markdown so the paper and the code cannot disagree —
+    a QR produced from a value kept somewhere else is a second artifact with its
+    own version, which is the drift this whole script exists to prevent.
+
+    A missing encoder must stop the build. A sheet printed without its QR looks
+    finished, and the customer discovers the gap at the moment they need help.
+    """
+    segno = shutil.which("segno")
+    if not segno:
+        raise SystemExit(
+            "segno not found, refusing to print a sheet with the QR missing "
+            "(it would look complete). It is pinned in .mise.toml — run "
+            "`mise install`, or `mise exec -- task print-zero-it`.")
+    # segno picks its format from the output file's extension, so it needs a
+    # real .svg path — "-" is read as an extension, not as stdout.
+    #
+    # --no-xmldecl because the SVG is inlined into an HTML document, where an
+    # XML declaration is invalid; --no-size so the CSS decides the printed
+    # dimensions rather than a pixel count.
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "qr.svg"
+        subprocess.run(
+            [segno, f"--output={out}", "--no-xmldecl", "--no-size",
+             "--scale=5", "--border=2", "--error=M", url],
+            check=True, capture_output=True, text=True)
+        svg = out.read_text(encoding="utf-8").strip()
+    if "<svg" not in svg:
+        raise SystemExit(f"segno returned no SVG for {url!r}")
+    # The caption is what makes the QR an aid rather than the entry point
+    # (task 4.7). It has to be on the paper, not only in the design notes.
+    return (f'<div class="qr">{svg}'
+            f'<div class="qr-note">用手機相機對準就可以加入 LINE 好友<br>'
+            f'掃不出來也沒關係，直接打上面的電話一樣找得到我們</div></div>')
 
 
 # Print-first stylesheet: A4, generous leading, and a stamp repeated on every
@@ -150,6 +194,9 @@ blockquote {
   background: #f4f4f4; page-break-inside: avoid;
 }
 hr.rule { border: 0; border-top: .6pt solid #bbb; margin: 16pt 0; }
+.qr { margin: 14pt 0; page-break-inside: avoid; text-align: center; }
+.qr svg { width: 38mm; height: 38mm; }
+.qr-note { font-size: 10.5pt; line-height: 1.6; color: #333; margin-top: 5pt; }
 h2, h3, blockquote, ul { page-break-inside: avoid; }
 .stamp {
   position: fixed; bottom: 8mm; left: 16mm; right: 16mm;
