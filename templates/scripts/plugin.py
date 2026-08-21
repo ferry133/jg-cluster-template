@@ -186,6 +186,29 @@ class Plugin(makejinja.plugin.Plugin):
         # These must match the defaults documented in cluster.sample.yaml —
         # a documented default the code does not apply is a defect.
         data.setdefault('node_default_gateway', nthhost(data.get('node_cidr'), 1))
+        # Whether the nodes resolve names the way a LAN client does — read
+        # BEFORE the default below, because the default is what makes them not.
+        #
+        # daily-check probes `internal.<domain>` through the node's ordinary
+        # resolution path. That probe is only meaningful where that path is the
+        # LAN's: nameservers pinned to a public resolver cannot see what a LAN
+        # client sees, and Cloudflare will not serve the RFC1918 answer at all
+        # (deployment-profiles D29), so the probe would fail every morning on a
+        # cluster whose LAN is perfectly healthy. That is the same defect the
+        # probe exists to replace, one layer down.
+        #
+        # Derived, never declared. Asking the operator "how did you wire the
+        # router" would store a second copy of a fact that lives in the router,
+        # and when the two disagree the check does not go quiet — it makes a
+        # confident wrong claim and withholds the dead-man ping.
+        #
+        # Unset means the nodes take DNS from DHCP, the same answer the router
+        # hands every other client on that LAN, so a node stands in for one
+        # faithfully. The Omni path never applies these Talos patches at all and
+        # lands in the same place.
+        _dns = data.get('node_dns_servers')
+        data['node_dns_is_lan'] = not _dns or all(
+            ipaddress.ip_address(s).is_private for s in _dns)
         data.setdefault('node_dns_servers', ['1.1.1.1', '1.0.0.1'])
         data.setdefault('node_ntp_servers', ['162.159.200.1', '162.159.200.123'])
         data.setdefault('cluster_pod_cidr', '10.42.0.0/16')

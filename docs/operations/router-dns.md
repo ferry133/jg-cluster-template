@@ -96,6 +96,23 @@ undo this step. Every internal hostname stops resolving on the LAN while the
 cluster itself stays perfectly healthy — which is exactly the kind of failure
 nobody attributes correctly.
 
-The daily health check asks the router directly and reports
-`LAN cannot resolve internal names` as a FAIL, which also withholds the dead-man
-ping. Re-doing the step above is the fix.
+The daily health check catches it, and it does not care which of the three
+methods you used: it resolves `internal.<domain>` through the node's ordinary
+resolution path — the same path a client uses — and raises `LAN cannot resolve
+internal names` when the answer stops arriving. All three methods are just
+routes for that one answer, so asking whether the answer arrives covers them
+all. Re-doing the step above is the fix.
+
+There is nothing to record in `cluster.yaml`. The check works out for itself
+whether it can see the LAN, from `node_dns_servers`: unset (the nodes take DNS
+from DHCP, like every other client) means yes, and the row appears. Pin those
+nameservers to a public resolver and the nodes stop sharing the LAN's view —
+the row then disappears rather than alarming daily about a LAN that is fine.
+That is a real blind spot: on such a cluster nothing here watches the router.
+
+Until 2026-08-17 the check instead asked the router directly whether it resolves
+internal names. That is only a question under conditional forwarding — under the
+DHCP default the router hands out the cluster's address and is never in the
+resolution path — so it failed every morning on every correctly configured
+appliance, and a failure withholds the dead-man ping for the other seventeen
+checks.
