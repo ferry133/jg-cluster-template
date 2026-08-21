@@ -1149,6 +1149,15 @@ SOA）。那條發現會擊穿 D45 的三個方向，因為它們驗的是機制
 - jg-jiahd 當日檢查仍為 `✅ LAN resolves internal names (10.9.9.4)`，`FAIL_COUNT=0`
 - jg-jiahd / jcom / jgt-appliance **三座都沒有設 `node_dns_servers`** → 三座都會拿到這一列
 
+**D45 對 appliance 的斷言從來沒有在 appliance 上量到過。** jgt-appliance 的
+`daily_check_*` 是空的，CronJob 每天印一行 `not configured` 就 exit 0——**十八項檢查
+一項都沒跑**。「每台 appliance 出廠即帶著一個永遠紅的健檢」是從 jg-jiahd 2026-08-14
+那次外推的，而 jg-jiahd 不是出貨形狀（三節點住家＋條件轉發）。
+
+**ferry133 裁定（2026-08-21）：jgt-appliance 是測試叢集，維持不設定。** 所以這個缺口
+是有意識保留的，不是遺漏。**連帶後果要記住：8.6 的驗收會在一台沒有任何健檢的機器上
+進行**，那份驗收證明得了工作負載就緒，證明不了監測管道會通。
+
 #### 兩道守衛，都在 repo 裡
 
 - `jg-cluster-template scripts/check-node-dns-is-lan.py`（進 `task configure`）——推導卡在
