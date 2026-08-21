@@ -8,7 +8,7 @@
 
 現行 `README.md` 也無法擔任這個角色——它同時服務三種讀者（operator、進階使用者、上游殘留），而且已經與 repo 脫節：`:102` 的 `gh repo create --template onedr0p/cluster-template` 指向上游而非本 repo，`:205` 的 `just bootstrap talos` 沒有對應的 justfile，`:20` 說「6 stages」但實際寫到 Stage 7，`:243` 的 `cp kubeconfig-sa kubeconfig` 與 `CLAUDE.md` 明文禁止的事情直接衝突。一份自己都不正確的文件，不可能拿去給不懂 IT 的人照著做。
 
-此外，②的 DNS rebinding protection 偵測（task 1.4）卡在同一個地方：偵測必須從 LAN 上的用戶端視角執行，而叢集內看不到那個視角。客戶手上的手機是唯一在正確位置的裝置。
+此外，②的 DNS rebinding protection 偵測（task 1.4）曾被認為卡在同一個地方。**2026-08-21 更新：不再成立。** ② 的 D29 讓 rebinding 偵測本身失去用途（擋 RFC1918 的是 Cloudflare，不是客戶路由器），而 ② 的 D48 讓健檢改問「答案有沒有到」，在節點的一般解析路徑上就量得到。客戶端視角仍是 `design.md` 那張表上延後三題的唯一解，但它不再擋任何 change。
 
 > 依賴：`deployment-profiles`（②）與 `factory-agent`（③）。本 change 是客戶接觸面，站在兩者之上。`revive-talos-path`（①）不被本 change 取代——手動 Talos 路徑保留在給進階使用者的文件裡。
 
@@ -26,7 +26,7 @@
 - **新增 onboarding 溝通管道（LINE bot）**，跑在 **factory 側（jcom）而非客戶叢集**——客戶叢集在 onboarding 當下還不存在。重用 `default/linebot` 既有的 webhook gateway 形態與 LINE 憑證欄位，不新建通知基礎設施。
 - **LINE bot 承擔四件事**：三題 intake、部署進度推播、請客戶拍照回傳（燈號/螢幕）、出錯時的對話式排錯與升級。
 - **新增現場診斷能力，分兩階段**。v0 以照片與對話取得現場資訊；v1 才做原生 App 補上 LAN 掃描（TCP connect port 50000）與 UDP 出口測試。v1 明確不在本 change 範圍，但 v0 的介面必須讓 v1 可以接上。
-- **DNS rebinding protection 偵測**（② task 1.4）由本 change 的客戶端回報路徑提供，解除 ② 的阻塞。
+- ~~**DNS rebinding protection 偵測**（② task 1.4）由本 change 的客戶端回報路徑提供，解除 ② 的阻塞。~~ **2026-08-21 作廢**：② 的 D29 讓這個偵測失去用途，D48 讓健檢不再需要客戶端視角。
 - **零 IT 文件的驗收是實測**：交給一個不懂 IT 的人，在無協助的情況下完成三個動作並成功收到完成通知。與 ③ 的交接演練同一種驗收模式。
 
 ## Capabilities
@@ -62,7 +62,7 @@
 - 箱內 QR code 指向 LINE bot 加好友連結
 
 **解除的阻塞**
-- `deployment-profiles` task 1.4（DNS rebinding protection 偵測方式）在本 change 取得客戶端回報路徑後可以定案。
+- ~~`deployment-profiles` task 1.4（DNS rebinding protection 偵測方式）在本 change 取得客戶端回報路徑後可以定案。~~ **2026-08-21**：該 task 早已 `[x]`，且 D29 之後失去用途；健檢的定案是 ② D48，與本 change 無依賴。
 
 **待驗證（spike，不得當成既定事實寫入 spec）**
 - LINE Messaging API 接收客戶上傳圖片的流程與大小限制。

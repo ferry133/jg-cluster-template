@@ -1,7 +1,7 @@
 > **執行順序：Phase 1 只取兩項**（2026-08-20，見 `openspec/SEQUENCING.md`）
 >
-> - 5.7 —— 等 `zero-it-onboarding` 1.4 的結論。每台 appliance 出廠即帶著一個永遠紅、
->   且扣住 dead-man switch 的健檢（D45），這是它唯一不把真實偵測換成裝飾的解法
+> - 5.7 —— **已定案，見 D48**（2026-08-21）。不等 `zero-it-onboarding` 1.4：待測的是
+>   「答案有沒有到」，不需要客戶端回報，也不需要知道路由器怎麼接的
 > - 8.6 —— appliance profile 要在 appliance 上實跑到工作負載就緒，不得只驗
 >   `task configure` 的輸出
 >
@@ -143,7 +143,27 @@
   - ⚠️ **2026-08-14 發現這個檢查只驗得到三種做法中的兩種**——見 5.7。結論本身沒錯，但適用範圍比寫下時以為的窄
 - [x] 5.5 D32 後改寫語意：不再有「fallback 前後」可比（k8s-gateway 一直都在）。要驗的是**路由器設定完成後，LAN 客戶端用扁平 hostname 可存取**——需要一台 appliance 與一個可設定的路由器，屬 8.2 的驗收。已於 2026-08-13 隨 8.2 在 jgt-appliance 驗完：LAN 上 `internal.janncot.cc` 回 `10.9.1.254`（envoy-internal 的共用位址），`im` / `external` / `flux-webhook` 回 `10.9.1.253`
 - [x] 5.6 已驗證：第二個 external-dns 實例運行期間，`external.janncot.cc` / `flux-webhook` / `im` 三筆 CNAME 與三筆 `k8s.cname-*` TXT **逐字未變**，proxied 狀態也未變。實例移除後叢集回到原狀（`target: internal.janncot.cc` 已還原、`im.janncot.cc` 仍回 401）
-- [ ] 5.7 **[P1]** **5.4 的檢查看不見它自己文件所標的預設做法**（見 D45）。`router-dns.md` 列三種做法，第一種「DHCP 發 k8s-gateway 位址」被標為預設，**因為便宜路由器只有那一種**；而檢查問的是路由器自己解不解得出內網名稱，那種做法下路由器從不轉發，於是**永遠 FAIL、永遠扣住 dead-man ping**
+- [~] 5.7 **[P1]** **5.4 的檢查看不見它自己文件所標的預設做法**（見 D45，**已由 D48 取代**）。`router-dns.md` 列三種做法，第一種「DHCP 發 k8s-gateway 位址」被標為預設，**因為便宜路由器只有那一種**；而檢查問的是路由器自己解不解得出內網名稱，那種做法下路由器從不轉發，於是**永遠 FAIL、永遠扣住 dead-man ping**
+  - ✅ **定案並實作，見 D48（2026-08-21）。以下歷史保留，但三個方向全部作廢。**
+    ferry133 的裁定：目的是「LAN 上的客戶端還拿不拿得到答案」，三個方向都在問「路由器
+    怎麼接的」，而那只是原因之一。**改為在節點的一般解析路徑上解 `internal.<domain>`，
+    不指定 `@server`**——三種做法一視同仁，因為它們只是同一個答案的三條路徑
+    - 有效性閘門 `node_dns_is_lan` 由 `node_dns_servers` **推導**，不由 operator 宣告：
+      宣告值是路由器裡那份事實的第二份副本，分岔時檢查會有信心地講錯話並扣住 dead-man
+    - 本 repo：`templates/scripts/plugin.py` 推導、`cluster-secrets.sops.yaml.j2` 渲染
+      `NODE_DNS_IS_LAN`、`scripts/check-node-dns-is-lan.py`（已入 `task configure`）、
+      `docs/operations/router-dns.md` 改寫
+    - jg-base：`daily-check/app/configmap.yaml` 檢查 18 重寫、`secret.yaml` 換變數、
+      新增 `scripts/check-lan-dns-row.sh`（八種輸入實跑真程式碼）
+    - **2026-08-16 的攔截發現不再造成永遠綠**：D48 驗的是結果不是機制，攔截者若回正確
+      位址，客戶端確實拿得到答案。「誰回答的」已明確不是這個檢查的職責
+    - **狀態**：兩個 repo 皆已實作並測過，**尚未 commit / push**，所以還沒有任何叢集在跑
+  - **三個方向只剩兩個**（2026-08-20，見 `zero-it-onboarding` D10/D11）：第三個「由客戶端
+    回報」對它自己的用途無效——那個機制每次都需要一個人拿手機做一件事，而 dead-man 每天要跑
+  - 另測了一個 D45 沒列的方向並否決：被動觀察「還有沒有 LAN 客戶端在查 k8s-gateway」。
+    jgt-appliance 七天 3 筆（2 筆來自 `127.0.0.1`），零查詢是常態，沉默不能當故障
+  - **附帶**：查詢紀錄逐筆帶來源 IP，可以反推路由器用的是哪一種做法，所以第二個方向的
+    「要求叢集知道一件它管不到的事實」不完全成立——惟 appliance 的查詢量下同樣推不動
   - 在 jg-jiahd 上實際撞到（2026-08-14）：operator 照文件設了 DHCP DNS → 10.9.9.3，客戶端能解，路由器不能，檢查照樣紅
   - **這是 appliance 的出廠預設狀態**，不是邊緣情況：出貨對象正是沒有條件式轉發的路由器。永遠紅的健檢會訓練所有人忽略它，而它同時扣著 dead-man switch——比沒有檢查更糟
   - **2026-08-16：還有第二條通往同一個結果的路，而且方向相反——永遠綠。** 由

@@ -964,6 +964,10 @@ HelmRelease 可以在 18 個 pod 全部 Running 的情況下卡在 `Stalled` 四
 
 ### D45. 一個只驗得到非預設做法的檢查
 
+> **已由 D48 取代（2026-08-21）。** 下面的診斷仍然成立，但它列的三個方向全部作廢——
+> 三個都在問「路由器是怎麼接的」，而待測的問題從來不是那個。保留原文因為那個誤診
+> 本身是這條線上最貴的一段。
+
 5.4 讓 daily-check 直接問路由器：`dig @<node_default_gateway> internal.<domain>`。
 理由是對的——路由器設定是叢集管不到的外部契約，而它壞掉時叢集完全健康。
 
@@ -1079,3 +1083,78 @@ exit code。工具能分辨的事，人就不必記得去分辨。
 - Cloudflare DNS 對 RFC1918 A 記錄的實際行為（僅確認可 DNS-only，需實測是否有額外限制）。
 - R2 的 bucket 與憑證由誰建立、放在哪一層設定？取決於 change ③ 對「每叢集 Cloudflare 帳號」的最終結論。
 - `prosumer` 的預設 storage class 若為 NFS，DB 的 block 要求如何表達——是強制每個 DB PVC 明寫 class，還是另設一個永遠 block 的次要 class？
+
+### D48. 待測的是答案有沒有到，不是路由器怎麼接的（2026-08-21）
+
+D45 列了三個方向，ferry133 全部否掉，理由是同一句話：
+
+> 目的是「**LAN 上的客戶端，現在還拿不拿得到內網名稱的答案？**」
+
+三個方向都在問「路由器是怎麼接的」。路由器只是**原因之一**，不是待測目標。而
+`router-dns.md` 的三種做法本來就只是同一個答案的三條路徑——問答案到不到，三條路一起涵蓋。
+
+#### 兩版錯誤的探針，錯在同一個地方
+
+| 版本 | 它實際在問 | 代價 |
+|---|---|---|
+| `dig @<閘道>`（5.4，2026-08-12） | 路由器**轉不轉發** | 只有條件轉發下有意義。出貨預設下每天紅，而紅會扣住另外十七項的 dead-man |
+| `router_dns_method` 宣告值（2026-08-21 提出，當天否決） | 這台**當初怎麼接的** | 那是**路由器裡那份事實的第二份副本**。分岔時檢查不會變安靜，它會**有信心地講錯話**並扣住 dead-man——正是要修的病，換一扇門 |
+
+第二版是本 session 提的，ferry133 當場否掉（「not good!」）。記在這裡是因為它看起來像個
+合理的設計，而它與第一版是同一個錯誤的兩種形狀。
+
+#### 定案
+
+**問答案，用客戶端的問法**：在節點的一般解析路徑上解 `internal.<domain>`，不指定
+`@server`。解得出 LAN 位址＝ok；解不出＝**FAIL**（含扣 dead-man，因為那時 LAN 上的人確實
+在受影響）；解到非 LAN 位址＝warn。
+
+**它不試圖說為什麼。** 警報就是產出物；哪一層壞掉由收到警報的人去查（ferry133，
+2026-08-21：「Dig out the root cause is not daily_check's responsibility」）。這讓檢查
+便宜、單一分支，而且**三種做法一視同仁**。
+
+#### 有效性的閘門是 derived，不是 declared
+
+節點的解析路徑必須**就是 LAN 的**，這個探針才代表客戶端。nameserver 被釘在公開 resolver
+的叢集看不到客戶端的世界，而 Cloudflare 不發 RFC1918（D29），於是探針**永遠失敗**——同一個
+病再低一層。
+
+所以 `node_dns_is_lan` 由 `node_dns_servers` 推導（未設＝DHCP 學來＝與其他客戶端拿到同一份；
+或全部是 RFC1918），**不問 operator 任何事**，也不新增安裝步驟。空值（尚未重新渲染的叢集）
+＝不出這一列。
+
+#### 放棄了什麼，明寫
+
+- **釘死上游又設好路由器的叢集，這一列不存在。** 真盲點。但沉默不會訓練人忽略信箱，永遠紅會。
+- **偵測有延遲**：路由器重設後節點要等 DHCP 租約更新；CoreDNS 帶 `serve_stale`（jgt-appliance
+  實測 Corefile）會再頂一段。分鐘到小時級，不是永不。
+
+#### 2026-08-16 那條攔截發現不再造成永遠綠
+
+5.7 記過：便宜路由器攔截 53 埠，可以**替閘道作答**（`dig NS janncot.cc @1.1.1.1` 回叢集自己的
+SOA）。那條發現會擊穿 D45 的三個方向，因為它們驗的是機制。
+
+**D48 驗的是結果**：若攔截者回的就是正確的 LAN 位址，客戶端確實拿得到答案，沒有東西壞掉。
+攔截在這個目的下不是偽陽性，它只是另一條路徑。檢查說不出是誰回答的——而那件事已經明確
+不是它的職責。
+
+#### 量到的（jgt-appliance / jg-jiahd，2026-08-20～21）
+
+- pod 內解析：`internal.janncot.cc → 10.9.1.254`、`external.janncot.cc → 10.9.1.253`。
+  兩者都是 RFC1918，公開 DNS 不可能給——**兩個名字同源，都由 k8s-gateway 回答**，所以
+  external 不能當 internal 的正對照（在 D48 下也不需要）
+- 節點 resolv.conf 是 `169.254.116.108`（Talos hostDNS），**上游從叢集內看不到**
+- CoreDNS Corefile：`forward . /etc/resolv.conf` + `cache { prefetch 20; serve_stale }`
+- k8s-gateway 近 200 行查詢來源：`10.9.1.1`×25（路由器）、`10.9.1.125`×10、`127.0.0.1`×1
+- jg-jiahd 當日檢查仍為 `✅ LAN resolves internal names (10.9.9.4)`，`FAIL_COUNT=0`
+- jg-jiahd / jcom / jgt-appliance **三座都沒有設 `node_dns_servers`** → 三座都會拿到這一列
+
+#### 兩道守衛，都在 repo 裡
+
+- `jg-cluster-template scripts/check-node-dns-is-lan.py`（進 `task configure`）——推導卡在
+  true 會每天誤報，卡在 false 會讓這一列從所有叢集消失，而**不出列讀起來與通過一模一樣**。
+  腳本另外斷言推導結果在案例間**確實有變化**，因為兩種卡住都能通過一份同答案的測試。
+  已用突變測試確認它抓得到（把推導改成 `True` → 3 個案例失敗）
+- `jg-base scripts/check-lan-dns-row.sh`——把真正那段程式碼從 ConfigMap 切出來跑八種輸入，
+  切不到就中止而不是測一個空檔案
+
