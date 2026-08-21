@@ -19,3 +19,8 @@ trello-notifier.yaml
 cluster.yaml
 nodes.yaml
 __pycache__/
+
+# Built customer print sheets — regenerate with `task print-zero-it`.
+# The stamp in the filename is derived from the source, so a build is never
+# authoritative; the Markdown is.
+dist/
