@@ -137,6 +137,26 @@ copy fetched back from the store, using the passphrase read back out of the
 keychain** — that exercises both halves. Reading either from the local copy you
 just made proves nothing about the thing you will actually recover from.
 
+> ⚠️ **"Synced to their account" is an assumption, and on macOS the default is
+> against you.** `security add-generic-password` does not set the item
+> synchronizable, and a non-synced item lives in the file-based
+> `login.keychain-db` — iCloud Keychain items do not. Measured 2026-08-22 on
+> jg-janncotcc: the escrow passphrase was in `login.keychain-db`, one copy, on
+> one laptop. That does not lose the arrangement its separation, but it does
+> lose it its durability: the encrypted copy in the object store survives the
+> laptop, and then nothing can open it. Check which keychain the item is in —
+>
+> ```sh
+> security find-generic-password -a "$CLUSTER" -s age-key-escrow-passphrase \
+>   | head -1        # prints the keychain path; login.keychain-db = local only
+> ```
+>
+> — and if it is local, give the passphrase its own second copy, in a system
+> that is neither this laptop nor the object store holding the ciphertext.
+> Otherwise the single point of failure has moved up one level rather than
+> gone: it is now the passphrase instead of the key, and the failure still
+> looks like a perfectly healthy escrow right up to the restore.
+
 ```sh
 # 1. Copy the key to the escrow store (password manager entry on the operator's
 #    account, or an encrypted archive independent of the R2 bucket).
@@ -268,6 +288,36 @@ affected: the gateway transparently redirects all outbound UDP/53, so
 definition — answers too. DoH over 443 is immune, which is why the commands
 above are `curl`, not `dig`. This is not split-horizon resolution; that was the
 first guess and it was wrong.
+
+**Assertion — the zone is not still serving a dropped cluster's records.**
+The checks above prove the zone is yours, delegated and active. They say
+nothing about what is already in it. A zone that previously belonged to a
+cluster you dropped still holds that cluster's external-dns records, and
+`<instance>.<domain>` resolves because of them.
+
+There is no way to tell from outside. A tunnel hostname whose connector is gone
+answers exactly like one whose cluster has not booted yet: proxied A records at
+Cloudflare's edge, HTTP 530. So "the hostname resolves" passes on a corpse, and
+"it returns 530" reads as "not up yet" for as long as anyone is willing to wait.
+
+The discriminating comparison is local: every `*.cfargotunnel.com` record in
+the zone must carry the `TunnelID` from **this repo's** `cloudflare-tunnel.json`.
+
+```sh
+scripts/delivery-check.py dns --domain "$DOMAIN"   # reads ./cloudflare-tunnel.json
+```
+
+Measured on `janncot.cc` 2026-08-23: six records — three CNAMEs and their three
+external-dns ownership TXTs — still pointed at the dropped `jg-appliance`
+tunnel `ba6225b6…`, while the repo held credentials for `6e17d166…`. The
+delivery record for that step said the DNS assertion had passed. It had.
+
+**Delete the stale records before bootstrapping**, rather than relying on the
+new cluster's external-dns to adopt them. It usually will — same `owner=default`
+in the TXT registry — but "usually" is not what a gate is for, and the failure
+mode when it does not is a hostname that points at a dead tunnel indefinitely.
+Deleting first also buys something the adoption path cannot: after a clean zone,
+any record that appears is evidence the new cluster created it.
 
 **Assertion — Auth0.** Registered under the same Google account. Per instance,
 in the Regular Web Application:
