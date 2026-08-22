@@ -131,8 +131,12 @@
   - ✅ **待驗一已解**：jcom 的 Omni 是 `joinTokensMode: strict`——不但沒關掉 unique token，
     還直接拒絕不支援的 Talos
   - ✅ **待驗二已解**：門檻是 **Talos ≥ 1.6.0**（`MinSupportedSecureTokensVersion`）
-  - **仍未走過**：短 TTL token（`appliance-5.1`，24h）與 `ticket=` 標籤的實機流程——
-    本次用的是舊 ISO，帶的是預設永不過期的 token
+  - ⚠️ **短 TTL 已作廢**（ferry133，2026-08-22，見改寫後的 D13）：這顆 token 證明的是
+    **來歷**——「這台是 janncot 出的，所以有資格回來擴充成客戶叢集的節點」。要證明來歷的
+    憑證必須活得比機器久，**過期是自我否定**。要修的是**範圍不是壽命**：每客戶一顆、
+    不設 TTL，外洩時用 `revoke`（可逆）而不是等它自己死
+  - **仍未走過**：每客戶一顆 token ＋ `ticket=` 標籤的實機流程。本次用的是舊 ISO，
+    帶的是預設那顆全 fleet 共用的 token
   - **token 綁在 preset 上**（D12），所以「怎麼嵌」不是問題。真正要答的是**短 TTL 會不會
     弄壞已加入的機器**——答案在 `provision.go` 的
     `isAuthorizedSecureFlow() { return hasValidJoinToken || hasValidNodeUniqueToken }`：
