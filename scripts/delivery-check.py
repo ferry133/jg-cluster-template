@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pathlib
 import re
 import shutil
 import subprocess
@@ -315,6 +316,70 @@ def check_dns(args) -> int:
         return FAIL
 
     ok(f"token's zone matches the live delegation and is active")
+
+    # ---- and: do the records in it belong to a cluster that still exists? ----
+    #
+    # "im.<domain> resolves" passes just as happily on records left behind by a
+    # cluster that was dropped. Both cases look identical from outside: proxied
+    # A records at Cloudflare's edge and HTTP 530, because a tunnel hostname
+    # with no connector answers exactly like one whose cluster has not booted
+    # yet. Measured on janncot.cc 2026-08-23: six external-dns records still
+    # pointed at the dropped jg-appliance's tunnel while the repo held
+    # credentials for a different, freshly created one.
+    #
+    # external-dns will usually adopt them — same owner id — but "usually" is
+    # not what a delivery gate is for, and if it does not, the symptom is
+    # indistinguishable from "not bootstrapped yet" forever.
+    creds = pathlib.Path(args.tunnel_credentials)
+    if not creds.is_file():
+        huh(f"{creds} not found — checked the delegation and the token, NOT "
+            "whether this zone still holds a dropped cluster's records. That "
+            "is the half that stops a later DNS assertion from passing on a "
+            "corpse.")
+        return UNKNOWN
+    try:
+        local_tunnel = json.loads(creds.read_text()).get("TunnelID", "")
+    except Exception as e:  # noqa: BLE001
+        huh(f"could not read a TunnelID out of {creds}: {e}")
+        return UNKNOWN
+    if not local_tunnel:
+        huh(f"{creds} has no TunnelID field")
+        return UNKNOWN
+
+    req = urllib.request.Request(
+        f"https://api.cloudflare.com/client/v4/zones/{zone['id']}"
+        "/dns_records?per_page=100",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            records = json.load(r).get("result") or []
+    except Exception as e:  # noqa: BLE001
+        huh(f"could not list the zone's DNS records: {e}")
+        return UNKNOWN
+
+    tunnel_backed = [r for r in records
+                     if str(r.get("content", "")).endswith(".cfargotunnel.com")]
+    if not tunnel_backed:
+        ok("no tunnel-backed records in the zone: a later DNS assertion has "
+           "nothing to inherit, so whatever appears will be this cluster's")
+        return PASS
+
+    foreign = [r for r in tunnel_backed
+               if r["content"].split(".")[0] != local_tunnel]
+    if foreign:
+        bad("this zone holds tunnel records pointing at a DIFFERENT tunnel "
+            "than the one this repo has credentials for")
+        print(f"      this repo's tunnel: {local_tunnel[:8]}…")
+        for r in foreign:
+            print(f"      {r['name']} -> {r['content'][:8]}….cfargotunnel.com")
+        print("      Delete them before bootstrapping. Left in place, "
+              "'<host> resolves' passes")
+        print("      on a dropped cluster's leftovers and cannot fail.")
+        return FAIL
+
+    ok(f"every tunnel record in the zone points at this repo's tunnel "
+       f"({local_tunnel[:8]}…)")
     return PASS
 
 
@@ -419,6 +484,7 @@ def main() -> None:
     d = sub.add_parser("dns")
     d.add_argument("--domain", required=True)
     d.add_argument("--token-env", default="CLOUDFLARE_TOKEN")
+    d.add_argument("--tunnel-credentials", default="cloudflare-tunnel.json")
     d.set_defaults(func=check_dns)
 
     f = sub.add_parser("flux")
