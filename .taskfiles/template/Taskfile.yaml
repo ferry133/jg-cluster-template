@@ -74,6 +74,7 @@ tasks:
       - task: generate-node-config
       - task: validate-schemas
       - task: render-configs
+      - task: check-backup-recipient
       - task: validate-manifests
       - task: encrypt-secrets
     preconditions:
@@ -143,6 +144,21 @@ tasks:
     cmd: python3 {{.SCRIPTS_DIR}}/check-node-dns-is-lan.py
     preconditions:
       - test -f {{.SCRIPTS_DIR}}/check-node-dns-is-lan.py
+
+  # Off-site backups are encrypted to the cluster's own age public key, and
+  # that value is derived rather than declared — so nobody types it, and nobody
+  # notices when it comes out wrong. Two silent failures live here: an empty
+  # recipient (the CronJob refuses to upload, every night, for the life of the
+  # appliance) and a recipient that is not this cluster's key (uploads succeed
+  # and no archive can be read at restore time).
+  #
+  # Runs between render-configs and encrypt-secrets: the plaintext render is
+  # the only moment the value that actually ships can be read.
+  check-backup-recipient:
+    internal: true
+    cmd: python3 {{.SCRIPTS_DIR}}/check-backup-recipient.py {{.ROOT_DIR}}
+    preconditions:
+      - test -f {{.SCRIPTS_DIR}}/check-backup-recipient.py
 
   validate-schemas:
     internal: true

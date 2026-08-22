@@ -280,14 +280,33 @@ class Plugin(makejinja.plugin.Plugin):
         # at handover, and a public key is not a secret. The consequence worth
         # stating: whoever holds age.key can read the backups, and nobody else
         # can — including the operator holding the R2 credentials.
+        #
+        # Read from age.key first, .sops.yaml only as a fallback. `.sops.yaml`
+        # is ITSELF a makejinja output (templates/config/.sops.yaml.j2), so on
+        # the first `task configure` of a fresh repo it does not exist yet when
+        # data() runs, and this derived ''. Every later run found the file and
+        # derived correctly — so the only run that got it wrong was the one
+        # whose output the cluster gets bootstrapped from, and `task configure`
+        # still exited 0. The backup CronJob then refuses to upload every night
+        # for the life of the appliance (jg-base backup/app/configmap.yaml:49).
+        #
+        # Reproduced on jg-janncotcc 2026-08-22: remove .sops.yaml, run
+        # makejinja, and BACKUP_AGE_RECIPIENT renders as "".
+        #
+        # age.key is an input, never an output, and `age-keygen` writes the
+        # public half into it as a comment — so it is readable at the moment
+        # data() runs, on the first render as on the hundredth.
         if 'backup_age_recipient' not in data:
-            sops_config = Path('.sops.yaml')
             recipient = ''
-            if sops_config.is_file():
-                match = re.search(r'age:\s*["\']?(age1[a-z0-9]+)',
-                                  sops_config.read_text())
+            for source, pattern in (
+                    (Path('age.key'), r'#\s*public key:\s*(age1[a-z0-9]+)'),
+                    (Path('.sops.yaml'), r'age:\s*["\']?(age1[a-z0-9]+)')):
+                if not source.is_file():
+                    continue
+                match = re.search(pattern, source.read_text())
                 if match:
                     recipient = match.group(1)
+                    break
             data['backup_age_recipient'] = recipient
         # The three LAN-facing services listen on non-overlapping ports
         # (80/443, 53, 1883), so one address serves all of them. Collapsing them
