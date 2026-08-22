@@ -445,10 +445,34 @@ patches:
 一起清掉，並用它來質疑這條路。**這次證明系統會留下。** 那次的 False 另有原因，與 reset
 的行為無關——**用量測的口氣說出推論，代價就是後面每個引用它的判斷都跟著歪。**
 
+#### 模擬出貨：搬到另一個網段，自己回來了（同日稍後）
+
+關機、實體搬移、在另一個網段插電開機。**全程沒有做任何設定。**
+
+| | 搬移前 | 搬移後 |
+|---|---|---|
+| IP | `10.9.1.238/24` | **`10.9.9.157/24`**（不同網段） |
+| machinestatus version | 60 | **65**（證明真的送了新資料，不是讀到快取） |
+| installed | True | True |
+| maintenance | True | True |
+| systemdisk | `/dev/nvme0n1` | `/dev/nvme0n1` |
+| node unique token | PERSISTENT | **PERSISTENT** |
+| `token 1` usecount | 2 | **2** |
+| `initial token` usecount | 2 | **2** |
+
+**兩顆 join token 的 usecount 都沒有增加。** 機器是用自己的 node unique token 回來的，
+join token 一次都沒動用——D13 那句「出貨之後不再依賴 join token」**從讀碼所得變成在真實
+搬遷場景下量到的**。
+
+這同時涵蓋了 5.3 的主體：插電 → DHCP 取得位址 → 自行回連管理面，中間沒有任何路由器或
+裝置設定。
+
 #### 還沒驗的
 
-- **拔 USB 後的第一次冷開機**是在辦公室網路上完成的。客戶端網路（未知路由器、可能封鎖 UDP）
-  仍未驗——那是 5.3，而 D12 的「一律開 gRPC tunnel」正是為它準備的
+- **這次搬到的是 `10.9.9.x`，仍然是自己的網路。** 客戶端網路（未知路由器、可能封鎖 UDP、
+  可能有出站限制）仍未驗。D12 的「一律開 gRPC tunnel」正是為那個情境準備的，而本次用的
+  ISO 恰好也開著 tunnel，所以走的是 tunnel 路徑、不是裸 UDP——**這代表裸 UDP 的行為
+  一次都沒被測到**
 - 本次用的是舊 ISO（`omni-longhorn` preset、預設永不過期的 token、`client 1` 標籤），
   **不是出貨形狀**。短 TTL token 與 `ticket=` 標籤仍未在實機上走過一次
 
