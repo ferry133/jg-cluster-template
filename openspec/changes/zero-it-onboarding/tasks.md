@@ -103,8 +103,33 @@
 
 ## 5. 出貨前準備（消除客戶端步驟）
 
-- [ ] 5.1 **[P1]** 確立出貨流程：Talos 預先安裝至內碟，客戶不需選擇開機裝置或進韌體設定
-- [ ] 5.2 **[P1]** 確立 ISO/schematic 內嵌 SideroLink join token 的流程
+- [~] 5.1 **[P1]** 出貨流程已確立（**見 D12**），實體步驟待有機器時補完
+  - **`omnictl media download <preset> --format raw`** 產出裸碟映像（實測，另有 iso／qcow2／pxe）。
+    不走 ISO——ISO 要客戶端有可開機媒體並選開機裝置，那正是規格要消除的
+  - **preset 是出貨形狀的唯一宣告點**：extensions 必須在寫碟前定案（§5.4：事後換 schematic
+    要逐台重開機）
+  - **⚠️ 一律開 `--use-siderolink-grpc-tunnel`**：預設走 UDP，被擋時機器永不回連，而那個
+    失敗與「客戶還沒插電」產生一模一樣的觀察。現有五個 preset 有兩個已開，這問題撞過
+  - **`--initial-labels` 要用來壓工單識別碼** → 回寫 `factory-agent` §4
+  - **未驗（需要實體機器）**：raw 映像不改韌體開不開得起來、寫碟的實體手段、
+    `--bootloader dual` 是否必要
+- [~] 5.2 **[P1]** 流程已確立（**見 D13**），兩件前提待驗
+  - **token 綁在 preset 上**（D12），所以「怎麼嵌」不是問題。真正要答的是**短 TTL 會不會
+    弄壞已加入的機器**——答案在 `provision.go` 的
+    `isAuthorizedSecureFlow() { return hasValidJoinToken || hasValidNodeUniqueToken }`：
+    **不會**，機器有自己的身分之後就不依賴 join token
+  - **但那個身分只有裝了 Talos 才持久**（`join_token_status.go` 逐字：Talos 未安裝時
+    node unique token 是 ephemeral）。**所以 D12 的 raw 預裝同時是短 TTL 成立的前提**——
+    改回 ISO 路線會讓這個假設失效，而失效的樣子是「某天機器就是連不回來了」
+  - **流程**：每批 `jointoken create --ttl` → preset 綁該 token → download raw → 寫碟 →
+    上線後確認 warnings 不含 `EPHEMERAL`／`UNSUPPORTED` → 整批完成後 `revoke`（不是 `delete`，
+    revoke 有 `unrevoke`）
+  - **TTL 選錯不是不可逆**：`jointoken renew` 讓過期批次續期，不必重新寫碟
+  - **待驗一**：jcom 的 Omni 是否跑在 `legacy` join token 模式（那會整套關閉）。原始碼
+    預設是 `legacyAllowed`，但部署設定沒驗到
+  - **待驗二**：`--talos-version` 要釘哪一版才支援 unique node token
+  - **讀碼版本**：`~/coding/omni` @ `76af8b22`（2026-05-29），而**部署的比它新**
+    （子指令 `media` vs 原始碼的 `installationmedia`）。未在活機器上觀察過
 - [ ] 5.3 **[P1]** 驗證機器插電後自行取得位址並回連管理面，全程無任何路由器或裝置設定
 - [~] 5.4 **[P1]** **不能帶著一個永遠紅的健檢出貨**（唯一副本在 `deployment-profiles` 5.7，**已由 D48 定案並實作，未 push**）：客戶的便宜路由器只支援「DHCP 發 k8s-gateway 位址」那一種做法，而 daily-check 問的是路由器自己解不解得出內網名稱——那種做法下它永遠答不出來。於是每一台 appliance 出廠即帶著一個永遠 FAIL 的檢查，而它同時扣住 dead-man switch
   - 對本 change 特別要緊：那個檢查所在的信件也負責通報其他 17 項。第一封信就是紅的，收信的人會學會忽略它，而這正是零 IT 客戶唯一的異常通報管道

@@ -309,6 +309,14 @@
 > 是拒絕在沒有基準的情況下自動化。
 
 - [ ] 4.1 實作機器註冊偵測，並與開放中的工單比對
+  - **比對可以是決定性的，不必啟發式**（`zero-it-onboarding` D12，2026-08-21）：
+    `omnictl media preset create --initial-labels` 讓工單識別碼在**寫碟時**就成為機器標籤，
+    所以 4.1 是查表、4.2 的「未匹配」是標籤不存在，而不是某種相似度判斷。現有的
+    `omni-longhorn` preset 已經帶著 `client 1` 標籤，形式是現成的
+  - **§4 目前從「機器已經回連」起跳，而機器會不會回連是更早一步決定的**：
+    `--use-siderolink-grpc-tunnel` 沒開時走 UDP，被客戶網路擋掉就永遠不出現——而那與
+    「客戶還沒插電」在 factory 這端產生一模一樣的觀察，也就是 4.13 要回報的情形。
+    D12 裁定 appliance 一律開 tunnel，4.13 的可能原因清單應據此收窄
 - [ ] 4.2 未匹配任何工單的機器不得自動建叢集，改為回報 operator
 - [ ] 4.3 實作 Omni cluster 建立（含 `cniConfig: none` 等首次開機前必須的 patch）
 - [ ] 4.4 實作由 template 建立 user repo，名稱由 `cluster_name` 決定（決定性命名）

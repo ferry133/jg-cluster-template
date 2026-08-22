@@ -196,6 +196,136 @@ D11 原本只想到頁面自己的混合內容，沒想到 gateway 會先把 HTT
 一次性的安裝驗收它做得到；每日的外部契約監看它做不到。**D45 的第三個方向對它自己的
 用途是無效的**，這件事要回寫 D45，不要留在那裡當作還有三個選項。
 
+### D12. 出貨流程：raw 映像直接寫進內碟，而形狀由一個 preset 宣告（2026-08-21）
+
+實測自 jcom 上的 Omni（唯讀查詢，port-forward 已關閉）。
+
+**`omnictl media download <preset> --format raw`** 產出 `.raw.xz` 裸碟映像（另有 `iso`、
+`qcow2`、`pxe`）。**所以不必走 ISO。** ISO 路線要求客戶端存在可開機媒體並選擇開機裝置，
+而規格明訂那必須在出貨前消除（D6 段）。raw 寫進內碟之後，機器只有一個可開機裝置，
+客戶不需要進韌體。
+
+**preset 是出貨形狀的唯一宣告點。** `omnictl media preset create` 綁定：
+
+| 旗標 | 為什麼對 appliance 要緊 |
+|---|---|
+| `--extensions` | **寫碟之前就要定案**。`docs/deploy/combinations.md` §5.4：事後換 schematic 要逐台重開機。現有 `omni-longhorn` preset 已帶 `siderolabs/iscsi-tools` + `siderolabs/util-linux-tools` |
+| `--join-token` | 見下，這一格是 5.2 |
+| `--initial-labels` | **工單綁定的決定性手段**（見下） |
+| `--bootloader` | `auto` / `uefi` / `bios` / `dual`。現有 preset 皆 `auto` |
+| `--use-siderolink-grpc-tunnel` | 見下，這一格決定機器回不回得來 |
+| `--secureboot` / `--talos-version` / `--extra-kernel-args` | — |
+
+#### `--initial-labels` 讓工單比對是決定性的
+
+`factory-agent` 4.1／4.2 要求「未匹配任何工單的機器不得自動建叢集，改為回報 operator」。
+**在寫碟時就把工單識別碼壓成機器標籤**，比對就成了查表，不是啟發式。現有的
+`omni-longhorn` preset 已經帶著 `client 1` 這個標籤，形式是現成的。
+
+這一項要回寫 `factory-agent` §4——它目前從「機器註冊偵測」起跳，而標籤是在更早一步
+決定的。
+
+#### ⚠️ SideroLink 預設走 UDP，而失敗看起來像機器沒開機
+
+`--use-siderolink-grpc-tunnel` 的說明明寫：**只在網路封鎖 UDP 時才啟用**，因為 HTTP/2
+隧道有顯著額外負擔。但 appliance 的出貨對象是**未知的客戶網路**。UDP 被擋時機器永遠
+不回連，而從 factory 看過去，那與「客戶還沒插電」「機器開不起來」**產生一模一樣的觀察**
+——正是 4.13 要回報的那一類，也正是 CLAUDE.md 那條「什麼都沒有至少有兩種解釋」。
+
+本 repo 的 `CLAUDE.md` 已經記著一座叢集的出口封鎖 UDP 7844（cloudflared QUIC）。而
+Omni 這邊，現有五個 preset 裡有兩個（`omni-longhorn`、`amd64-1.13.2-HTTP2`）已經開了
+tunnel——**這個問題撞過**。
+
+**裁定：appliance 出貨一律開 tunnel。** 用一份已知的頻寬代價，換掉一個遠端分辨不出來的
+失效。要關掉它必須先有證據說明那台的網路不封鎖 UDP，而出貨時我們沒有那個證據。
+
+#### join token 不能用預設那一顆（這是 5.2 的核心）
+
+預設 token **永不過期、使用次數無上限**，而它會被燒進每一張出貨的碟。撿到一台機器的
+映像，就能把任意機器註冊進整個 fleet 的 Omni。
+
+`omnictl jointoken create --ttl <duration>` 可以開短期 token。**每批出貨一顆，TTL 覆蓋
+運送與安裝窗口即可**，過期後那張碟的映像就註冊不了東西。
+
+> ⚠️ 本次查詢在終端機列出過現有 join token 的 ID，而 join token ID **就是憑證本身**
+> （它進到 kernel args 裡）。那份輸出應視為已洩漏，建議一併輪替。
+
+#### 未驗，都需要實體機器
+
+- raw 映像在目標硬體上是否**不改韌體就開得起來**（UEFI fallback path `\EFI\BOOT\BOOTX64.EFI`）
+- **寫碟的實體手段**：USB-to-NVMe dock 直寫，或開機到 live 環境再寫——取決於機殼拆不拆得開
+- `--bootloader dual` 是否必要（現有 preset 都是 `auto`，但它們不是出貨機）
+
+### D13. 短 TTL 的 join token 之所以安全，是因為 D12 選了 raw 預裝（2026-08-21）
+
+5.2 真正要回答的不是「怎麼把 token 嵌進映像」——D12 已經答了（綁在 preset 上，任何格式
+下載都帶著它）——而是**短 TTL 會不會弄壞已經加入的機器**。這件事不能推，會決定整個流程。
+
+#### 答案在一個 OR 裡
+
+`internal/pkg/siderolink/provision.go`：
+
+```go
+func (pc *provisionContext) isAuthorizedSecureFlow() bool {
+	return pc.hasValidJoinToken || pc.hasValidNodeUniqueToken
+}
+```
+
+**持有有效 node unique token 的機器，即使 join token 已過期或被撤銷，仍然通過授權。**
+join token 只在「還沒有自己的身分」時才是必要條件。
+
+#### 但那個身分只有裝了 Talos 才是持久的
+
+`join_token_status.go` 對每台使用該 token 的機器產生警告，其中一條逐字是：
+
+> `Talos is not installed so the generated node unique token is ephemeral`
+
+所以：
+
+| 供裝方式 | node unique token | join token 過期後 |
+|---|---|---|
+| **raw 預裝內碟（D12）** | 首次開機即 **PERSISTENT** | 機器不受影響 |
+| ISO／維護模式 | **EPHEMERAL** | 機器仍依賴 join token |
+
+**D12 的選擇不只是省掉客戶的動作，它同時是短 TTL 成立的前提。** 兩個決定是同一件事的
+兩面——若哪天有人為了方便改回 ISO 路線，這裡的 TTL 假設會跟著失效，而失效的樣子是
+「某天機器就是連不回來了」。
+
+#### 兩件會讓這個論證失效的事
+
+1. **Talos 版本太舊** → 警告變成 `Installed Talos version does not support unique node
+   tokens`，授權退回 `isAuthorizedLegacyJoin()`，那條路徑**只認 join token**。所以 preset
+   的 `--talos-version` 要釘在支援 unique token 的版本，並在機器上線後確認該 token 的
+   warnings 不含 `EPHEMERAL` / `UNSUPPORTED`。
+2. **Omni 跑在 `legacy` join token 模式** → `nodeUniqueTokensEnabled` 為 false，整套機制
+   關閉。原始碼預設是 `legacyAllowed`（≠ legacy，所以預設是開的），但 **jcom 上的實際
+   設定我沒有驗到**——`omni` deployment 的 args 沒有相關旗標，設定應該在設定檔裡。
+
+#### TTL 選錯不是不可逆的
+
+真正的營運風險是：箱子在客戶家放了三週沒開，token 過期，機器**永遠完成不了第一次註冊**。
+
+但 `omnictl jointoken renew <id>` 存在——過期的批次可以續期，不需要重新寫碟。**這一點
+才是短 TTL 可以接受的原因**：選短了會被發現（機器沒出現），而發現後的修復是一道指令，
+不是回收機器。
+
+#### 出貨流程（5.2 定案）
+
+1. `omnictl jointoken create --ttl <涵蓋運送＋安裝窗口>` —— **每批一顆，不用預設那顆**
+   （預設 token 永不過期、使用次數無上限，而它會燒進每一張出貨的碟）
+2. `omnictl media preset create --join-token <id> --extensions … --initial-labels …
+   --use-siderolink-grpc-tunnel --talos-version <支援 unique token>`
+3. `omnictl media download <preset> --format raw` → 寫入內碟
+4. 機器上線後確認：出現在 Omni、且該 token 的 warnings **不含** `EPHEMERAL` 或 `UNSUPPORTED`
+5. 整批註冊完成後 `omnictl jointoken revoke <id>`。**用 revoke 不用 delete**——revoke 有
+   `unrevoke` 可回復，delete 沒有
+
+#### 讀的是哪一份原始碼
+
+`~/coding/omni` @ `76af8b22`（2026-05-29）。**部署在 jcom 的 Omni 比它新**——證據是
+部署版的 `omnictl` 子指令叫 `media`，而這份原始碼裡叫 `installationmedia`。以上是讀碼
+所得，**沒有在活的機器上觀察過**：沒有實體機器，也不該為了驗證去撤銷一顆正在用的 token。
+
 ## Risks / Trade-offs
 
 - **三題 intake 也可能太多** → D2 的實測會暴露；若實測顯示客戶答不出來，就再往 factory 側推（例如名稱自動產生）。
