@@ -53,3 +53,13 @@ __pycache__/
 cluster.yaml
 *cluster.yaml
 nodes.yaml
+
+# …and anything DERIVED from cluster.yaml carries cluster.yaml's credentials.
+# `.merged-config.yaml` is cluster.yaml unified with nodes.yaml, written by
+# `task configure` so `cue vet` can see one document. It is deleted seconds
+# later — except when validation FAILS, and that is precisely the moment the
+# operator is editing, retrying, and most likely to reach for `git add -A`.
+# Found on jg-janncotcc 2026-08-22: public repo, file present with
+# cloudflare_token in plaintext, matched by no rule above.
+.merged-config.yaml
+*merged-config*
