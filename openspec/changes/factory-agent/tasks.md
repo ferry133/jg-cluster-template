@@ -312,6 +312,18 @@
 - [ ] 4.2 未匹配任何工單的機器不得自動建叢集，改為回報 operator
 - [ ] 4.3 實作 Omni cluster 建立（含 `cniConfig: none` 等首次開機前必須的 patch）
 - [ ] 4.4 實作由 template 建立 user repo，名稱由 `cluster_name` 決定（決定性命名）
+  - **建完要清掉模板自己的開發產物**（2026-08-22，7.2 首次實跑發現）：GitHub template 會
+    複製 template repo 裡**每一個被追蹤的檔案**，於是新的 cluster repo 帶著
+    jg-cluster-template 自己的五個 openspec change——53 個檔、588K 的提案、決策與事故
+    紀錄，而 cluster repo 是 public 且以客戶命名
+  - 不只是雜訊：它構成**第二份副本**，而 fleet 規則明寫「其他 repo 只留連結指標，不重複
+    追蹤——第二份副本必然分岔，而被照著執行的往往是錯的那一份」。template 每產生一個
+    repo 就複製一次，分岔是必然不是風險
+  - **決定性命名的規則本身也還沒寫下來**。D4 要求名稱「由工單可推導」，但沒有定義推導式。
+    7.2 當場由既有叢集反推出慣例並由 ferry133 定案：`jg-<網域去掉點號>`
+    （`janncot.cc` → `jg-janncotcc`），repo 與 tunnel 同名。**Omni 不接受點號**
+    （`name should only contain letters, digits, dashes and underscores`，實測），
+    所以規則必須產出無點號的字串——這是規則的約束，不是巧合
 - [ ] 4.5 實作 Cloudflare tunnel 與 DNS 建立，名稱同樣決定性
 - [ ] 4.6 實作 `cluster.yaml` 推導：網路值一律來自 Omni 回報的機器實際網路狀態，不接受人工輸入
 - [ ] 4.7 串接 `task configure` → commit → push

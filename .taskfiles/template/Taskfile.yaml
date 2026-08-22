@@ -153,10 +153,16 @@ tasks:
       - |
         yq eval-all '. as $item ireduce ({}; . * $item)' \
           {{.TEMPLATE_CONFIG_FILE}} {{.TEMPLATE_NODE_CONFIG_FILE}} > {{.MERGED_CONFIG_FILE}}
+        rc=0
         cue vet {{.MERGED_CONFIG_FILE}} \
           {{.TEMPLATE_RESOURCES_DIR}}/cluster.schema.cue \
-          {{.TEMPLATE_RESOURCES_DIR}}/nodes.schema.cue
+          {{.TEMPLATE_RESOURCES_DIR}}/nodes.schema.cue || rc=$?
+        # Delete on the failure path too. The merged file is cluster.yaml's
+        # plaintext credentials; aborting here used to leave it in the repo
+        # root until the next successful run — i.e. for exactly as long as the
+        # operator is editing and retrying.
         rm -f {{.MERGED_CONFIG_FILE}}
+        exit $rc
     preconditions:
       - test -f {{.TEMPLATE_RESOURCES_DIR}}/cluster.schema.cue
       - test -f {{.TEMPLATE_RESOURCES_DIR}}/nodes.schema.cue

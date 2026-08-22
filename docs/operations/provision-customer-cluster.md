@@ -97,8 +97,45 @@ of `docs/deploy/manual.md`) and before anything else depends on it.
 Full policy — what to escrow, where, and why the repo does not need it:
 `docs/operations/age-key-escrow.md`. Not repeated here.
 
-**Precondition:** `age.key` exists in the cluster directory and `.sops.yaml` has
-been generated.
+**Precondition:** `age.key` exists in the cluster directory, **and the escrow
+destination already exists and is writable by the credentials you hold.**
+
+> ⚠️ **The destination is a delivery prerequisite and nothing lists it.** Found
+> 2026-08-22 on the first real run of this page: the store existed but the
+> service account could not create a bucket, and granting it took a console
+> visit plus a policy edit. Sort this out before the delivery, not at this step
+> — and when you test the grant, **probe each verb separately** (list / put /
+> get) and include one that must be *denied*. A policy that allows everything
+> and a policy that was never applied both let a single write succeed.
+
+> ⚠️ **`.sops.yaml` does not exist yet, and this step used to claim it did.**
+> The order is circular: this step wanted `.sops.yaml`, which `task configure`
+> generates, which the appliance profile blocks until `age_key_escrowed: true`,
+> which requires this step. Resolve it by comparing against the key file itself
+> — `age-keygen -y age.key` — since that is what the recipient in `.sops.yaml`
+> is derived from anyway, and **record which of the two you compared against.**
+> Re-verify against `.sops.yaml` after rendering; that is the Step 5 checklist
+> item, and it is what closes the loop.
+
+**Where it must not go:** the same failure domain or the same credential domain
+as the backups. Two buckets on one object store are neither. Measured
+2026-08-22: one service account held access to both the escrow bucket and a
+backup bucket on the same host — so a single leaked credential yields the
+ciphertext *and* the key it is encrypted to, and the encryption bought nothing.
+
+Replication does not fix this and can make it worse: a mirror faithfully copies
+a deletion, so the prune defect in `deployment-profiles` 8.3c would empty both
+copies on the same day. A **snapshot** target does fix that half; it does not
+touch the credential half.
+
+A workable arrangement when no password manager is available: encrypt the key
+with a passphrase, put the encrypted file where durability lives (the object
+store, replicated), and put the passphrase where separation lives (the
+operator's keychain, synced to their account). Neither half alone is enough,
+and the two live in categorically different systems. Verify by **decrypting the
+copy fetched back from the store, using the passphrase read back out of the
+keychain** — that exercises both halves. Reading either from the local copy you
+just made proves nothing about the thing you will actually recover from.
 
 ```sh
 # 1. Copy the key to the escrow store (password manager entry on the operator's
@@ -256,13 +293,54 @@ broken deployment. Fix the URL in Auth0; no redeploy is needed.
 Mechanics: **Stages 1–3 and 5–7 of `docs/deploy/manual.md`**, path (B) Omni
 unless this delivery is an explicit manual-Talos exception. Not repeated here.
 
-Three assertions this runbook adds:
+Assertions this runbook adds:
+
+### The name is derived, not chosen
+
+`cluster_name` fixes the Omni cluster, the repo and the tunnel all at once
+(`factory-agent` D4 requires them derivable from the ticket so a re-run
+converges instead of creating a second of each). The rule, settled 2026-08-22:
+
+```
+cluster_name    = jg-<customer domain, dots removed>     janncot.cc → jg-janncotcc
+repository_name = ferry133/<cluster_name>
+tunnel name     = <cluster_name>
+```
+
+**Dots are not a style question.** Omni rejects them outright — `name should
+only contain letters, digits, dashes and underscores` — so a rule that keeps
+the dot produces a name that fails at cluster creation, several steps after you
+committed to it. Measured, not assumed.
+
+Older clusters (`jg-jiahd`, `jcom`) predate the rule and drop the TLD. Leave
+them; do not add an exception to the rule so that new names match old ones.
+The TLD is in the rule because a second-level label alone is not unique — two
+customers on `acme.tw` and `acme.com` collide the moment both exist.
+
+### Delete the template's own development tree from the new repo
+
+GitHub's template copy takes **every tracked file**, so a fresh cluster repo
+arrives carrying this repository's `openspec/` — 53 files of proposals,
+decisions and incident records, in a repo that is named after a customer and
+may be public. Remove it before the first push.
+
+It is not only noise. It is a **second copy of a tracked record**, and the fleet
+rule is that other repos hold pointers, never duplicates — the duplicate always
+diverges, and the one being followed is usually the wrong one. Every repo the
+template spawns makes another.
 
 ### `cluster.yaml` is never committed. Not once, not "temporarily".
 
 It holds plaintext credentials — the Cloudflare token, the R2 keys, and a
-**fleet-wide** Auth0 client secret shared by every cluster. It is gitignored
-(`.gitignore:19`).
+**fleet-wide** Auth0 client secret shared by every cluster. It is gitignored.
+
+**Check the rule protects the content, not a filename.** The ignore file was
+rewritten 2026-08-22 after the first real run found `kubeconfig-sa` unmatched:
+the rule named `kubeconfig`, and the variant beside it — the one carrying an
+embedded service-account token, the *more* sensitive of the two, and one this
+project requires to exist — was not covered. Same shape as the `config.gen/`
+leak below, one name over instead of one directory over. When adding a rule,
+ask what else holds this, not what this is called.
 
 **This has already gone wrong, repeatedly, so do not read the rule as
 precautionary.** Measured 2026-08-17 by running the content scan below:
@@ -478,6 +556,13 @@ the dead-man ping.
 - [ ] Daily health check configured (`daily_check_*`) — otherwise the CronJob
       prints "not configured", exits 0, and the cluster has no health check while
       showing no failures.
+- [ ] **Retention is known-broken; say so rather than implying a history exists.**
+      `deployment-profiles` 8.3c, measured 2026-08-16 and still open by decision:
+      the prune computes its cutoff as today, so every run deletes everything but
+      the current day. `BACKUP_RETAIN_DAYS` has never had any effect on any
+      cluster. A replicated destination does not save this — a mirror copies the
+      deletion; only a **snapshot** target lets you get yesterday back. Confirm
+      which the destination is, and record the answer.
 - [ ] Revocation list for this delivery recorded (§6.4), naming every credential
       issued and how it is revoked. Password change alone does not revoke
       already-issued tokens.
