@@ -86,6 +86,132 @@ the customer changes one password and the external services are theirs.
 
 ---
 
+## Step −1 — Prepare the machine before the box ships
+
+**This happens at the factory, on your bench, before anything in Step 1 needs to
+exist.** It can run in parallel with Steps 1–2 (the customer's account and
+domain); nothing here depends on them.
+
+The goal is one state, and all six parts of it matter:
+
+```
+內碟有 omni-talos ／ 箱內無 USB ／ 從內碟開機 ／ maintenance mode
+／ 插電自行註冊回 office Omni ／ 不再依賴 join token
+```
+
+Verified end to end on hardware 2026-08-22 (`zero-it-onboarding` D14). The USB is
+a **factory tool and is not shipped** — an appliance customer is never asked to
+select a boot device.
+
+### 1. Boot the Omni ISO from USB
+
+**Assertion** — the machine appears in Omni, and you are looking at the right one:
+
+```sh
+omnictl get machinestatus <uuid> -o json     # maintenance: true, no `installed` label
+omnictl get disks -n <uuid>                  # positive control: Omni can reach it
+```
+
+The disk listing is the positive control. Without it, "no `installed` label" is
+produced equally by a machine with an empty disk and by reading the wrong
+machine.
+
+**The Talos API is not reachable on the LAN.** Measured: ports `50000`/`50001`
+refused at the machine's LAN address; an Omni-ISO machine exposes the API only
+over SideroLink. Everything here goes through Omni, addressed by **machine
+UUID**, never by IP — and that is not a workaround, it is the only thing that
+works once customer LANs overlap (`deployment-profiles` D49).
+
+### 2. Create a throwaway cluster that names the install disk
+
+```yaml
+kind: Machine
+name: <uuid>
+patches:
+  - idOverride: 100-<cluster>-install-disk
+    inline: |
+      machine:
+        install:
+          disk: /dev/nvme0n1        # ← read it, do not assume it
+```
+
+> ⚠️ **Naming the disk is the one line that cannot be skipped.** The boot USB is
+> itself a disk. Measured on the test machine: `/dev/sda`, 31 GB, `USB DISK 3.0`
+> next to `/dev/nvme0n1`, 256 GB, `Kingchuxing`. Letting Omni choose can install
+> to the USB, **and the whole run looks like a success until the stick is pulled.**
+> Read model, size and transport before writing the patch.
+
+**Assertion** — after the install completes:
+
+```
+installed = True          systemdisk = the disk you named
+```
+
+**Failure branch — `systemdisk` is the USB:** stop. The machine must be
+re-imaged; nothing later in this runbook detects it.
+
+### 3. Delete the cluster
+
+**Assertion — both halves, and the pair is the point:**
+
+```
+installed   = True     ← the system survived on disk
+maintenance = True     ← the config is gone
+```
+
+Omni resets only the STATE and EPHEMERAL partitions, so the OS stays. Also check
+the machine's node unique token:
+
+```sh
+omnictl get nodeuniquetokenstatus <uuid> -o json     # state 1 = PERSISTENT
+```
+
+`PERSISTENT` is what makes the shipped machine independent of the join token —
+it is granted because Talos is *installed*, not because it is in a cluster.
+
+**Failure branch — `installed = False`:** the reset took the system with it. Go
+back to step 2; do not ship a machine in this state, it will boot to nothing.
+
+### 4. Remove the USB, power off, ship
+
+**Assertion** — the USB is gone from the machine's own view, not just from the
+bench:
+
+```sh
+omnictl get machinestatus <uuid> -o json     # exactly one disk, flagged system
+```
+
+**Then shut down** with `omnictl machine shutdown <uuid>`, and **verify by ping,
+not by Omni**. Measured: `connected` still read `true` for more than two minutes
+after the machine stopped answering. Omni's connection state lags reality, and a
+stale `true` reads exactly like a healthy machine.
+
+### 5. On arrival — the assertion that proves the whole design
+
+Plug in power and network, press the button. Then:
+
+| | expected |
+|---|---|
+| `machinestatus` **version** | **increases** — this is how you know it really came back |
+| address | **different** from the factory's |
+| `installed` / `maintenance` | True / True, unchanged |
+| node unique token | `PERSISTENT`, unchanged |
+| join token **usecount** | **unchanged** |
+
+**The last row is the one that matters.** An unchanged usecount proves the
+machine came back on its own identity and never spent the join token — which is
+why the token's job is provenance, not lifetime, and why it must not expire
+(`zero-it-onboarding` D13).
+
+Use **version**, not `connected`, to decide it is back: see the lag above.
+
+**Failure branch — the machine never appears:** five different faults produce
+this identical observation — no power, no boot, no DHCP, outbound blocked,
+firmware not booting the internal disk (`zero-it-onboarding` D8). Do not report
+"machine did not appear" as a diagnosis; it is one symptom of five causes.
+
+---
+
 ## Step 0 — Escrow `age.key`, and prove the copy is the key
 
 **This step is out of order on purpose.** It appears first because it is the one
@@ -454,14 +580,23 @@ the client and retry **before changing anything**.
 **Known limit, tell the customer:** a secondary DNS covers the cluster going
 *silent*. It does not cover the cluster answering *wrongly* — a client accepts
 an NXDOMAIN or SERVFAIL and never asks the secondary. A router reset, a
-replacement unit or an ISP-pushed config all silently undo this step; the daily
-health check reports `LAN cannot resolve internal names` as a FAIL and withholds
-the dead-man ping.
+replacement unit or an ISP-pushed config all silently undo this step.
+
+The daily health check catches it by resolving `internal.<domain>` through the
+node's ordinary resolution path — the same path a client uses — and does not
+care which of the three router methods is in force (D48). **It runs only where
+the node's resolvers are the LAN's**, derived from `node_dns_servers`: unset
+means yes. Pin those to a public resolver and the row disappears rather than
+alarming daily, which is a real blind spot on such a cluster.
 
 ---
 
 ## Step 5 — Before you call it delivered
 
+- [ ] The machine arrived **on its own identity**: the join token's `usecount`
+      is unchanged since Step −1, and its node unique token is `PERSISTENT`.
+      An increased usecount means it re-registered as a new machine — the disk
+      was not carrying what you shipped.
 - [ ] Step 0's escrow record exists and says **"compared, public halves match
       verbatim"**. `age_key_escrowed: true` is set only because that record
       exists.
