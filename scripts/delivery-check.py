@@ -186,6 +186,12 @@ def check_repo_hygiene(args) -> int:
 
     # 4. By content, because the next leak is at a name nobody predicted.
     if args.deep:
+        # Positive control first: a clean deep scan and a deep scan that cannot
+        # recognise a credential produce the same empty list.
+        if not _scan_blob_for_secrets(_SCAN_CONTROL):
+            huh("deep scan cannot recognise a credential in its own control "
+                "sample, so finding none in this history proves nothing")
+            return UNKNOWN
         found = _scan_history_for_secrets(d)
         if found:
             bad(f"credential-shaped content in {len(found)} historical blob(s)")
@@ -193,7 +199,8 @@ def check_repo_hygiene(args) -> int:
                 print(f"      {path}  ({sha[:12]})")
             failed = True
         else:
-            ok("deep scan: no credential fields with real values in any blob")
+            ok("deep scan: control sample recognised, and no credential fields "
+               "with real values in any blob")
     else:
         print("      (skipped the content scan; pass --deep. It is slow, and is")
         print("       a once-per-repo check rather than once-per-delivery.)")
@@ -201,11 +208,53 @@ def check_repo_hygiene(args) -> int:
     return FAIL if failed else PASS
 
 
+_SECRET_LINE = re.compile(
+    r"(?im)^\s*(" + "|".join(SECRET_FIELDS) + r")\s*:\s*(.+)$"
+)
+
+
+def _is_real_credential(value: str) -> bool:
+    """Does this right-hand side look like a live secret rather than a placeholder?
+
+    The case-insensitive field match above is deliberate: the rendered Secret
+    spells the same fields in UPPER CASE, and a plaintext render is exactly the
+    leak worth catching. But that breadth is what makes the SOPS exclusion
+    mandatory — `kubernetes/components/sops/cluster-secrets.sops.yaml` is
+    *supposed* to be committed, with every one of these fields present and
+    encrypted, so without it the scan FAILs on the correct state of every
+    cluster repo. Measured on jg-janncotcc 2026-08-22: five fields matched, all
+    five values began `ENC[`, and the whole delivery reported a leak.
+
+    That is the failure this file exists to prevent, pointed at itself: a guard
+    that fires on the correct input gets switched off, and a switched-off guard
+    reads exactly like a passing one — the same reasoning as the placeholder
+    exemptions in `delivery-ticket.py`.
+    """
+    v = value.split("#", 1)[0].strip().strip("\"'").strip()
+    if not v or len(v) < 8:
+        return False
+    if v.startswith(("<", "${", "$(")):          # documentation, not a value
+        return False
+    if v.startswith(("ENC[", "ENC(")):           # SOPS ciphertext — meant to be here
+        return False
+    if "change" in v.lower() or set(v.lower()) == {"x"}:
+        return False
+    return True
+
+
+def _scan_blob_for_secrets(text: str) -> list[str]:
+    """Field names in this blob whose value looks like a live credential."""
+    return [f for f, value in _SECRET_LINE.findall(text) if _is_real_credential(value)]
+
+
+# A blob shaped like the thing being looked for. If the scan cannot find a
+# credential here, its silence on real history means nothing — see the
+# positive control on the path query above.
+_SCAN_CONTROL = "stringData:\n  cloudflare_token: 0123456789abcdef0123456789abcdef01234567\n"
+
+
 def _scan_history_for_secrets(d: str) -> list[tuple[str, str]]:
     listing = run(["git", "-C", d, "rev-list", "--all", "--objects"]).stdout
-    pattern = re.compile(
-        r"(?im)^\s*(" + "|".join(SECRET_FIELDS) + r")\s*:\s*(.+)$"
-    )
     hits: list[tuple[str, str]] = []
     seen: set[str] = set()
     for line in listing.splitlines():
@@ -219,12 +268,8 @@ def _scan_history_for_secrets(d: str) -> list[tuple[str, str]]:
         blob = run(["git", "-C", d, "cat-file", "blob", sha])
         if blob.returncode != 0:
             continue
-        for _field, value in pattern.findall(blob.stdout):
-            v = value.split("#", 1)[0].strip().strip("\"'").strip()
-            if v and not v.startswith(("<", "${", "$(")) and len(v) >= 8 \
-               and "change" not in v.lower() and set(v.lower()) != {"x"}:
-                hits.append((path, sha))
-                break
+        if _scan_blob_for_secrets(blob.stdout):
+            hits.append((path, sha))
     return hits
 
 
