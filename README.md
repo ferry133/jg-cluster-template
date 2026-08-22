@@ -8,13 +8,24 @@ GitHub template for a Kubernetes cluster managed by ferry133. Click
 | You are | Read |
 |---------|------|
 | A customer who received the hardware | **[`README-zero-IT.md`](README-zero-IT.md)**（繁體中文）— three physical actions, nothing else |
-| Working out what a given cluster needs at each phase | **[`docs/deploy/combinations.md`](docs/deploy/combinations.md)**（繁體中文）— which combination this is, and what preparation / installation / operation each dimension adds |
-| Provisioning a cluster yourself, by hand | **[`docs/deploy/manual.md`](docs/deploy/manual.md)** — full step-by-step, both provisioning paths |
+| Working out what a given cluster needs at each phase | **`fleet-ops docs/deploy/combinations.md`**（繁體中文）— which combination this is, and what preparation / installation / operation each dimension adds |
+| Provisioning a cluster yourself, by hand | **`fleet-ops docs/deploy/manual.md`** — full step-by-step, both provisioning paths |
 | Delivering an appliance to a customer | The operator runbook (see `ferry133/fleet-ops` → `openspec/changes/factory-agent`, private) |
 | Changing how the template works | [`CLAUDE.md`](CLAUDE.md) — architecture, conventions, and the rules that are not obvious from the code |
 
 This page routes; it deliberately contains no deployment steps, so there is only
 one place each procedure is written down.
+
+> **`docs/` is not in this repo.** It moved to `ferry133/fleet-ops` (private) on
+> 2026-08-22, for the same reason `openspec/` did: this repo is public *and* a
+> GitHub template, and a template copy takes every tracked file, so each
+> customer-named repo inherited all of it.
+>
+> Every `fleet-ops docs/...` reference below and in `cluster.sample.yaml`,
+> `templates/` and `scripts/` names a path in that repository. **They are not
+> reachable from a generated cluster repo**, which is a real cost of the move
+> and not an oversight — an operator without access to `fleet-ops` cannot follow
+> those pointers.
 
 ## Architecture
 
@@ -44,7 +55,7 @@ way — `replicated_storage` installs Longhorn without moving bulk onto it, whic
 is what a multi-node cluster with a NAS needs.
 
 Those two are not the only axes that change what has to be done. See
-[`docs/deploy/combinations.md`](docs/deploy/combinations.md) for the full list,
+`fleet-ops docs/deploy/combinations.md` for the full list,
 the combinations validation rejects outright, and what each phase requires.
 
 ## Provisioning paths

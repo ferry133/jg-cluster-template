@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Executable form of the provisioning runbook's assertions — §7.1a.
 
-`docs/operations/provision-customer-cluster.md` is a document made almost
+`fleet-ops docs/operations/provision-customer-cluster.md` is a document made almost
 entirely of checks, executed by a person, with nothing behind them. This runs
 the ones a machine can run, so that 7.2 has real assertions to execute and 7.3
 has something an agent can run identically.

@@ -20,7 +20,7 @@ import (
 	//   nfs          NAS-backed
 	//   replicated   Longhorn. Requires Talos system extensions on every node,
 	//                which no manifest can install — see
-	//                docs/operations/replicated-storage.md
+	//                fleet-ops docs/operations/replicated-storage.md
 	storage_backend: "local-path" | "nfs" | "replicated"
 
 	// An appliance has no NAS to configure and nobody to configure it. It is

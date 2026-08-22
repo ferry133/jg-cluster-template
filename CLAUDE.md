@@ -75,7 +75,7 @@ Job，但也等於沒有健檢，實務上每個叢集都該填。遷移注意�
 |------|------|------|
 | `README.md` | 任何人 | 入口，只做導向，**不含任何部署步驟** |
 | `README-zero-IT.md` | 收到硬體的客戶 | 繁中，三個物理動作，無指令無術語 |
-| `docs/deploy/manual.md` | 進階使用者 | 完整手動部署，兩條供裝路徑 |
+| `fleet-ops docs/deploy/manual.md` | 進階使用者 | 完整手動部署，兩條供裝路徑 |
 | `CLAUDE.md`（本檔） | 維護者 | 架構、慣例、程式碼看不出來的規則 |
 
 一份程序只寫在一個地方。operator runbook 由 `factory-agent` change 承擔，
@@ -231,18 +231,18 @@ kubectl --kubeconfig kubeconfig-sa get nodes
 
 ### Issue tracker
 
-Issues live in GitHub Issues (`ferry133/jg-cluster-template`), operated via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues (`ferry133/jg-cluster-template`), operated via the `gh` CLI. See `fleet-ops docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-Default five-role vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+Default five-role vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `fleet-ops docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context: `CONTEXT.md` + `fleet-ops docs/adr/` at the repo root. See `fleet-ops docs/agents/domain.md`.
 
 ### Work routing across repos
 
 擁有者是**檔案實際變動的那個 repo**，不是症狀出現的地方——驗證地點不等於擁有權。
 其他 repo 只留連結指標，不重複追蹤。三 repo 架構讓多數工作本來就跨 repo，所以這條判準
-是必要的而非可選。見 `docs/agents/work-routing.md`。
+是必要的而非可選。見 `fleet-ops docs/agents/work-routing.md`。
