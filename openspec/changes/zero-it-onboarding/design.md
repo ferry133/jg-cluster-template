@@ -198,6 +198,11 @@ D11 原本只想到頁面自己的混合內容，沒想到 gateway 會先把 HTT
 
 ### D12. 出貨流程：raw 映像直接寫進內碟，而形狀由一個 preset 宣告（2026-08-21）
 
+> **⚠️ 出貨手段已由 D14 取代（2026-08-22，實機驗證）。** 下面對 preset、tunnel、
+> `--initial-labels`、join token 的判斷全部仍然成立——那些綁在 preset 上，與用哪種媒體
+> 無關。**只有「怎麼把系統放進碟」這一段被換掉了**：不必寫 raw，讓 Omni 自己裝更省事，
+> 而且不需要拆機或另做 live USB。
+
 實測自 jcom 上的 Omni（唯讀查詢，port-forward 已關閉）。
 
 **`omnictl media download <preset> --format raw`** 產出 `.raw.xz` 裸碟映像（另有 `iso`、
@@ -256,7 +261,12 @@ tunnel——**這個問題撞過**。
 - **寫碟的實體手段**：USB-to-NVMe dock 直寫，或開機到 live 環境再寫——取決於機殼拆不拆得開
 - `--bootloader dual` 是否必要（現有 preset 都是 `auto`，但它們不是出貨機）
 
-### D13. 短 TTL 的 join token 之所以安全，是因為 D12 選了 raw 預裝（2026-08-21）
+### D13. 短 TTL 的 join token 之所以安全，是因為系統先進了碟（2026-08-21）
+
+> **標題原本寫「因為 D12 選了 raw 預裝」。** 前提在 D14 換掉了——出貨用的是「建拋棄式
+> 叢集再刪掉」，不是寫 raw。**但論證本身沒有變**：關鍵從來不是用哪種媒體，而是
+> **機器第一次回連之後，系統有沒有進到碟裡**。下面的推論原樣成立，且已於 2026-08-22
+> 在實機上驗到 `PERSISTENT`（見 D14）。
 
 5.2 真正要回答的不是「怎麼把 token 嵌進映像」——D12 已經答了（綁在 preset 上，任何格式
 下載都帶著它）——而是**短 TTL 會不會弄壞已經加入的機器**。這件事不能推，會決定整個流程。
@@ -325,6 +335,81 @@ join token 只在「還沒有自己的身分」時才是必要條件。
 `~/coding/omni` @ `76af8b22`（2026-05-29）。**部署在 jcom 的 Omni 比它新**——證據是
 部署版的 `omnictl` 子指令叫 `media`，而這份原始碼裡叫 `installationmedia`。以上是讀碼
 所得，**沒有在活的機器上觀察過**：沒有實體機器，也不該為了驗證去撤銷一顆正在用的 token。
+
+### D14. 出貨狀態由「建一個拋棄式叢集再刪掉」產生（2026-08-22，實機驗證）
+
+要出貨的狀態有六項，缺一不可：
+
+```
+內碟有 omni-talos ／ 箱內無 USB ／ 從內碟開機 ／ 維護模式
+／ 插電自行註冊回 office Omni ／ 不再依賴 join token
+```
+
+D12 用 `--format raw` 寫碟達成它。**可行，但要拆機或另做一支 Linux live USB。**
+ferry133 提出用 Omni 自己的安裝流程,2026-08-22 在實機上跑完並驗證。
+
+#### 程序
+
+1. Omni ISO 開機（工廠用，不出貨）→ 機器以維護模式註冊
+2. **建一個拋棄式叢集**，範本裡以 per-machine patch **明確指定安裝碟**
+3. Omni 把 Talos 裝進該碟並重開機
+4. **刪掉叢集** → 機器 reset，**碟上的系統保留**，回到維護模式
+5. 拔 USB → 從內碟開機 → 自行註冊 → 出貨
+
+#### 量到的（`e755a600`，Kingchuxing 256GB）
+
+| 階段 | installed | maintenance | systemdisk | node unique token |
+|---|---|---|---|---|
+| ISO 開機、未安裝 | False | True | — | — |
+| Omni 裝完 | **True** | False | `/dev/nvme0n1` | — |
+| 刪掉叢集後 | **True** | **True** | `/dev/nvme0n1` | **PERSISTENT** |
+| 拔掉 USB 後 | **True** | **True** | `/dev/nvme0n1`（USB 已從清單消失） | **PERSISTENT** |
+
+**最後一列就是出貨狀態**，六項全部成立。D13 的核心斷言（裝進碟 → token PERSISTENT →
+不再依賴 join token）**在實機上驗證了**，不再只是讀碼所得。
+
+#### ⚠️ 安裝碟必須明確指定
+
+那台機器當時插著 USB，Omni 回報兩顆：
+
+```
+/dev/nvme0n1   256 GB   nvme   Kingchuxing 256GB
+/dev/sda        31 GB   usb    USB DISK 3.0        ← 就是那支開機碟
+```
+
+**讓 Omni 自動挑會裝進隨身碟**，而且過程看起來完全成功——拔掉才發現。範本裡的
+per-machine patch 是這條程序唯一不能省的一行：
+
+```yaml
+kind: Machine
+name: <machine-uuid>
+patches:
+  - idOverride: 100-<cluster>-install-disk
+    inline: |
+      machine:
+        install:
+          disk: /dev/nvme0n1
+```
+
+#### 兩件被實測推翻的事
+
+**一、`talosctl apply-config --insecure` 對 Omni ISO 開機的機器行不通。**
+原始 SOP 的第 1–3 步都打機器的 LAN IP。實測 `10.9.1.238` 的 `50000`／`50001`
+**refused**——Omni ISO 開機的 Talos 只在 SideroLink 上開 API。改走 Omni 代理則
+`apply-config` 回 `cluster "" endpoint not found`：**Omni 只替已在叢集裡的機器路由設定**。
+所以那條路在這個組合下沒有可用的 API，而這正是為什麼要繞成「先建叢集」。
+
+**二、「這個環境的 reset 清掉的比 STATE 多」是我的誤判。**
+先前看到 `e755a600` 在 jgt-appliance 被拆之後 `installed=False`，我據此推論 reset 會連系統
+一起清掉，並用它來質疑這條路。**這次證明系統會留下。** 那次的 False 另有原因，與 reset
+的行為無關——**用量測的口氣說出推論，代價就是後面每個引用它的判斷都跟著歪。**
+
+#### 還沒驗的
+
+- **拔 USB 後的第一次冷開機**是在辦公室網路上完成的。客戶端網路（未知路由器、可能封鎖 UDP）
+  仍未驗——那是 5.3，而 D12 的「一律開 gRPC tunnel」正是為它準備的
+- 本次用的是舊 ISO（`omni-longhorn` preset、預設永不過期的 token、`client 1` 標籤），
+  **不是出貨形狀**。短 TTL token 與 `ticket=` 標籤仍未在實機上走過一次
 
 ## Risks / Trade-offs
 

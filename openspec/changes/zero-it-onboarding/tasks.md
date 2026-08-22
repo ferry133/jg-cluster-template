@@ -103,7 +103,19 @@
 
 ## 5. 出貨前準備（消除客戶端步驟）
 
-- [~] 5.1 **[P1]** 出貨流程已確立（**見 D12**），實體步驟待有機器時補完
+- [x] 5.1 **[P1]** 出貨流程確立並**在實機上跑完**（見 D14，2026-08-22）
+  - **程序**：Omni ISO 開機（工廠用）→ 建拋棄式叢集、範本裡明確指定安裝碟 → Omni 裝進碟
+    → 刪掉叢集（系統保留、回維護模式）→ 拔 USB → 從內碟開機自行註冊 → 出貨
+  - **量到的終態**：`installed=True`、`maintenance=True`、`systemdisk=/dev/nvme0n1`、
+    USB 已從裝置清單消失、`connected=True`、node unique token **PERSISTENT**。
+    出貨要的六項全部成立
+  - **⚠️ 安裝碟必須明確指定**：測試機當時插著 USB（`/dev/sda`，31 GB，USB DISK 3.0），
+    自動挑會裝進隨身碟，而且過程看起來完全成功
+  - **原 SOP 的 `--insecure` 路線行不通**（實測）：Omni ISO 開機的機器 LAN 上
+    `50000`/`50001` refused；走 Omni 代理則 `apply-config` 回
+    `cluster "" endpoint not found`。這是繞成「先建叢集」的原因
+  - **未驗**：客戶端網路上的第一次冷開機（屬 5.3）；本次用舊 ISO，出貨形狀的短 TTL token
+    與 `ticket=` 標籤仍未實機走過
   - **`omnictl media download <preset> --format raw`** 產出裸碟映像（實測，另有 iso／qcow2／pxe）。
     不走 ISO——ISO 要客戶端有可開機媒體並選開機裝置，那正是規格要消除的
   - **preset 是出貨形狀的唯一宣告點**：extensions 必須在寫碟前定案（§5.4：事後換 schematic
@@ -113,7 +125,14 @@
   - **`--initial-labels` 要用來壓工單識別碼** → 回寫 `factory-agent` §4
   - **未驗（需要實體機器）**：raw 映像不改韌體開不開得起來、寫碟的實體手段、
     `--bootloader dual` 是否必要
-- [~] 5.2 **[P1]** 流程已確立（**見 D13**），兩件前提待驗
+- [~] 5.2 **[P1]** 流程已確立（見 D13），**核心斷言已實機驗證**，出貨形狀待走一次
+  - ✅ **`PERSISTENT` 在實機上量到**（2026-08-22，D14）：Omni 把 Talos 裝進碟之後，
+    node unique token 由該狀態確立，機器**不再依賴 join token**。這條先前只是讀碼所得
+  - ✅ **待驗一已解**：jcom 的 Omni 是 `joinTokensMode: strict`——不但沒關掉 unique token，
+    還直接拒絕不支援的 Talos
+  - ✅ **待驗二已解**：門檻是 **Talos ≥ 1.6.0**（`MinSupportedSecureTokensVersion`）
+  - **仍未走過**：短 TTL token（`appliance-5.1`，24h）與 `ticket=` 標籤的實機流程——
+    本次用的是舊 ISO，帶的是預設永不過期的 token
   - **token 綁在 preset 上**（D12），所以「怎麼嵌」不是問題。真正要答的是**短 TTL 會不會
     弄壞已加入的機器**——答案在 `provision.go` 的
     `isAuthorizedSecureFlow() { return hasValidJoinToken || hasValidNodeUniqueToken }`：
