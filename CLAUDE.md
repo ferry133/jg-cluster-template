@@ -14,7 +14,7 @@
 
 `kubernetes/apps/base/`（jg-base）內的 app 每個叢集都會裝，**不列在 `extras:`**。
 目前 base 含 cert-manager、flux-system、kube-system、network、storage、
-**claudecode**、**monitoring**。
+**claudecode**、**monitoring**、**default**。
 
 `claudecode/claude-code` 自 2026-08-07 起改為 base app：每個叢集預設起一個名為 `im`
 的 Claude Code web terminal（`im.<cloudflare_domain>`），讓 ferry133 永遠有一條不依賴
@@ -48,6 +48,18 @@ Asia/Taipei，Gmail SMTP + healthchecks.io dead-man switch）。`daily_check_*` 
 optional——沒填的叢集 CronJob 會印一行 "not configured" 然後 exit 0，不會每天留下失敗
 Job，但也等於沒有健檢，實務上每個叢集都該填。遷移注意事項（`monitoring` namespace 從
 `app/` 上移，舊 Kustomization 的 inventory 仍含它）同樣見 `jg-base/README.md`。
+
+`default/echo` 自 2026-08-23 起也改為 base app，而且從一個名字拆成兩個：
+`echo-ext.<domain>` 掛 `envoy-external`，`echo-int.<domain>` 掛 `envoy-internal`，
+背後是同一個 pod。兩條 ingress 路徑是分開壞的，過去叢集沒有便宜的方式講出壞的是哪一
+半；同一個 backend 同時服務兩者，所以一邊 200、一邊 timeout 講的是路徑而不是
+workload。**舊的單一名字 `echo.<domain>` 不再存在**——指向它的 uptime check 或
+`daily_check_endpoints` 條目要改成 `echo-ext.<domain>`。沒有任何欄位要填。
+
+遷移風險比前兩個低：echo 沒有 PVC 也沒有狀態，`Kustomization/echo` 若輸掉 adoption
+的時序競賽，代價只是 uninstall 後下次 reconcile 重建。`deletionPolicy: Orphan` 那一步
+在這個 app 上可以跳過。細節見 `jg-base/README.md` 的
+「Migration: default/echo extra → base」。
 
 ## ⚠️ 新增或修改 Extra App 的完整 Checklist
 

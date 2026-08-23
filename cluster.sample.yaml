@@ -368,6 +368,18 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # daily_check_healthchecks_ping_url: ""         # https://hc-ping.com/<uuid>
 # daily_check_endpoints: ""                     # space-separated, e.g. "https://app1.<domain> https://app2.<domain>"
 
+# ── default/echo (base app — deployed on every cluster) ───────────────────────
+# One http-https-echo pod publishing two names, no params to fill in:
+#
+#   echo-ext.<domain>   on envoy-external  — Cloudflare DNS → tunnel → ext gateway
+#   echo-int.<domain>   on envoy-internal  — LAN address → internal gateway
+#
+# The same pod answers both, so a 200 on one and a timeout on the other says
+# which ingress path is broken rather than anything about the workload. Handy
+# as a daily_check_endpoints entry above.
+#
+# The old single name echo.<domain> no longer exists (base since 2026-08-23).
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # §2. EXTRAS — pick which optional apps to deploy
@@ -375,8 +387,8 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # Available extras and the params each one needs:
 #
 #   claudecode/postgres          → claudecode_postgres_password, claude_code_database_url
-#   (claudecode/claude-code and monitoring/daily-check are BASE apps now — see §1)
-#   default/echo                 → (no extra params)
+#   (claudecode/claude-code, monitoring/daily-check and default/echo are BASE apps
+#    now — see §1. Listing one here is harmless; the renderer skips it.)
 #   default/homebridge           → (no extra params)
 #   default/linebot              → anthropic_api_key, database_url,
 #                                  line_channel_access_token, line_channel_secret, line_notify_group_id,

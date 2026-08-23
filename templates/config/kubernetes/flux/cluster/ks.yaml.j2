@@ -321,15 +321,21 @@ spec:
 
      claudecode/claude-code, monitoring/daily-check     2026-08-07
      storage/local-path-provisioner                     2026-08-11
+     default/echo                                       2026-08-23
 
    local-path is not the alternative to NFS — it is the node-local tier, and a
    cluster with a NAS still needs one (Postgres on NFS is wrong on fsync and
    lock semantics regardless of NAS size). So it is installed everywhere and
    never suspended, and `storage_backend` only decides which class is default.
 
+   echo now publishes two names off one pod — echo-ext.<domain> on
+   envoy-external and echo-int.<domain> on envoy-internal — so that a cluster
+   can say which of the two ingress paths is down without a second thing to
+   deploy. The old single name echo.<domain> is gone.
+
    storage/nfs-subdir is likewise a base app, but it IS conditional, so it is
    disabled by the suspend patch on cluster-apps-base above rather than here. #|
-#% set _now_base = ['claudecode/claude-code', 'monitoring/daily-check', 'storage/local-path-provisioner'] %#
+#% set _now_base = ['claudecode/claude-code', 'monitoring/daily-check', 'storage/local-path-provisioner', 'default/echo'] %#
 #% for extra in extras | default([]) if extra not in _now_base %#
 #% set _app = extra.split('/')[1] %#
 ---
