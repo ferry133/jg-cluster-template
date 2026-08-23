@@ -63,3 +63,12 @@ nodes.yaml
 # cloudflare_token in plaintext, matched by no rule above.
 .merged-config.yaml
 *merged-config*
+
+# ── 產出物 ────────────────────────────────────────────────────────────────────
+# `task zero-it:print` 把 README-zero-IT.md 渲染成 HTML/PDF，檔名帶來源雜湊，
+# 所以每次來源一改就是一組新檔案。它們是可重現的產物，不是紀錄。
+#
+# 2026-08-23：一個 PR 帶著三份不同雜湊的同一份文件（6 個檔）進來過。那是「第二份
+# 副本會分岔」最純粹的形狀——而且分岔的那份沒有東西會說是什麼時候。要給人的話用
+# 附件或 release，不要用 git。
+dist/
