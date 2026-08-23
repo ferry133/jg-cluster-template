@@ -71,6 +71,7 @@ tasks:
       - task: check-lb-pool-render
       - task: check-forwarded-header-trust
       - task: check-node-dns-path
+      - task: check-nas-backup
       - task: generate-node-config
       - task: validate-schemas
       - task: render-configs
@@ -160,6 +161,19 @@ tasks:
     cmd: python3 {{.SCRIPTS_DIR}}/check-backup-recipient.py {{.ROOT_DIR}}
     preconditions:
       - test -f {{.SCRIPTS_DIR}}/check-backup-recipient.py
+
+  # Whether the database extras render their NAS backup CronJob at all. Both
+  # ways of being wrong are quiet: stuck `nfs` renders a PersistentVolume with
+  # an empty nfs.server on an appliance and turns that Kustomization red
+  # (ferry133/jg-base#17); stuck `none` stops every NAS cluster's database dumps
+  # with nothing going red at all. It also asserts the derived word is one YAML
+  # still reads as a string — see the daily-check note above for what a boolean
+  # there costs.
+  check-nas-backup:
+    internal: true
+    cmd: python3 {{.SCRIPTS_DIR}}/check-nas-backup.py
+    preconditions:
+      - test -f {{.SCRIPTS_DIR}}/check-nas-backup.py
 
   validate-schemas:
     internal: true

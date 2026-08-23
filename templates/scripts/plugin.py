@@ -252,6 +252,30 @@ class Plugin(makejinja.plugin.Plugin):
         # and restored — a PVC's storageClassName is immutable, so the move is
         # not something a re-render can perform.
         data.setdefault('db_storage_class', 'local-path')
+        # Whether the database extras render their NAS backup CronJob:
+        # 'nfs' or 'none'. Derived, never declared — it is a restatement of
+        # "is there a NAS", and a second copy of that fact would eventually
+        # disagree with the first.
+        #
+        # It has to be a value rather than a condition because **Flux cannot
+        # branch on "is NAS_SERVER set"**. Flux substitutes with drone/envsubst,
+        # where `${VAR:+alt}` is not implemented and behaves exactly like
+        # `${VAR:-alt}`; measured with `flux envsubst` (flux 2.7.4, the same
+        # code path). So jg-base selects a directory by this word instead:
+        # kubernetes/apps/extras/<ns>/postgres/backup/${NAS_BACKUP:=nfs}.
+        # (Checking that with a shell gives the POSIX answer, not Flux's. They
+        # are opposites. See ferry133/jg-base#17.)
+        #
+        # 'none' rather than '' or false: the value lands in a stringData field
+        # on the way through, and an empty scalar is YAML null while `false` is
+        # a YAML boolean — either one gets the whole Secret rejected, which is
+        # what ferry133/jg-base#16 cost.
+        #
+        # jg-base defaults the variable to 'nfs' where it is absent, so a
+        # cluster that has not re-rendered keeps its backup rather than losing
+        # it silently. That default is why this can ship without touching every
+        # per-user repo at once.
+        data['nas_backup'] = 'nfs' if data.get('nas_server') else 'none'
         # Which claude-code instances stay up. Empty by default: each is a root
         # shell with cluster-admin that the tunnel makes reachable. Named here
         # rather than scaled by hand, which works until the next reconcile.
