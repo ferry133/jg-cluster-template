@@ -381,7 +381,7 @@ class Plugin(makejinja.plugin.Plugin):
         # when it mattered. `lan_shared_addr` back-fills cluster_gateway_addr and
         # cluster_dns_gateway_addr about eighty lines above, and those are two of
         # the three fields `addrs` is built from — so declaring the shared address
-        # (which docs/operations/router-dns.md tells every appliance operator to
+        # (which fleet-ops docs/operations/router-dns.md tells every appliance operator to
         # do before touching the router) silently populated `addrs` and took the
         # first branch. The result on jgt-appliance: a static `pool` holding
         # 10.9.1.254 overlapping lan-address-probe's `pool-discovered`

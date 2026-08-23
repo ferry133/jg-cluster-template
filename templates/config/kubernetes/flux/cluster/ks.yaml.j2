@@ -214,7 +214,7 @@ spec:
 #% if deployment_profile == 'appliance' and not lan_shared_addr | default('') %#
 #| The shared address, on the other hand, is only free while it is un-pinned.
    Once `lan_shared_addr` is declared the annotation carries it, which is the
-   whole point of pinning (see docs/operations/router-dns.md) — the address is
+   whole point of pinning (see fleet-ops docs/operations/router-dns.md) — the address is
    then an external contract with the router and must not be reselected. #|
     # appliance, shared address not yet pinned: allocate it from the pool too
     - patch: |-

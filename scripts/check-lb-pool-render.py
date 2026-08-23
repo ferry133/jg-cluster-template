@@ -5,7 +5,7 @@ Exists because of ferry133/jg-cluster-template#10, whose defect was not a wrong
 value but an **unreachable branch**: the appliance case sat behind `if addrs:`,
 and `lan_shared_addr` back-filled two of the three fields `addrs` is built from.
 So the branch stopped executing the moment an operator followed
-docs/operations/router-dns.md and declared the shared address — and nothing in
+fleet-ops docs/operations/router-dns.md and declared the shared address — and nothing in
 the source looked wrong, because the branch was still there.
 
 An unreachable branch is invisible to review and to every check that reads the

@@ -8,13 +8,24 @@ GitHub template for a Kubernetes cluster managed by ferry133. Click
 | You are | Read |
 |---------|------|
 | A customer who received the hardware | **[`README-zero-IT.md`](README-zero-IT.md)**（繁體中文）— three physical actions, nothing else |
-| Working out what a given cluster needs at each phase | **[`docs/deploy/combinations.md`](docs/deploy/combinations.md)**（繁體中文）— which combination this is, and what preparation / installation / operation each dimension adds |
-| Provisioning a cluster yourself, by hand | **[`docs/deploy/manual.md`](docs/deploy/manual.md)** — full step-by-step, both provisioning paths |
-| Delivering an appliance to a customer | The operator runbook (see `openspec/changes/factory-agent`) |
+| Working out what a given cluster needs at each phase | **`fleet-ops docs/deploy/combinations.md`**（繁體中文）— which combination this is, and what preparation / installation / operation each dimension adds |
+| Provisioning a cluster yourself, by hand | **`fleet-ops docs/deploy/manual.md`** — full step-by-step, both provisioning paths |
+| Delivering an appliance to a customer | The operator runbook (see `ferry133/fleet-ops` → `openspec/changes/factory-agent`, private) |
 | Changing how the template works | [`CLAUDE.md`](CLAUDE.md) — architecture, conventions, and the rules that are not obvious from the code |
 
 This page routes; it deliberately contains no deployment steps, so there is only
 one place each procedure is written down.
+
+> **`docs/` is not in this repo.** It moved to `ferry133/fleet-ops` (private) on
+> 2026-08-22, for the same reason `openspec/` did: this repo is public *and* a
+> GitHub template, and a template copy takes every tracked file, so each
+> customer-named repo inherited all of it.
+>
+> Every `fleet-ops docs/...` reference below and in `cluster.sample.yaml`,
+> `templates/` and `scripts/` names a path in that repository. **They are not
+> reachable from a generated cluster repo**, which is a real cost of the move
+> and not an oversight — an operator without access to `fleet-ops` cannot follow
+> those pointers.
 
 ## Architecture
 
@@ -44,7 +55,7 @@ way — `replicated_storage` installs Longhorn without moving bulk onto it, whic
 is what a multi-node cluster with a NAS needs.
 
 Those two are not the only axes that change what has to be done. See
-[`docs/deploy/combinations.md`](docs/deploy/combinations.md) for the full list,
+`fleet-ops docs/deploy/combinations.md` for the full list,
 the combinations validation rejects outright, and what each phase requires.
 
 ## Provisioning paths
@@ -72,14 +83,28 @@ task template:validate-manifests   # kubeconform over the rendered output
 
 ## Planned work
 
-Design proposals live in `openspec/changes/`. They record what is being built,
-why, and the measurements behind each decision — including the failures found
-while verifying them.
+Design proposals **are not in this repo.** They live in `ferry133/fleet-ops`
+(private) under `openspec/`, along with the `openspec/specs/` this template is
+built against.
+
+They were moved out on 2026-08-22 for a reason that is a property of this repo
+specifically: it is public *and* it is a GitHub template. Creating a repo from a
+template copies every tracked file, so each customer-named public cluster repo
+was inheriting 53 files of proposals, design decisions and incident write-ups
+that have nothing to do with that customer. Moving the source fixes every future
+copy at once.
+
+It was a move, not a copy — there is no second version here to drift.
 
 | Change | About |
 |--------|-------|
-| `revive-talos-path` | Restore the manual Talos path this repo documented but did not ship |
 | `deployment-profiles` | The profile and storage axes above |
 | `factory-agent` | Operator-side agent that provisions a cluster end to end |
-| `zero-it-onboarding` | This documentation split, and the customer-facing channel |
+| `zero-it-onboarding` | The documentation split, and the customer-facing channel |
 | `reconcile-jcom-lineage` | Bring a cluster that diverged back onto the template |
+| `agent-state-portability` | Carrying an agent's accumulated state across a rebuild |
+
+Implementation still lands here. **The design record moved; ownership of the
+files did not.** A change amending this template's schema, renderer or Taskfile
+is still implemented in this repo — its proposal and acceptance criteria are
+just read from `fleet-ops`.

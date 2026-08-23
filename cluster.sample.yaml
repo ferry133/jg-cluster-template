@@ -75,7 +75,7 @@ storage_backend: "nfs"
 # On by default, because it is the only thing that answers them — Cloudflare
 # refuses to publish RFC1918 addresses, so there is no public-DNS route. The
 # operator points the router's DNS at it once during installation; see
-# docs/operations/router-dns.md. It shares its address with envoy-internal and
+# fleet-ops docs/operations/router-dns.md. It shares its address with envoy-internal and
 # mqtt, so it costs nothing extra. Turn it off only where something else
 # resolves those names.
 # k8s_gateway: true
@@ -94,7 +94,7 @@ storage_backend: "nfs"
 # util-linux-tools Talos extensions plus a /var/lib/longhorn rshared mount on
 # every node. Check `kubectl get nodes.longhorn.io -n longhorn-system` — every
 # node should report RequiredPackages / MountPropagation True. Read
-# docs/operations/replicated-storage.md before turning this on: removing Longhorn
+# fleet-ops docs/operations/replicated-storage.md before turning this on: removing Longhorn
 # is considerably harder than installing it.
 #
 # Installing is not moving. Set db_storage_class below to "longhorn" separately,
@@ -216,7 +216,7 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # Backups are encrypted to the cluster's own public key, so age.key is the only
 # thing that can read them — and on a single-node appliance it sits on the very
 # disk the backups exist to survive. Not defaulted: it has to be stated by
-# whoever did the escrow. See docs/operations/age-key-escrow.md
+# whoever did the escrow. See fleet-ops docs/operations/age-key-escrow.md
 # age_key_escrowed: true
 
 # ── Off-site backup ───────────────────────────────────────────────────────────
@@ -260,7 +260,7 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # ── How the terminal is guarded ───────────────────────────────────────────────
 # Auth0 OIDC by default. Nothing to set here: the shared Auth0 application's
 # domain, client_id and client_secret come from `auth0.json` in this directory
-# (gitignored — see Stage 4 of docs/deploy/manual.md), and the oauth2-proxy
+# (gitignored — see Stage 4 of fleet-ops docs/deploy/manual.md), and the oauth2-proxy
 # cookie secret is derived from age.key + cluster_name at render time.
 #
 # One step no render can take for you — in the Auth0 application (Regular Web
