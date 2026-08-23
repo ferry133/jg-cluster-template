@@ -186,8 +186,9 @@ class Plugin(makejinja.plugin.Plugin):
         # These must match the defaults documented in cluster.sample.yaml —
         # a documented default the code does not apply is a defect.
         data.setdefault('node_default_gateway', nthhost(data.get('node_cidr'), 1))
+        data.setdefault('node_dns_servers', ['1.1.1.1', '1.0.0.1'])
         # Whether the nodes resolve names the way a LAN client does — read
-        # BEFORE the default below, because the default is what makes them not.
+        # AFTER the default above, because the default is what the nodes get.
         #
         # daily-check probes `internal.<domain>` through the node's ordinary
         # resolution path. That probe is only meaningful where that path is the
@@ -202,14 +203,33 @@ class Plugin(makejinja.plugin.Plugin):
         # and when the two disagree the check does not go quiet — it makes a
         # confident wrong claim and withholds the dead-man ping.
         #
-        # Unset means the nodes take DNS from DHCP, the same answer the router
-        # hands every other client on that LAN, so a node stands in for one
-        # faithfully. The Omni path never applies these Talos patches at all and
-        # lands in the same place.
-        _dns = data.get('node_dns_servers')
-        data['node_dns_is_lan'] = not _dns or all(
-            ipaddress.ip_address(s).is_private for s in _dns)
-        data.setdefault('node_dns_servers', ['1.1.1.1', '1.0.0.1'])
+        # This used to read `node_dns_servers` BEFORE the default and call unset
+        # "LAN", on the reasoning that unset means the nodes take DNS from DHCP
+        # like every other client on that LAN. That reasoning skipped the very
+        # next line: the default is applied unconditionally and
+        # talos/patches/global/machine-network.yaml.j2 writes it into every
+        # machine config. Measured 2026-08-23 in four rendered repos --
+        # jg-jiahd, jcom, jg-janncotcc, jgt-talos-accept -- all four pin
+        # `nameservers: [1.1.1.1, 1.0.0.1]`, and not one cluster.yaml in the
+        # fleet sets node_dns_servers. So the branch that said "LAN" described
+        # no cluster that exists, and the sibling test case immediately below it
+        # asserted the opposite answer for the identical machine config.
+        #
+        # Reading the effective value is also the only spelling that cannot go
+        # stale: whatever the default becomes, this says what the nodes got.
+        #
+        # Consequence, stated plainly: with the shipping default every cluster
+        # derives `public`, so daily-check's check 18 reports "not measured"
+        # rather than probing. That is the honest answer -- a node on 1.1.1.1
+        # cannot stand in for a LAN client -- and the way to turn the check on
+        # is to point node_dns_servers at the LAN resolver, which is the same
+        # change that makes the probe mean anything. The Omni path applies no
+        # Talos patches, so its nodes really do take DHCP DNS and `public`
+        # understates them; erring toward "not measured" is deliberate, because
+        # the other error is a red row every morning on a healthy LAN.
+        data['node_dns_path'] = 'lan' if all(
+            ipaddress.ip_address(s).is_private
+            for s in data['node_dns_servers']) else 'public'
         data.setdefault('node_ntp_servers', ['162.159.200.1', '162.159.200.123'])
         data.setdefault('cluster_pod_cidr', '10.42.0.0/16')
         # cluster_svc_cidr is required (no default) — see cluster.schema.cue.

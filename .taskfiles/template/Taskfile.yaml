@@ -70,7 +70,7 @@ tasks:
       - task: check-claudecode-auth
       - task: check-lb-pool-render
       - task: check-forwarded-header-trust
-      - task: check-node-dns-is-lan
+      - task: check-node-dns-path
       - task: generate-node-config
       - task: validate-schemas
       - task: render-configs
@@ -134,15 +134,16 @@ tasks:
 
   # daily-check's internal-name probe raises a LAN-wide alarm, and this flag is
   # the only thing deciding whether it runs on a given cluster. Both ways of
-  # getting it wrong are silent: stuck true alarms every morning on a healthy
-  # LAN whose nodes point at a public resolver, stuck false removes the row from
-  # every cluster at once — and a check that emits nothing reads exactly like a
-  # check that passed.
-  check-node-dns-is-lan:
+  # getting it wrong are silent: stuck `lan` alarms every morning on a healthy
+  # LAN whose nodes point at a public resolver, stuck `public` means nothing
+  # here watches the router at all. It also asserts the derived value is one a
+  # YAML parser still reads as a string — a boolean there takes daily-check's
+  # whole Secret down (ferry133/jg-base#16).
+  check-node-dns-path:
     internal: true
-    cmd: python3 {{.SCRIPTS_DIR}}/check-node-dns-is-lan.py
+    cmd: python3 {{.SCRIPTS_DIR}}/check-node-dns-path.py
     preconditions:
-      - test -f {{.SCRIPTS_DIR}}/check-node-dns-is-lan.py
+      - test -f {{.SCRIPTS_DIR}}/check-node-dns-path.py
 
   validate-schemas:
     internal: true

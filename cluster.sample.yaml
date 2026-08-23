@@ -159,6 +159,13 @@ cloudflare_gateway_addr: "10.9.9.5"   # envoy-external LB IP
 # Optional network overrides (the commented value is the actual default):
 # node_default_gateway: "10.9.9.1"                     # default: .1 of node_cidr
 # node_dns_servers: ["1.1.1.1", "1.0.0.1"]             # default: Cloudflare DNS
+#   ^ this field is also daily-check's switch for check 18 ("LAN resolves
+#     internal names"). The default is a PUBLIC resolver, so a node cannot see
+#     what a LAN client sees and the check reports "not measured" — nothing
+#     watches the router on a default cluster. Point it at an all-private list
+#     (the router, or the cluster's own k8s-gateway) and the probe turns on:
+#         node_dns_servers: ["10.9.1.1"]
+#     One public entry anywhere in the list switches it back off.
 # node_ntp_servers: ["162.159.200.1", "162.159.200.123"]
 # node_vlan_tag: ""                                    # https://www.talos.dev/latest/advanced/advanced-networking/#vlans
 # cluster_api_tls_sans: ["mycluster.example.com"]
