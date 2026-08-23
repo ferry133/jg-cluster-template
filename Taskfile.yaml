@@ -25,6 +25,26 @@ tasks:
 
   default: task --list
 
+  # The customer reads README-zero-IT.md on paper: when they read it the network
+  # is not up yet, so a URL is not an entry point at that moment. Paper and
+  # Markdown must therefore come from one source (CLAUDE.md), never transcribed.
+  #
+  # NOT wired into `task configure`, deliberately. A repo that never ships a box
+  # has no reason to hold a build, and a check that fails on every such repo is
+  # the permanently-red row this project already paid for once. It belongs in
+  # the shipping flow — factory-agent §7 — where a box is actually being packed.
+  print-zero-it:
+    desc: Build the printable customer sheet from README-zero-IT.md
+    cmd: python3 {{.SCRIPTS_DIR}}/build-zero-it-print.py {{.CLI_ARGS}}
+    preconditions:
+      - test -f {{.SCRIPTS_DIR}}/build-zero-it-print.py
+
+  check-zero-it-print:
+    desc: Assert the printable sheet exists and matches README-zero-IT.md
+    cmd: python3 {{.SCRIPTS_DIR}}/build-zero-it-print.py --check
+    preconditions:
+      - test -f {{.SCRIPTS_DIR}}/build-zero-it-print.py
+
   reconcile:
     desc: Force Flux to pull in changes from your Git repository
     cmd: flux --namespace flux-system reconcile kustomization flux-system --with-source
