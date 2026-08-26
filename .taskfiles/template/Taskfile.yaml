@@ -76,6 +76,7 @@ tasks:
       - task: validate-schemas
       - task: render-configs
       - task: check-backup-recipient
+      - task: check-longhorn-backup
       - task: validate-manifests
       - task: encrypt-secrets
     preconditions:
@@ -161,6 +162,23 @@ tasks:
     cmd: python3 {{.SCRIPTS_DIR}}/check-backup-recipient.py {{.ROOT_DIR}}
     preconditions:
       - test -f {{.SCRIPTS_DIR}}/check-backup-recipient.py
+
+  # Whether the Longhorn backup selector agrees with whether this cluster
+  # installs Longhorn (ferry133/jg-base#7). `cue vet` cannot close this one: it
+  # catches `longhorn_backup_target` together with an explicit
+  # `replicated_storage: false`, but not `replicated_storage` simply absent —
+  # an optional field CUE may define as true is not a conflict, and plugin.py
+  # reads cluster.yaml rather than CUE's unified value. Measured: that
+  # combination renders deploy_longhorn=False with longhorn_backup=nfs and
+  # vets clean, which applies a RecurringJob against a CRD nothing installs.
+  #
+  # After render-configs, like check-backup-recipient: the input someone meant
+  # to write and the artifact that ships are different things.
+  check-longhorn-backup:
+    internal: true
+    cmd: python3 {{.SCRIPTS_DIR}}/check-longhorn-backup.py {{.ROOT_DIR}}
+    preconditions:
+      - test -f {{.SCRIPTS_DIR}}/check-longhorn-backup.py
 
   # Whether the database extras render their NAS backup CronJob at all. Both
   # ways of being wrong are quiet: stuck `nfs` renders a PersistentVolume with

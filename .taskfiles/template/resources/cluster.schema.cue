@@ -59,6 +59,44 @@ import (
 		replicated_storage?: false
 	}
 
+	// Where Longhorn writes its backups. Optional, and absent means no Longhorn
+	// backups at all — which is what every cluster did before this existed.
+	//
+	// Longhorn's replica count survives a node dying. It does not survive
+	// `kubectl delete pvc` or a corrupt table: both are replicated faithfully to
+	// every replica. This is the only thing in the stack that does.
+	//
+	// A URL, not a bool, because the destination is per-cluster and unguessable
+	// — it is a LAN NAS export that most clusters cannot reach, which is exactly
+	// why it cannot be hardcoded in jg-base. Longhorn accepts nfs://, cifs://,
+	// s3://, azblob:// and gcs://; only NFS is exercised here.
+	//
+	// jg-base derives the on/off selector from whether this is set, so there is
+	// no second field to keep in agreement with it (see plugin.py).
+	// Defaulted rather than optional, so the guard below can actually read it.
+	// `longhorn_backup_target?: string` with `if longhorn_backup_target != _|_`
+	// looks like the same thing and is not: that comparison never fires, and a
+	// guard that never fires reads exactly like one that passes. Caught by
+	// running the negative control instead of only the positive one.
+	longhorn_backup_target: *"" | string
+
+	// Backing up a Longhorn volume requires Longhorn.
+	//
+	// ⚠️ This catches HALF the problem and it is worth knowing which half.
+	// It fires on the outright contradiction — a target together with an
+	// explicit `replicated_storage: false` — measured: "conflicting values
+	// true and false". It does NOT fire when `replicated_storage` is simply
+	// absent, because defining an optional field is not a conflict, and
+	// plugin.py derives `deploy_longhorn` from cluster.yaml rather than from
+	// CUE's unified value, so this line changes nothing about the render.
+	//
+	// The absent case is the one that happens, and it is covered by
+	// scripts/check-longhorn-backup.py against the rendered artifacts. Do not
+	// read this block as the guard; it is the cheap half of one.
+	if longhorn_backup_target != "" {
+		replicated_storage: true
+	}
+
 	// Whether this cluster has exactly one node. Derived where it can be —
 	// appliance is single by definition, and the manual path has an authoritative
 	// node list — but an Omni-provisioned cluster renders `nodes: []`, so it must

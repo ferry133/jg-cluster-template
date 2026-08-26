@@ -276,6 +276,25 @@ class Plugin(makejinja.plugin.Plugin):
         # it silently. That default is why this can ship without touching every
         # per-user repo at once.
         data['nas_backup'] = 'nfs' if data.get('nas_server') else 'none'
+        # Same shape for Longhorn's own backup target (ferry133/jg-base#7):
+        # jg-base selects
+        # kubernetes/apps/base/storage/longhorn/backup/${LONGHORN_BACKUP:=none}
+        # and this word is the selector.
+        #
+        # **The jg-base default is 'none' here, not 'nfs'.** Both defaults
+        # answer the same question — what does a cluster whose cluster-secrets
+        # predates the variable do — and the honest answer differs because the
+        # starting states differ. Every cluster already had a pg_dump CronJob,
+        # so nas_backup had to default to keeping it. No cluster has a Longhorn
+        # backup at all (measured on jg-jiahd 2026-08-17: backup target URL
+        # empty, zero recurringjobs), so defaulting this to 'nfs' would hand
+        # every replicated-storage cluster a nightly job with nowhere to write.
+        #
+        # Keyed on longhorn_backup_target and nothing else. Not on
+        # replicated_storage: having Longhorn is not having somewhere to back it
+        # up to, and most clusters cannot reach the one LAN NAS that URL names.
+        data['longhorn_backup'] = (
+            'nfs' if data.get('longhorn_backup_target') else 'none')
         # Which claude-code instances stay up. Empty by default: each is a root
         # shell with cluster-admin that the tunnel makes reachable. Named here
         # rather than scaled by hand, which works until the next reconcile.
