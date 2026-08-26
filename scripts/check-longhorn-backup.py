@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Assert this cluster's Longhorn backup selector agrees with its Longhorn.
+"""Assert this cluster's Longhorn backup gate agrees with its Longhorn.
 
-`LONGHORN_BACKUP` picks a directory in jg-base:
+jg-base ships `Kustomization/longhorn-backup` SUSPENDED. It carries a
+RecurringJob that writes to `LONGHORN_BACKUP_TARGET`, and this repo un-suspends
+it with a patch wherever `longhorn_backup_target` is set.
 
-    kubernetes/apps/base/storage/longhorn/backup/${LONGHORN_BACKUP:=none}
-
-`nfs` renders a RecurringJob into longhorn-system. That is only meaningful on a
-cluster that actually installs Longhorn, and the two facts come from different
-places: the selector is derived from `longhorn_backup_target`, while whether
-Longhorn is installed is `deploy_longhorn`, derived from `replicated_storage`
-or `storage_backend`. Nothing forces them to agree.
+Three facts have to agree and they come from three different places: the target
+(cluster.yaml), the un-suspend patch (flux/cluster/ks.yaml), and whether
+Longhorn is installed at all (`deploy_longhorn`, from `replicated_storage` or
+`storage_backend`). Nothing forces them to.
 
 `cue vet` cannot close this. It catches the outright contradiction
 (`longhorn_backup_target` set together with `replicated_storage: false` --
@@ -65,20 +64,23 @@ def value_of(text: str, key: str) -> str | None:
     return m.group(1).strip().strip('"').strip("'")
 
 
-def longhorn_is_suspended(ks_text: str) -> bool:
-    """True if the rendered cluster ks.yaml suspends Kustomization/longhorn.
+def patched_suspend(ks_text: str, name: str) -> bool | None:
+    """What the per-user ks.yaml patches `suspend` to for Kustomization `name`.
 
-    The per-user repo suspends by patching, one `- patch: |-` block per
-    disabled Kustomization. Matching on the block keeps `longhorn` from being
-    confused with any other name that merely contains it.
+    True / False as patched, None if no patch targets it. Matching is per
+    `- patch: |-` block and anchored on the whole name, so `longhorn` and
+    `longhorn-backup` are never confused for each other -- a distinction this
+    check depends on entirely.
     """
+    result = None
     for block in ks_text.split('- patch: |-')[1:]:
         head = block.split('- patch: |-')[0]
-        if 'suspend: true' not in head:
+        if not re.search(rf'^\s+name:\s*{re.escape(name)}\s*$', head, re.M):
             continue
-        if re.search(r'^\s+name:\s*longhorn\s*$', head, re.M):
-            return True
-    return False
+        m = re.search(r'^\s+suspend:\s*(true|false)\s*$', head, re.M)
+        if m:
+            result = m.group(1) == 'true'
+    return result
 
 
 def main() -> int:
@@ -94,59 +96,56 @@ def main() -> int:
         return 2
 
     secret_text = secret.read_text()
-    selector = value_of(secret_text, 'LONGHORN_BACKUP')
     target = value_of(secret_text, 'LONGHORN_BACKUP_TARGET')
 
-    if selector is None:
-        print('COULD NOT MEASURE  LONGHORN_BACKUP is not in the rendered secret.')
-        print('  This repo\'s templates/ predate ferry133/jg-base#7. A per-user')
-        print('  repo carries its own copy of templates/, and `task configure`')
-        print('  exits 0 either way, so this is exactly the state that reads')
-        print('  like a pass. Sync templates/ from jg-cluster-template first.')
+    if target is None:
+        print('COULD NOT MEASURE  LONGHORN_BACKUP_TARGET is not in the rendered')
+        print('  secret. This repo\'s templates/ predate ferry133/jg-base#7. A')
+        print('  per-user repo carries its own copy of templates/, and')
+        print('  `task configure` exits 0 either way, so this is exactly the')
+        print('  state that reads like a pass. Sync templates/ first.')
         return 2
+
+    ks_text = cluster_ks.read_text()
+    backup_patch = patched_suspend(ks_text, 'longhorn-backup')
+    longhorn_patch = patched_suspend(ks_text, 'longhorn')
+
+    has_target = bool(target)
+    # jg-base ships longhorn-backup suspended, so no patch means off.
+    backup_on = backup_patch is False
+    # longhorn itself ships active, so no patch means on.
+    longhorn_on = longhorn_patch is not True
 
     failed = []
 
-    if selector not in ('nfs', 'none'):
+    if has_target and not backup_on:
         failed.append(
-            f'LONGHORN_BACKUP is {selector!r}; jg-base only has directories '
-            'backup/nfs and backup/none, and Flux reports "path not found" '
-            'for anything else')
-    if selector in NOT_A_STRING:
+            f'a backup target is set ({target}) but nothing un-suspends '
+            'Kustomization/longhorn-backup, so the RecurringJob is never '
+            'applied: Longhorn would have a target and never write to it')
+    if not has_target and backup_on:
         failed.append(
-            f'LONGHORN_BACKUP is {selector!r}, which YAML does not read as a '
-            'string -- stringData rejects it and the whole Secret fails to '
-            'apply (ferry133/jg-base#16)')
-
-    has_target = bool(target)
-    if has_target and selector != 'nfs':
-        failed.append(
-            f'a backup target is set ({target}) but LONGHORN_BACKUP is '
-            f'{selector!r}, so no RecurringJob renders: Longhorn would have a '
-            'target and never write to it')
-    if not has_target and selector == 'nfs':
-        failed.append(
-            'LONGHORN_BACKUP is "nfs" with no LONGHORN_BACKUP_TARGET, so the '
-            'RecurringJob renders and fails nightly against an unset target')
-
+            'Kustomization/longhorn-backup is un-suspended with no '
+            'LONGHORN_BACKUP_TARGET, so the RecurringJob runs and fails '
+            'nightly against an unset target')
     if has_target and not target.startswith(SCHEMES):
         failed.append(
             f'LONGHORN_BACKUP_TARGET {target!r} has no scheme Longhorn '
             f'accepts ({", ".join(SCHEMES)}); the BackupTarget CR reports '
             'available: false, which looks the same as an unreachable NAS')
-
-    suspended = longhorn_is_suspended(cluster_ks.read_text())
-    if selector == 'nfs' and suspended:
+    if backup_on and not longhorn_on:
         failed.append(
-            'LONGHORN_BACKUP is "nfs" but this cluster suspends '
+            'longhorn-backup is un-suspended but this cluster suspends '
             'Kustomization/longhorn, so the RecurringJob is applied against a '
             'CRD no chart installs. Set replicated_storage: true (or '
             'storage_backend: "replicated") if Longhorn is wanted here, or '
             'drop longhorn_backup_target if it is not')
 
-    print(f'LONGHORN_BACKUP        = {selector!r}')
     print(f'LONGHORN_BACKUP_TARGET = {target!r}')
-    print(f'Kustomization/longhorn = {"suspended" if suspended else "active"}')
+    print(f'longhorn-backup        = {"un-suspended" if backup_on else "suspended"}'
+          f'  (patch: {backup_patch})')
+    print(f'longhorn               = {"active" if longhorn_on else "suspended"}'
+          f'  (patch: {longhorn_patch})')
     print()
 
     if failed:
@@ -154,17 +153,19 @@ def main() -> int:
             print(f'FAIL  {f}')
         return 1
 
-    if selector == 'none':
-        print('ok - no Longhorn backup configured; jg-base renders zero objects')
-        print('     and the chart render is byte-identical to a cluster that')
-        print('     never had this variable (measured with helm template).')
+    if not has_target:
+        print('ok - no Longhorn backup configured; longhorn-backup stays')
+        print('     suspended as jg-base ships it, and the chart render is')
+        print('     byte-identical to a cluster that never had this variable')
+        print('     (measured with helm template).')
     else:
-        print('ok - backup target set, selector agrees, Longhorn is installed.')
+        print('ok - target set, longhorn-backup un-suspended, Longhorn installed.')
         print()
         print('     NOT checked here, and not checkable from a template repo:')
-        print('     whether the export accepts writes from longhorn instance-manager,')
-        print('     and whether a backup has ever been restored. A backup target')
-        print('     that has never restored is a hypothesis.')
+        print('     whether the export accepts writes from longhorn')
+        print('     instance-manager, and whether a backup has ever been')
+        print('     restored. A backup target that has never restored is a')
+        print('     hypothesis.')
     return 0
 
 

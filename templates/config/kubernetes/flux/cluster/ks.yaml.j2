@@ -151,6 +151,41 @@ spec:
         kind: Kustomization
         name: #{ name }#
 #% endfor %#
+#|   The mirror of the loop above: things jg-base ships SUSPENDED, that this
+     cluster switches on.
+
+     Only one so far. longhorn-backup applies a RecurringJob that writes to
+     `longhorn_backup_target`; with no target it is not idle, it runs and fails
+     nightly, and on a cluster without Longhorn it applies against a CRD no
+     chart installs. So jg-base ships it off and the fact that this cluster
+     declares a target is what turns it on.
+
+     Why a suspend patch rather than jg-base selecting a directory with
+     `${LONGHORN_BACKUP}`, which is what the extras' backup Kustomizations do:
+     `cluster-apps` walks ./kubernetes/apps/base, so flux-local collects every
+     Kustomization under it, and flux-local substitutes nothing — a `${...}` in
+     a path is read literally and the whole suite dies at collection. Measured
+     on ferry133/jg-base#28. The extras pattern survives only because extras
+     are unreachable from apps/base and CI has never walked one. #|
+#% set _enabled = [] %#
+#% if longhorn_backup_target is defined and longhorn_backup_target %#
+#% set _ = _enabled.append(('longhorn-backup', 'longhorn_backup_target is set, so there is somewhere for the RecurringJob to write')) %#
+#% endif %#
+#% for name, why in _enabled %#
+    # un-suspended: #{ why }#
+    - patch: |-
+        apiVersion: kustomize.toolkit.fluxcd.io/v1
+        kind: Kustomization
+        metadata:
+          name: #{ name }#
+          namespace: flux-system
+        spec:
+          suspend: false
+      target:
+        group: kustomize.toolkit.fluxcd.io
+        kind: Kustomization
+        name: #{ name }#
+#% endfor %#
 #% if is_single_node %#
 #| Two envoy replicas per gateway buy nothing on one node — both land on the
    same machine, so the second is a copy that dies with the first — and they
