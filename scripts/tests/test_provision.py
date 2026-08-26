@@ -303,3 +303,53 @@ class TestLive(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIdentity(unittest.TestCase):
+    """5.3. The interesting case is the unset one: `claudecode_allowed_emails`
+    absent renders as auth0.json's list, which carries the operator's addresses
+    — so unset and 'deliberately empty' are the same text in cluster.yaml and
+    different clusters in production."""
+
+    def run_identity(self, contents):
+        import argparse
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "cluster.yaml").write_text(contents)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = prov.cmd_identity(argparse.Namespace(dir=d))
+            return rc, out.getvalue()
+
+    BASE = 'cluster_name: "jg-t"\ncloudflare_domain: "cust.tw"\n'
+
+    def test_unset_is_refused_not_treated_as_empty(self):
+        rc, out = self.run_identity(self.BASE)
+        self.assertEqual(rc, prov.REFUSED)
+        self.assertIn("auth0.json", out)
+
+    def test_customer_domain_addresses_pass(self):
+        rc, out = self.run_identity(
+            self.BASE + 'claudecode_allowed_emails:\n  - "owner@cust.tw"\n')
+        self.assertEqual(rc, prov.DONE)
+        self.assertIn("this cluster's own domain", out)
+
+    def test_a_foreign_address_is_surfaced_for_a_decision(self):
+        # Not a failure: an operator address may be correct for a bench run and
+        # wrong at handover, and only a person knows which this is.
+        rc, out = self.run_identity(
+            self.BASE + 'claudecode_allowed_emails:\n  - "operator@gmail.com"\n')
+        self.assertEqual(rc, prov.DONE)
+        self.assertIn("not cust.tw", out)
+
+    def test_a_machine_shaped_address_is_refused(self):
+        for addr in ("svc-bot@cust.tw", "noreply@cust.tw", "automation@cust.tw"):
+            rc, _ = self.run_identity(
+                self.BASE + f'claudecode_allowed_emails:\n  - "{addr}"\n')
+            self.assertEqual(rc, prov.REFUSED, addr)
+
+    def test_missing_cluster_yaml_is_unknown(self):
+        import argparse
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(prov.cmd_identity(argparse.Namespace(dir=d)), prov.UNKNOWN)

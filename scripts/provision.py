@@ -42,6 +42,12 @@ What this file will not do
   Weakening 4.2 silently invalidates that, and whoever does it will not know.
 - **It will not retry an unrecognised failure** (4.12). It prints what it ran,
   what it expected and what it got, verbatim, and exits.
+- **It will not register an account with any consumer service** (5.2). Not
+  Google, not Cloudflare, not Auth0, not a domain registrar. The customer
+  registers one Google account at contract time and the company signs in with
+  it; there is no code path here that creates one, and there should not be —
+  automating consumer sign-up means holding the credential that recovers the
+  account, which is the one thing D11's whole model exists to avoid.
 - **It mutates nothing without `--apply`.** The default prints the commands.
 
 Usage
@@ -55,6 +61,7 @@ Usage
   provision.py complete --domain DOMAIN [--dir PATH] --expect-sha SHA
                         --escrowed-pubkey age1...
   provision.py quic-repair --kubeconfig PATH [--apply]
+  provision.py identity    --dir PATH
 
 Exit codes follow `delivery-check.py`: 0 done, 1 refused or failed, 2 could not
 tell. Two codes would force "I could not measure this" into one of them, and it
@@ -1234,6 +1241,78 @@ def cmd_complete(args) -> int:
     return worst
 
 
+def cmd_identity(args) -> int:
+    """5.3 - who can log in to this cluster's terminal, and who cannot.
+
+    Two assertions, and the first is about a silence:
+
+    **`claudecode_allowed_emails` unset does not mean "nobody".** Read from
+    `templates/scripts/plugin.py:315-317`: when `cluster.yaml` does not set it,
+    the shared `auth0.json`'s `allowed_emails` is used via `setdefault`. That
+    file carries the operator's addresses, so an unset field puts the company on
+    a customer's allowlist and renders without saying so. Unset and
+    deliberately-empty are the same text in `cluster.yaml` and different
+    clusters in production.
+
+    **A service identity must not be a login identity.** The Omni service
+    account, the GitHub PAT's account and the backup keys address machines.
+    Anything of theirs in a human allowlist means one credential opens two
+    doors, and revoking it at handover closes one somebody is still using.
+    """
+    d = os.path.abspath(args.dir)
+    cfg = os.path.join(d, "cluster.yaml")
+    if not os.path.exists(cfg):
+        huh(f"{cfg} not found")
+        return UNKNOWN
+    text = open(cfg).read()
+
+    m = re.search(r"(?ms)^claudecode_allowed_emails\s*:\s*(.*?)(?=^\S|\Z)", text)
+    raw = m.group(1) if m else ""
+    emails = re.findall(r"[\w.+-]+@[\w.-]+\.\w+", raw)
+
+    domain_m = re.search(r"""(?m)^cloudflare_domain\s*:\s*["']?([\w.-]+)""", text)
+    domain = domain_m.group(1) if domain_m else None
+
+    rc = DONE
+    if not m:
+        bad("claudecode_allowed_emails is not set in cluster.yaml")
+        print("      This is NOT an empty allowlist. plugin.py falls back to")
+        print("      auth0.json's allowed_emails, which carries the operator's")
+        print("      addresses - so this cluster renders with the company on the")
+        print("      customer's allowlist, and nothing in the diff says so.")
+        print("      Set it explicitly, even to the same list.")
+        rc = REFUSED
+    elif not emails:
+        bad("claudecode_allowed_emails is set but contains no address")
+        rc = REFUSED
+    else:
+        ok(f"claudecode_allowed_emails is set explicitly: {len(emails)} address(es)")
+        for e in emails:
+            host = e.partition("@")[2]
+            if domain and host.endswith(domain):
+                print(f"      {e}  (this cluster's own domain)")
+            else:
+                print(f"      {e}  <- not {domain or 'the cluster domain'}: is this "
+                      "the customer, or whoever provisioned the cluster?")
+        print("      Record the decision on the ticket. Nothing catches an")
+        print("      operator address left on a customer's allowlist: login")
+        print("      works, the terminal opens, and it opens for the wrong person.")
+
+    machineish = [e for e in emails
+                  if re.search(r"(?i)(service|svc|bot|automation|noreply|no-reply)", e)]
+    if machineish:
+        bad(f"machine-shaped address(es) in the human allowlist: {', '.join(machineish)}")
+        print("      A service identity that can also log in means one credential")
+        print("      opens two doors, and revoking it at handover closes one")
+        print("      somebody is still using.")
+        rc = REFUSED
+    elif emails:
+        ok("no machine-shaped address in the allowlist")
+        print("      Name-shaped, so it is weak: it catches the conventions this")
+        print("      fleet uses, not an address that simply looks human.")
+    return rc
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *a, **kw):  # noqa: D102
         return None
@@ -1281,6 +1360,10 @@ def main() -> int:
     q.add_argument("--dir", default=".")
     q.add_argument("--apply", action="store_true")
     q.set_defaults(func=cmd_quic_repair)
+
+    i = sub.add_parser("identity", help="5.3 who can log in, and who must not")
+    i.add_argument("--dir", default=".")
+    i.set_defaults(func=cmd_identity)
 
     c = sub.add_parser("complete", help="4.9 the three conditions for 'delivered'")
     c.add_argument("--domain", required=True)
