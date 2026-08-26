@@ -143,6 +143,16 @@ storage_backend: "nfs"
 # move the database onto it by itself. Forgetting is caught rather than silent:
 # the database stays on a node-local class, so accept_node_pinning is demanded
 # and names the thing that was missed.
+#
+# The opposite mistake — naming a class this cluster will not install — is
+# caught by `task configure` before it renders anything (issue #1). "longhorn"
+# without Longhorn and "sc-nas" without the NFS provisioner both stop the run
+# and name the missing field. A class this repo does not install is accepted in
+# silence: an out-of-band CSI driver is legitimate and unknowable here.
+#
+# Why it needs a check at all: a PVC naming a class that does not exist does not
+# fail. It sits Pending, every Kustomization reports Ready, and the only symptom
+# is one pod that never starts.
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # §1. BASE (required for this profile)
