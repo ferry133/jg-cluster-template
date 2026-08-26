@@ -45,6 +45,20 @@ tasks:
     preconditions:
       - test -f {{.SCRIPTS_DIR}}/build-zero-it-print.py
 
+  test:
+    desc: Run the scripts/ unit tests (stdlib unittest; no dependencies)
+    # Tracked and runnable from a fresh clone, on purpose. §3's tests were
+    # written, passed and never committed, so 3.2-3.7's checkmarks rested on a
+    # run nobody else could reproduce — the same shape as a `.gitignore` that
+    # exists only on the workstation doing the verifying.
+    #
+    # PROVISION_LIVE_TESTS=1 additionally runs the observers that talk to
+    # GitHub. They are skipped by default so the suite runs offline; skipped is
+    # not passed, and they are what caught the `deleted_at` regression.
+    cmd: python3 -m unittest discover -s {{.SCRIPTS_DIR}}/tests {{.CLI_ARGS}}
+    preconditions:
+      - test -d {{.SCRIPTS_DIR}}/tests
+
   reconcile:
     desc: Force Flux to pull in changes from your Git repository
     cmd: flux --namespace flux-system reconcile kustomization flux-system --with-source
