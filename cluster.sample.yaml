@@ -101,6 +101,33 @@ storage_backend: "nfs"
 # once the tier is verified — that is a dump and restore, not a re-render.
 # replicated_storage: true
 
+# (OPTIONAL) Where Longhorn writes its backups. Absent means no Longhorn backups
+# at all, which is what every cluster did before ferry133/jg-base#7 — and a
+# cluster that leaves this out renders byte-identically to one that never had
+# the field (measured with `helm template` against chart 1.12.0, diffing the
+# whole render).
+#
+# Worth setting wherever Longhorn holds anything you would miss.
+# `defaultReplicaCount: 2` survives a node dying; it does not survive
+# `kubectl delete pvc` or a corrupt table — those replicate faithfully to every
+# replica. This is the only thing in the stack that survives them.
+#
+# A URL rather than a bool because the destination is per-cluster and
+# unguessable: below is a LAN export on one specific NAS, and most clusters
+# cannot reach it, which is exactly why it cannot live in jg-base. Longhorn
+# accepts nfs://, cifs://, s3://, azblob:// and gcs://; only NFS is exercised.
+#
+# Requires Longhorn — replicated_storage above, or storage_backend
+# "replicated". `cue vet` only catches the explicit contradiction; the absent
+# case is caught by scripts/check-longhorn-backup.py at the end of
+# `task configure`.
+#
+# ⚠️ Setting this does not prove a backup works. Nothing has been restored from
+# a Longhorn backup on any cluster yet, and the NAS export has never been
+# written to by longhorn instance-manager. A backup target that has never
+# restored is a hypothesis.
+# longhorn_backup_target: "nfs://10.9.2.13:/volume3/backup1/longhorn"
+
 # (OPTIONAL) Which storage class databases use. Defaults to "local-path" and
 # deliberately does not follow storage_backend — NFS is never a correct answer
 # for something that needs fsync durability and file locking.
