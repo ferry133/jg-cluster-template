@@ -392,19 +392,22 @@ class UserRepoStep(Step):
             ["gh", "repo", "create", ctx["repository_name"],
              "--template", "ferry133/jg-cluster-template",
              f"--{ctx.get('repo_visibility', 'public')}", "--clone"],
-            # The template copy takes every tracked file, so the new repo
-            # arrives holding this repository's own openspec tree — 53 files of
-            # proposals and incident records, in a repo named after a customer.
-            # It is not only noise: it is a second copy of a tracked record, and
-            # the duplicate diverges while the one being followed is usually the
-            # wrong one. Removed before the first push, every time, because the
-            # template creates one on every delivery.
-            ["git", "-C", ctx["dir"], "rm", "-r", "--quiet", "--ignore-unmatch", "openspec"],
-            ["git", "-C", ctx["dir"], "commit", "-m",
-             "chore: drop the template's own openspec tree\n\n"
-             "Copied in by GitHub's template mechanism. A second copy of a\n"
-             "tracked record diverges from the first, and this repo is named\n"
-             "after a customer."],
+            # GitHub's template copy takes every TRACKED file, so whatever the
+            # template tracks, every customer repo gets — and a customer repo
+            # is named after a customer and public. This used to mean 53 files
+            # of proposals and incident records arriving in each one.
+            #
+            # **Fixed at the source on 2026-08-23** (`f4db750`): `openspec/` and
+            # `docs/` moved to fleet-ops, and `git ls-files openspec docs` is
+            # empty in the template and in jg-janncotcc. So the line below is a
+            # regression guard, not a cleanup step, and it must not be read as
+            # the current hazard.
+            #
+            # It asks the general question rather than the two names anyone
+            # happens to remember, because the next tree the template grows
+            # will not be called openspec. Same shape as the ignore rule that
+            # named `/cluster.yaml` while the leak sat at `config.gen/`.
+            ["scripts/provision.py", "template-residue", "--dir", ctx["dir"]],
         ]
 
 
@@ -427,6 +430,45 @@ def tunnel_is_deleted(t: dict) -> bool:
     if not v:
         return False
     return not str(v).startswith(ZERO_TIME_PREFIXES)
+
+
+def cmd_template_residue(args) -> int:
+    """Does this spawned repo track anything a customer repo should not?
+
+    Asked as "what is here that a cluster repo has no use for", not as "is
+    `openspec/` here". A path-shaped check and a path-shaped rule share a
+    premise, and `config.gen/cluster.yaml` is what that costs.
+
+    The allowlist is the thing to review when this fires, not the finding.
+    """
+    d = os.path.abspath(args.dir)
+    r = run(["git", "-C", d, "ls-files"])
+    if r.returncode != 0:
+        huh(f"{d}: git ls-files failed: {(r.stderr or '').strip()}")
+        return UNKNOWN
+    tops = sorted({p.split("/", 1)[0] for p in r.stdout.splitlines() if "/" in p})
+    if not tops:
+        huh(f"{d} tracks no files in any subdirectory — nothing to judge")
+        return UNKNOWN
+
+    # What a cluster repo legitimately holds. Anything else is residue until
+    # someone decides otherwise and adds it here, with a reason.
+    EXPECTED = {"kubernetes", "templates", "scripts", ".taskfiles", ".github",
+                "bootstrap", "talos", "flux"}
+    residue = [t for t in tops if t not in EXPECTED]
+    if not residue:
+        ok(f"{d}: {len(tops)} tracked top-level directories, all expected")
+        print(f"      ({', '.join(tops)})")
+        return DONE
+    bad(f"{d} tracks {len(residue)} director(ies) a cluster repo has no use for: "
+        + ", ".join(residue))
+    print("      Remove them before the first push. Each one is a second copy of")
+    print("      a tracked record: the duplicate diverges, and the one being")
+    print("      followed is usually the wrong one.")
+    print("      If one of these belongs here, add it to EXPECTED in")
+    print("      scripts/provision.py with the reason — reviewing the allowlist")
+    print("      is the point, not silencing the finding.")
+    return REFUSED
 
 
 def cloudflared_tunnels() -> tuple[list[dict] | None, str]:
@@ -1354,6 +1396,11 @@ def main() -> int:
             s.add_argument("--apply", action="store_true",
                            help="actually create. Without it nothing is mutated.")
         s.set_defaults(func=fn)
+
+    tr = sub.add_parser("template-residue",
+                        help="4.4 what a spawned repo tracks that it should not")
+    tr.add_argument("--dir", default=".")
+    tr.set_defaults(func=cmd_template_residue)
 
     q = sub.add_parser("quic-repair", help="4.11 detect blocked UDP 7844 and switch to http2")
     q.add_argument("--kubeconfig", required=True)

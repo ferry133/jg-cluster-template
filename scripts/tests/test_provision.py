@@ -353,3 +353,63 @@ class TestIdentity(unittest.TestCase):
         import argparse
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(prov.cmd_identity(argparse.Namespace(dir=d)), prov.UNKNOWN)
+
+
+class TestTemplateResidue(unittest.TestCase):
+    """4.4. Measured 2026-08-26 across three real repos — two clean, one not —
+    so this is a discriminating check and not one that always says the same
+    thing. jg-jiahd tracks `docs/` and `openspec/`; the template and
+    jg-janncotcc track neither."""
+
+    def repo_with(self, dirs):
+        import subprocess
+        d = tempfile.mkdtemp()
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+        subprocess.run(["git", "-C", d, "init", "-q"], check=True, env=env)
+        # A root-level file so the no-subdirectory case still has a commit —
+        # otherwise that test measures `git commit` refusing an empty tree
+        # rather than the check refusing to call an unreadable repo clean.
+        (pathlib.Path(d) / "README.md").write_text("x\n")
+        for sub in dirs:
+            p = pathlib.Path(d) / sub / "f.yaml"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("x: 1\n")
+        subprocess.run(["git", "-C", d, "add", "-A"], check=True, env=env)
+        subprocess.run(["git", "-C", d, "commit", "-qm", "init"], check=True, env=env)
+        return d
+
+    def residue(self, d):
+        import argparse
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = prov.cmd_template_residue(argparse.Namespace(dir=d))
+        return rc, out.getvalue()
+
+    def test_a_cluster_repos_own_directories_pass(self):
+        rc, _ = self.residue(self.repo_with(["kubernetes", "templates", "scripts"]))
+        self.assertEqual(rc, prov.DONE)
+
+    def test_the_trees_that_actually_leaked_are_caught(self):
+        rc, out = self.residue(self.repo_with(["kubernetes", "openspec", "docs"]))
+        self.assertEqual(rc, prov.REFUSED)
+        self.assertIn("openspec", out)
+        self.assertIn("docs", out)
+
+    def test_a_tree_nobody_predicted_is_caught_too(self):
+        # The point of asking "what is here" rather than "is openspec here":
+        # the next tree the template grows will not be called openspec.
+        rc, out = self.residue(self.repo_with(["kubernetes", "incident-reports"]))
+        self.assertEqual(rc, prov.REFUSED)
+        self.assertIn("incident-reports", out)
+
+    def test_a_repo_with_no_subdirectories_is_unknown_not_clean(self):
+        rc, _ = self.residue(self.repo_with([]))
+        self.assertEqual(rc, prov.UNKNOWN)
+
+    def test_not_a_repo_is_unknown(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, _ = self.residue(d)
+            self.assertEqual(rc, prov.UNKNOWN)
