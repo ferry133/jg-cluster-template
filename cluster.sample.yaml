@@ -216,6 +216,23 @@ cloudflare_domain: "example.com"
 # (REQUIRED) API Token: Zone:DNS:Edit + Account:Cloudflare Tunnel:Read
 cloudflare_token: ""
 
+# (OPTIONAL) How cloudflared reaches Cloudflare's edge: "quic" (default, UDP
+# 7844) or "http2" (TCP 443).
+#
+# Set this to "http2" ONLY after observing the symptom, because http2 costs
+# real bandwidth: cloudflared in CrashLoopBackOff logging
+#   Failed to dial a quic connection: timeout: handshake did not complete in time
+# while TCP 443 works — i.e. the site's egress blocks outbound UDP.
+#
+# It is not a token problem. Rotating the token issues a new credential and
+# produces the identical crash, and that is the first thing everyone tries.
+#
+# `scripts/provision.py quic-repair --kubeconfig ./kubeconfig-sa` detects the
+# symptom and sets this. It deliberately refuses when the value is already
+# http2 and the errors continue — that means the value never reached the
+# cluster, which is a fact about the render and not about the network.
+# cloudflare_tunnel_transport: "http2"
+
 # Main Cloudflare Tunnel:
 #   TOKEN + ID are read from `cloudflare-tunnel.json` (local, gitignored).
 #   Generate:

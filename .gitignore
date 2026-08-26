@@ -49,7 +49,8 @@ __pycache__/
 # token, the R2 keys, and a FLEET-WIDE Auth0 client secret shared by every
 # cluster. Committing it once, anywhere, in a public repo is permanent and the
 # exposure is not this customer's — it is every cluster's.
-# See docs/operations/provision-customer-cluster.md, step 3.
+# See docs/operations/provision-customer-cluster.md step 3 — in ferry133/fleet-ops
+# since 2026-08-23, not in this repo.
 cluster.yaml
 *cluster.yaml
 nodes.yaml

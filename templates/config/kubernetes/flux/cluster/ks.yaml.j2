@@ -89,6 +89,39 @@ spec:
               target:
                 group: helm.toolkit.fluxcd.io
                 kind: HelmRelease
+#|         The QUIC repair, when this cluster's egress blocks UDP 7844.
+
+           It goes HERE, inside the nested patches list, and not as another
+           entry in the outer `patches:` below — for the same reason the
+           suspend patches further down are scalar-only. A second outer patch
+           that set `spec.patches` would replace this whole nested list
+           wholesale, taking the generic HelmRelease strategy with it.
+
+           Rendered from cluster.yaml rather than pasted into the generated
+           file, so it survives the next `task configure`. Before the field
+           existed the fix lived in one person's clone and the next render
+           removed it without saying so. #|
+#% if (cloudflare_tunnel_transport | default('quic')) == 'http2' %#
+            # cloudflare_tunnel_transport: http2 — this site's egress blocks UDP 7844.
+            - patch: |-
+                apiVersion: helm.toolkit.fluxcd.io/v2
+                kind: HelmRelease
+                metadata:
+                  name: cloudflare-tunnel
+                spec:
+                  values:
+                    controllers:
+                      cloudflare-tunnel:
+                        containers:
+                          app:
+                            env:
+                              TUNNEL_POST_QUANTUM: false
+                              TUNNEL_TRANSPORT_PROTOCOL: http2
+              target:
+                group: helm.toolkit.fluxcd.io
+                kind: HelmRelease
+                name: cloudflare-tunnel
+#% endif %#
       target:
         group: kustomize.toolkit.fluxcd.io
         kind: Kustomization

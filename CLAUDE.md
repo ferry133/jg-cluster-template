@@ -145,32 +145,19 @@ kubectl --kubeconfig ~/coding/<repo>/kubeconfig-sa <command>
 
 **根因**：node 出口封鎖 UDP 7844（QUIC），但 TCP 443 正常。不是 token 過期、不是 Cloudflare 端問題、token rotate 救不了。
 
-**修復**：在 user repo 的 `templates/config/kubernetes/flux/cluster/ks.yaml.j2` 的 `cluster-apps-base` Kustomization 的 nested patches 內，加一段 patch 強制改 protocol：
+**修復**：在該叢集的 `cluster.yaml` 設一行，然後 `task configure --yes` → commit & push。約 1 分鐘後 cloudflared 應 `1/1 Running`。
 
 ```yaml
-- patch: |-
-    apiVersion: helm.toolkit.fluxcd.io/v2
-    kind: HelmRelease
-    metadata:
-      name: cloudflare-tunnel
-    spec:
-      values:
-        controllers:
-          cloudflare-tunnel:
-            containers:
-              app:
-                env:
-                  TUNNEL_POST_QUANTUM: false
-                  TUNNEL_TRANSPORT_PROTOCOL: http2
-  target:
-    group: helm.toolkit.fluxcd.io
-    kind: HelmRelease
-    name: cloudflare-tunnel
+cloudflare_tunnel_transport: "http2"
 ```
 
-然後 `task configure --yes` → commit & push。約 1 分鐘後 cloudflared 應 `1/1 Running`。
+`scripts/provision.py quic-repair --kubeconfig ./kubeconfig-sa` 會偵測症狀並設這個值（`--apply` 才動手）。它在「值已經是 http2 但錯誤還在繼續」時**拒絕**——那代表值沒有到達叢集，是關於 render 的事實，不是關於網路的。
 
-**為什麼不改 jg-base？** 其他 cluster（jgu2、jcom 等）QUIC 正常，default 保留 QUIC 較好。這是 per-cluster workaround。
+> **這裡以前寫的是把一段 nested patch 手貼進 `ks.yaml.j2`。** 那個做法有效，但**修復只存在於貼過的那份 clone 裡**，而任何人下一次 `task configure` 都會把它蓋掉且不說一聲——生成檔案的編輯活不過重新 render，值可以。欄位加在 `cluster.schema.cue`（`"quic" | "http2"`，其他值 `cue vet` 直接擋）與 `templates/config/kubernetes/flux/cluster/ks.yaml.j2`。
+
+⚠️ **patch 的位置不是風格問題**：它必須放進 `cluster-apps-base` 那個 outer patch 的 **nested** `spec.patches` 裡。另外開一個 outer patch 去設 `spec.patches` 會**整份取代**那個清單，連通用的 HelmRelease 策略 patch 一起帶走。實測渲染後該清單有兩筆（`HelmRelease/(any)` 與 `HelmRelease/cloudflare-tunnel`），兩筆都在。
+
+**為什麼不改 jg-base？** 其他 cluster（jgu2、jcom 等）QUIC 正常，default 保留 QUIC 較好，而 http2 有實際的頻寬代價。這是 per-cluster 的宣告，不是 fleet 預設。
 
 **參考**：jg-jiahd commit `ac1c818`（2026-05-13；原 jgu5 repo 已於 2026-05-30 改名）。
 
