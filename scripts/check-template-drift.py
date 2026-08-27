@@ -21,8 +21,15 @@ repo's and mode 755 against 644, which flipped the rendered `.sops.yaml` to 755
 on every `task configure`. This script reported `ok` throughout, because bytes
 were all it read — a clean result from a check that was not looking.
 
-Usage:  ./scripts/check-template-drift.py <cluster-repo> [template-repo]
-Exit 0 if the cluster matches, 1 if anything drifted or is missing.
+Usage:  ./scripts/check-template-drift.py <cluster-repo> <template-repo>
+
+Exit 0 if the cluster matches, 1 if anything drifted or is missing, and 2 if it
+could not compare -- today that means the two paths resolved to the same repo,
+which was reported as `ok` until 2026-08-28. Three outcomes, because with two
+"did not compare" lands in whichever bucket the reader is already expecting.
+
+[template-repo] still defaults to the current directory, but a default that
+resolves to the cluster is now refused rather than answered.
 """
 
 from __future__ import annotations
@@ -68,9 +75,40 @@ def main() -> int:
     if len(sys.argv) < 2:
         sys.exit(__doc__)
     cluster = Path(sys.argv[1]).expanduser().resolve()
-    template = Path(sys.argv[2] if len(sys.argv) > 2 else ".").expanduser().resolve()
+    defaulted = len(sys.argv) <= 2
+    template = Path(sys.argv[2] if not defaulted else ".").expanduser().resolve()
     if not cluster.is_dir():
         sys.exit(f"not a directory: {cluster}")
+
+    # Refuse to compare a repo with itself, and exit 2 rather than 0.
+    #
+    # Measured 2026-08-28: run from inside a cluster repo as
+    # `check-template-drift.py .`, both paths resolve to that repo, every shared
+    # file is byte-identical to itself, and this printed
+    # `ok -- this cluster's templates match`. A fleet-ops session used that to
+    # start refuting a real 21-file drift report before catching it.
+    #
+    # The `template:` line was already printed and named the same directory, so
+    # the information was on screen and still missed -- which is the argument
+    # for refusing rather than warning. **A self-comparison cannot fail**, so
+    # its `ok` carries no information, and an `ok` that cannot fail is
+    # indistinguishable from one that passed.
+    #
+    # Exit 2, not 0 and not 1: this is the third outcome. 0 means "compared,
+    # matched", 1 means "compared, diverged", and 2 means "did not compare".
+    # Collapsing it into 0 is exactly how "I could not measure" gets filed under
+    # "passed".
+    if cluster == template:
+        how = "the default (current directory)" if defaulted else "argv[2]"
+        sys.stderr.write(
+            f"refusing to compare {cluster} with itself\n"
+            f"  template path came from {how}\n"
+            f"  a repo always matches itself, so the result would be `ok` no\n"
+            f"  matter how far this cluster has drifted\n"
+            f"  pass the template repo explicitly:\n"
+            f"      {Path(sys.argv[0]).name} {sys.argv[1]} <path-to-jg-cluster-template>\n"
+        )
+        return 2
 
     theirs, ours = files_under(cluster), files_under(template)
     drifted = sorted(
