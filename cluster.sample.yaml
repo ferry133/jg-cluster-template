@@ -405,6 +405,43 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # talos_mcp_omni_endpoint: ""     # e.g. https://omni-grpc.<client-host>, from step 3
 
 
+# ── extras/factory/factory — provisioning credentials (one cluster only) ──────
+# Consumed by jg-base `kubernetes/apps/extras/factory/factory/app/
+# credentials-secret.yaml`. Set these ONLY on the cluster that hosts factory
+# (jcom today); everywhere else they render empty, which is correct.
+#
+# ⚠️ Empty is a real state, not a placeholder. It means "not issued yet", and
+# every consumer fails loudly on it: `omnictl` refuses to authenticate, `gh`
+# reports no token, a zero-byte deploy key fails at key load. What it does NOT
+# do is announce itself from the outside — measured on jcom 2026-08-27, before
+# these fields existed: factory's pod was `2/2 Running`, the Secret existed and
+# the Deployment listed all the env names, while every value was length zero.
+# **The only check that told them apart was reading the values.**
+#
+# Scope each one down before issuing it — this host concentrates the fleet's
+# provisioning authority, and the inventory in jg-base's
+# `extras/factory/factory/README.md` is the control, not a description of one:
+#
+#   omni_sa_key   `omnictl serviceaccount create --use-user-role=false
+#                  --role Operator --ttl 10m` — Operator, not Admin, and
+#                  short-lived, reissued before each run
+#   omni_endpoint MUST be a *direct* gRPC path. Cloudflare Tunnel breaks the
+#                  gRPC trailers Omni's streaming calls need (measured
+#                  2026-07-30). Leave empty to take jg-base's in-cluster
+#                  default `http://omni.omni.svc.cluster.local:8080`
+#   github_token  scoped to the repos factory actually writes
+#   cloudflare    ⚠️ creating a tunnel needs **Edit**, not Read — measured
+#                  2026-08-23, the README used to say Read
+#
+# factory_omni_sa_key: ""          # OMNI_SERVICE_ACCOUNT_KEY, Operator role
+# factory_omni_endpoint: ""        # empty = jg-base's ClusterIP default
+# factory_github_token: ""
+# factory_cloudflare_token: ""
+# factory_fleet_ops_deploy_key: |  # multi-line PEM; b64-wrapped at render
+#   -----BEGIN OPENSSH PRIVATE KEY-----
+#   ...
+
+
 # ── monitoring/daily-check (base app — deployed on every cluster) ─────────────
 # Daily cluster health check CronJob → emails report via Gmail SMTP and pings
 # healthchecks.io for dead-man-switch coverage.

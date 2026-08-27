@@ -345,6 +345,23 @@ import (
 	talos_mcp_config?: string & !=""
 	talos_mcp_sa_key?: string & !=""
 	talos_mcp_omni_endpoint?: string & !=""
+	// factory provisioning credentials (extras/factory/factory in jg-base).
+	// Only the cluster that hosts factory sets these -- jcom today. Every one is
+	// optional and renders empty elsewhere, which is what the consuming Secret
+	// expects: empty means "not issued yet", and each consumer fails loudly on
+	// it (omnictl refuses to authenticate, gh reports no token, a zero-byte
+	// deploy key fails at key load).
+	//
+	// Declared here 2026-08-27. Before that the consuming half existed in
+	// jg-base while nothing could declare the values, so factory's pod ran
+	// 2/2 Ready holding three empty credentials -- measured on jcom that day:
+	// OMNI_SERVICE_ACCOUNT_KEY, GITHUB_TOKEN and CLOUDFLARE_API_TOKEN were all
+	// len=0 while the pod, the Secret and the env names all read as present.
+	factory_omni_sa_key?:            string & !=""
+	factory_omni_endpoint?:          string & !=""
+	factory_github_token?:           string & !=""
+	factory_cloudflare_token?:       string & !=""
+	factory_fleet_ops_deploy_key?:   string & !=""
 	postgres_password?: string & !=""
 	trello_api_key?: string
 	trello_api_token?: string
