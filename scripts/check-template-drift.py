@@ -122,7 +122,28 @@ def main() -> int:
         p
         for p in theirs & ours
         if (template / p).read_bytes() == (cluster / p).read_bytes()
-        and ((template / p).stat().st_mode & 0o111) != ((cluster / p).stat().st_mode & 0o111)
+        # 0o100 (owner execute), NOT 0o111.
+        #
+        # Measured 2026-08-28: git records exactly two file modes, `100644` and
+        # `100755` — the owner-execute bit and nothing else. Group and other
+        # execute are not stored, so what lands in a working tree for those bits
+        # is decided by the umask at checkout time, not by the repo.
+        #
+        # `& 0o111` therefore compared two checkout environments and called the
+        # answer a repo difference. It fired for `scripts/lib/common.sh` at
+        # 700 vs 755 while `git ls-files -s` said `100755` on BOTH sides — the
+        # same file, no divergence, one row of noise. Cloning either side again
+        # can change the answer without anything in either repo changing.
+        #
+        # That is the same class as the self-comparison fixed in the commit
+        # before this one: **a result decided by the environment reads exactly
+        # like a result that measured something.**
+        #
+        # The case this check exists for survives the narrowing. The docstring's
+        # example is `.sops.yaml.j2` at 755 against 644, and that IS the
+        # owner-execute bit — `100755` vs `100644`, recorded by git, propagated
+        # to the rendered output by makejinja's `copy_metadata = true`.
+        and ((template / p).stat().st_mode & 0o100) != ((cluster / p).stat().st_mode & 0o100)
     )
     behind = sorted(ours - theirs)
     extra = sorted(theirs - ours)
@@ -140,8 +161,20 @@ def main() -> int:
             [
                 (
                     p,
-                    f"same bytes, {(template / p).stat().st_mode & 0o777:o}"
-                    f" here vs {(cluster / p).stat().st_mode & 0o777:o} there",
+                    # Cluster first, then template — every other row in this
+                    # report reads "what is true of the cluster", and MODE used
+                    # to print the template's mode labelled `here`. Measured
+                    # 2026-08-28 against jcom: it said `755 here vs 700 there`
+                    # while the cluster was 700 and the template 755. Reversed.
+                    #
+                    # Said as executable/not rather than as an octal triple: the
+                    # octal implies git carries three digits of precision. It
+                    # carries one bit.
+                    "same bytes, executable in the cluster but not in the"
+                    " template"
+                    if (cluster / p).stat().st_mode & 0o100
+                    else "same bytes, executable in the template but not in the"
+                    " cluster",
                 )
                 for p in mode_only
             ],
