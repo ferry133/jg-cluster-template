@@ -364,6 +364,20 @@ import (
 	// a CI log in order to complain about it.
 	claudecode_oauth2_cookie_secret?: string & !=""
 	claudecode_allowed_emails?: string & !=""
+	// Per-instance override of the line above, keyed by instance name. Absent
+	// keys inherit the global list, so a cluster that sets only the global
+	// field renders exactly what it rendered before.
+	//
+	// Exists because the allowlist is the one layer of separation between two
+	// instances on a cluster that was NOT per-instance: each already has its
+	// own config and workspace PVC, hence its own ~/.claude, keyring, login and
+	// history. One shared door undoes all of that.
+	//
+	// A key that is not in claude_instances fails the render — see plugin.py.
+	// CUE cannot express that cross-check against a field it may only see
+	// defaulted, and an override that silently does nothing is exactly the
+	// failure this field exists to prevent.
+	claudecode_allowed_emails_by_instance?: [string]: string & !=""
 	talos_mcp_config?: string & !=""
 	talos_mcp_sa_key?: string & !=""
 	talos_mcp_omni_endpoint?: string & !=""
@@ -391,7 +405,32 @@ import (
 	line_channel_access_token?: string
 	line_channel_secret?: string
 	line_notify_group_id?: string
+	// Optional in general, REQUIRED when an extra that reads it is selected.
+	// Conditional and not unconditional: a cluster that runs neither must not be
+	// made to supply a key it does not use.
+	//
+	// Without this, selecting either extra rendered cleanly with an empty key
+	// and the failure arrived later, from the workload, as an auth error a long
+	// way from the field that caused it.
+	//
+	// ⚠️ What this does NOT check is provenance. Presence is all a schema can
+	// see; whether the key belongs to the cluster's owner rather than to the
+	// operator is a delivery-time question with a recorded answer, and a set,
+	// valid, working key that bills the wrong party passes every check here.
+	// Same shape as a notification address that delivers mail to the wrong
+	// people.
+	//
+	// Also worth knowing: the two extras share this ONE variable rather than
+	// holding a key each. Fine while one party owns both; a cluster that ever
+	// runs them for different parties would be using one credential for both.
 	anthropic_api_key?: string
+	#AnthropicExtras: [
+		"default/linebot",
+		"default/synophoto",
+	]
+	if len([for e in extras if list.Contains(#AnthropicExtras, e) {e}]) > 0 {
+		anthropic_api_key: string & !=""
+	}
 	database_url?: string
 	synophoto_auth0_domain?: string
 	synophoto_auth0_client_id?: string
