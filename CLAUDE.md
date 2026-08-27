@@ -1,5 +1,10 @@
 # CLAUDE.md — jg-cluster-template / per-user cluster repo
 
+> **Agent R&R（2026-08-28 ferry133 裁定）:** 這個 agent 擁有 `jg-base` 與
+> `jg-cluster-template`；所有 user repo 由 fleet-ops agent 擁有。名冊與跨 repo
+> 協作規則的唯一持有者是 fleet-ops `docs/agents/responsibilities.md`
+> —— 這裡只留指標，不複述。
+
 ## 三 Repo 架構
 
 每個 extra app 橫跨三個 repo，**缺一不可**：
