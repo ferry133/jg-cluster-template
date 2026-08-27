@@ -186,7 +186,34 @@ class Plugin(makejinja.plugin.Plugin):
         # These must match the defaults documented in cluster.sample.yaml —
         # a documented default the code does not apply is a defect.
         data.setdefault('node_default_gateway', nthhost(data.get('node_cidr'), 1))
-        data.setdefault('node_dns_servers', ['1.1.1.1', '1.0.0.1'])
+        # 2026-08-27: the LAN's router, not Cloudflare. Measured on jg-jiahd
+        # (Omni path, no Talos patches applied) that the nodes were already on
+        # `10.9.9.1` via DHCP while this file rendered `1.1.1.1` -- so the old
+        # default was, on half the fleet, a statement about a file nobody
+        # applies. On the other half (patches applied, e.g. jcom) it was real,
+        # and it is what stopped those nodes from resolving internal names at
+        # all: a node on `1.1.1.1` asks Cloudflare, which does not serve the
+        # RFC1918 answer (deployment-profiles D29), so `internal.<domain>`
+        # is NXDOMAIN from anything running on that node -- including the `im`
+        # rescue terminal.
+        #
+        # Single entry, deliberately. A public fallback was considered and
+        # rejected by ferry133 the same day: `all(is_private)` below would then
+        # derive `public` and switch check 18 back off, and CoreDNS's forward
+        # plugin selects among multiple upstreams at random by default
+        # (coredns.io/plugins/forward: "The default is `random`."), so internal
+        # names would resolve on roughly half of all queries with the failures
+        # cached. Intermittent is worse than absent. The cost of one entry is
+        # stated plainly: if the router's resolver dies the nodes lose name
+        # resolution -- but so does every other client on that LAN, and the
+        # cluster's upstream is gone with it.
+        #
+        # The address must do BOTH jobs, ordinary recursion and forwarding the
+        # cluster domain -- which is why it is the router and not the shared LAN
+        # address (`docs/operations/router-dns.md` in fleet-ops). Pointing this
+        # at k8s-gateway makes node name resolution depend on the cluster it is
+        # meant to bring up.
+        data.setdefault('node_dns_servers', [data['node_default_gateway']])
         # Whether the nodes resolve names the way a LAN client does — read
         # AFTER the default above, because the default is what the nodes get.
         #
@@ -218,15 +245,29 @@ class Plugin(makejinja.plugin.Plugin):
         # Reading the effective value is also the only spelling that cannot go
         # stale: whatever the default becomes, this says what the nodes got.
         #
-        # Consequence, stated plainly: with the shipping default every cluster
-        # derives `public`, so daily-check's check 18 reports "not measured"
-        # rather than probing. That is the honest answer -- a node on 1.1.1.1
-        # cannot stand in for a LAN client -- and the way to turn the check on
-        # is to point node_dns_servers at the LAN resolver, which is the same
-        # change that makes the probe mean anything. The Omni path applies no
-        # Talos patches, so its nodes really do take DHCP DNS and `public`
-        # understates them; erring toward "not measured" is deliberate, because
-        # the other error is a red row every morning on a healthy LAN.
+        # Consequence, restated 2026-08-27 when the default above changed.
+        # It used to read: with the shipping default every cluster derives
+        # `public`, so check 18 reports "not measured" rather than probing.
+        # That was true and it was the honest answer, but it made "nothing
+        # watches the router" the fleet-wide default.
+        #
+        # With the default now the LAN router, a cluster that declares nothing
+        # derives `lan` and check 18 probes. Two things follow, and neither is
+        # automatic:
+        #
+        #   - Re-rendering is what moves a cluster, not this commit. A cluster
+        #     that has not run `task configure` since keeps whatever its
+        #     `cluster-secrets` already holds.
+        #   - On the Omni path no Talos patch is applied, so the nodes take DHCP
+        #     DNS regardless of what this file says. There the change corrects
+        #     the *declaration* to match what the nodes were already doing; it
+        #     does not change resolution. On a patched path (talhelper) it does
+        #     change resolution, and the node must be re-applied for it to take
+        #     effect.
+        #
+        # Deriving from the effective value is still the only spelling that
+        # cannot go stale, and it is now right for both paths rather than
+        # understating one of them.
         data['node_dns_path'] = 'lan' if all(
             ipaddress.ip_address(s).is_private
             for s in data['node_dns_servers']) else 'public'
