@@ -339,7 +339,15 @@ import (
 	claudecode_auth0_client_id?: string & !=""
 	claudecode_auth0_client_secret?: string & !=""
 	// Derived from age.key + cluster_name at render time when absent, so it is
-	// stable across renders and distinct per cluster.
+	// stable across renders and distinct per cluster. Leaving it unset is the
+	// good case — the derivation has always emitted the shape oauth2-proxy
+	// wants, and every value it has ever refused was one a human wrote.
+	//
+	// The format rule is in scripts/check-claudecode-auth.py, not here, for the
+	// same reason as ttyd_credential above: `cue vet` prints the offending
+	// value in its error (measured — a mismatching secret came back verbatim in
+	// the message), so a CUE constraint would put this secret in a terminal and
+	// a CI log in order to complain about it.
 	claudecode_oauth2_cookie_secret?: string & !=""
 	claudecode_allowed_emails?: string & !=""
 	talos_mcp_config?: string & !=""
