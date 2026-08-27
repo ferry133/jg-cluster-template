@@ -302,6 +302,29 @@ class Plugin(makejinja.plugin.Plugin):
             'nfs': 'sc-nas',
             'replicated': 'longhorn',
         }.get(_backend, 'local-path'))
+        # claude-code's config PVC (~/.claude plus the keyring on a subPath).
+        # Defaults to what it renders TODAY, not to db_storage_class.
+        #
+        # The block tier is the right destination — gnome-keyring's file locking
+        # and claude's small frequent writes lose the same argument against NFS
+        # that databases do — but `storageClassName` is immutable, so a default
+        # that names a different class does not move anything. It renders a PVC
+        # the cluster cannot accept, on every cluster, at whatever moment each
+        # one next runs `task configure`. Measured: that default would move
+        # jg-jiahd sc-nas→longhorn and jcom sc-nas→local-path, and jcom is
+        # single-node, which is the case that must NOT move.
+        #
+        # So the move is per cluster, deliberate, and by the copy procedure in
+        # cluster.sample.yaml. Naming the current class here is also how a
+        # cluster RECORDS that it has not moved yet — same use as
+        # db_storage_class, for the same reason.
+        data.setdefault('claudecode_config_storage_class',
+                        data['default_storage_class'])
+        # Whether the workspace PVC is rendered at all. True, and the sample
+        # says in words that false deletes data: on the NFS class the
+        # provisioner's archiveOnDelete catches it, on local-path and
+        # longhorn-static nothing does.
+        data.setdefault('claudecode_workspace', True)
         # The block tier, for anything that needs fsync durability and file
         # locking. Not derived from storage_backend: NFS is never a valid answer
         # here, whatever the cluster uses for bulk data. An existing cluster

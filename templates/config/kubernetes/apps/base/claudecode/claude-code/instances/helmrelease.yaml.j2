@@ -326,9 +326,23 @@ spec:
 #% endfor %#
 #% endif %#
     persistence:
+#| One PVC, two mounts, and they stay together: an OAuth token and the keyring
+   holding it have no reason to live on different volumes. Moving this PVC moves
+   both, which is why claudecode_config_storage_class is one knob and not two.
+
+   Its default is `default_storage_class` -- TODAY'S value, so merging this
+   moves nobody. That is deliberate and it is not what a "block tier by default"
+   reading would give: `storageClassName` is immutable, so a changed default
+   does not migrate anything, it renders a PVC the cluster cannot accept, on
+   every cluster at once, at whatever moment each next runs `task configure`.
+
+   The block tier IS the right destination -- gnome-keyring's file locking and
+   claude's small frequent writes lose the same argument against NFS that
+   databases do. But a cluster gets there by the copy procedure in
+   cluster.sample.yaml, one at a time, with the archive taken first. #|
       claude-config:
         type: persistentVolumeClaim
-        storageClass: #{ default_storage_class }#
+        storageClass: #{ claudecode_config_storage_class }#
         accessMode: ReadWriteOnce
         size: 5Gi
         globalMounts:
@@ -337,6 +351,13 @@ spec:
           # secret-service; without this mount they die with the pod.
           - path: /home/claude/.local/share/keyrings
             subPath: keyrings
+#| claudecode_workspace: false removes the PVC from the release. On the NFS
+   class the provisioner's archiveOnDelete renames the directory rather than
+   deleting it; on local-path and longhorn-static the reclaim policy is Delete
+   and nothing catches it. Hence the default is true and the sample says so in
+   words -- a cluster.yaml copied from another one should not be able to destroy
+   a workspace on the next `task configure` without having said so. #|
+#% if claudecode_workspace %#
       claude-workspace:
         type: persistentVolumeClaim
         storageClass: #{ default_storage_class }#
@@ -344,17 +365,6 @@ spec:
         size: 20Gi
         globalMounts:
           - path: /home/claude/workspace
-#| The shared coding directory is an NFS export or it is nothing: with no NAS
-   there is nothing to share, and rendering the mount anyway produced empty
-   server/path values that the chart's schema rejects outright — the whole
-   release fails to install, not just this volume. #|
-#% if nas_coding_path is defined and nas_coding_path %#
-      coding:
-        type: nfs
-        server: "${NAS_SERVER}"
-        path: "${NAS_CODING_PATH}"
-        globalMounts:
-          - path: /home/claude/coding
 #% endif %#
 #% if claudecode_auth0_enabled %#
       oauth2-emails:

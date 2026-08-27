@@ -145,6 +145,21 @@ import (
 	// node-local class, so the pinning acknowledgement below fires and asks
 	// about exactly the thing that was forgotten.
 	db_storage_class: *"local-path" | string & !=""
+	// claude-code's config PVC — ~/.claude and the keyring it holds, one volume
+	// because a token and the keyring holding it have no reason to be apart.
+	//
+	// Defaults to default_storage_class (today's value), NOT to db_storage_class.
+	// `storageClassName` is immutable, so pointing a default somewhere else does
+	// not migrate a cluster, it renders a PVC the cluster cannot accept. Naming
+	// a class here is how a cluster records where it is — including recording
+	// that it has not moved yet.
+	claudecode_config_storage_class?: string & !=""
+	// Whether the workspace PVC is rendered at all. Default true.
+	//
+	// ⚠️ false REMOVES the PVC from the release. On the NFS class the
+	// provisioner archives rather than deletes; on local-path and
+	// longhorn-static the reclaim policy is Delete and nothing catches it.
+	claudecode_workspace?: bool
 
 	// Whether anything in this cluster lands on a node-local class. This, and
 	// not `storage_backend`, is what the acknowledgement below has to be keyed
@@ -275,6 +290,10 @@ import (
 	// to the profile's default storage class.
 	nas_server?: net.IPv4 & !=""
 	nas_path?: string & !=""
+	// ⚠️ UNCONSUMED since the claude-code `coding` mount was removed. Kept
+	// because three cluster.yaml files declare it and deleting the field would
+	// fail their next `cue vet` over a value that harms nothing. NAS_CODING_PATH
+	// is still rendered into cluster-secrets and still read by nobody.
 	nas_coding_path?: string & !=""
 
 	if storage_backend == "nfs" {
