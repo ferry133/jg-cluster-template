@@ -310,11 +310,18 @@ spec:
     configMaps:
       oauth2-emails:
         data:
-          # One email per line, rendered from claudecode_allowed_emails at
-          # template time -- deliberately NOT a Flux var: postBuild
-          # substitution collapses newlines in multi-line values.
+          # One email per line, rendered at template time -- deliberately NOT
+          # a Flux var: postBuild substitution collapses newlines in multi-line
+          # values.
+          #
+          # Indexed by instance, not the global field: this ConfigMap is inside
+          # the per-instance loop, and reading one global value here gave two
+          # instances byte-identical allowlists. plugin.py resolves the map for
+          # every instance (falling back to claudecode_allowed_emails) and fails
+          # the render on a name that is not an instance, so this subscript is
+          # total and a KeyError here would be a bug there.
           allowed-emails: |
-#% for email in claudecode_allowed_emails.split(',') %#
+#% for email in claudecode_allowed_emails_by_instance[instance].split(',') %#
             #{ email | trim }#
 #% endfor %#
 #% endif %#
