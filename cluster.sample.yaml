@@ -142,6 +142,43 @@ storage_backend: "nfs"
 # move is a dump and restore, not a re-render. Writing it down keeps "not yet
 # moved" visible instead of silent.
 # db_storage_class: "local-path"
+ ── claude-code storage ───────────────────────────────────────────────────────
+# (OPTIONAL) Which class holds ~/.claude and the keyring (one PVC, two mounts).
+# Defaults to default_storage_class — i.e. wherever this cluster already has it.
+#
+# The block tier is where it belongs: gnome-keyring does file locking and claude
+# writes small and often, which is the argument NFS already loses for databases.
+# But `storageClassName` is IMMUTABLE, so changing this is a COPY, not a
+# re-render, and pointing it somewhere new without doing the copy renders a PVC
+# the cluster refuses.
+#
+# ⚠️ Single-node clusters: consider staying put until there is an off-site
+# archive of ~/.claude. On the NFS class the config survives a PVC deleted by
+# hand (archiveOnDelete), survives node loss, and rides the NAS's own
+# replication. On local-path it survives none of those, and on one node losing
+# the node is losing the cluster. Half an agent is more dangerous than no agent,
+# because it comes back looking like it remembers.
+#
+# Multi-node with Longhorn is a lateral move: gains node-loss survival, loses
+# archiveOnDelete.
+#
+# Migration, per instance — the PVC is RWO and the running pod holds it:
+#   1. Archive first, out of band: `kubectl exec` + tar of ~/.claude
+#   2. Scale the deployment to 0
+#   3. Create the new PVC on the target class
+#   4. Copy with a Job mounting both
+#   5. Set this field, re-render, scale to 1
+#   6. VERIFY before deleting anything: the CLI is still authenticated (that is
+#      what proves the keyring subPath came across) and the memory files are there
+#   7. Only then remove the old PVC
+# claudecode_config_storage_class: "longhorn"
+#
+# (OPTIONAL) Render the workspace PVC at all. Default true.
+# ⚠️ false DELETES DATA on any class whose reclaim policy is Delete
+# (local-path, longhorn-static). The NFS provisioner archives instead. Setting
+# this false in a cluster.yaml copied from another cluster is enough to destroy
+# a workspace on the next `task configure`.
+# claudecode_workspace: true
 #
 # Wherever Longhorn is installed — storage_backend "replicated" or
 # replicated_storage above — set this to "longhorn". Installing Longhorn does not
@@ -274,6 +311,10 @@ cluster_name: "xxxxxx"
 # storage/nfs-subdir extra is skipped automatically rather than left failing.
 nas_server: "10.x.x.x"
 nas_path: "/volume/path"              # NFS export for storage provisioner (sc-nas)
+# ⚠️ nas_coding_path is UNCONSUMED as of the removal of the claude-code `coding`
+# mount. It still renders into cluster-secrets as NAS_CODING_PATH and nothing
+# reads it. Kept so existing cluster.yaml files keep validating.
+#
 # nas_coding_path stays optional even on NFS: without it the claude-code
 # workspace uses the profile's default storage class instead.
 # nas_coding_path: "/volume/coding"
