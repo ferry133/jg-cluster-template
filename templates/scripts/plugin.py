@@ -359,6 +359,37 @@ class Plugin(makejinja.plugin.Plugin):
             if not data.get('claudecode_oauth2_cookie_secret'):
                 data['claudecode_oauth2_cookie_secret'] = oauth2_cookie_secret(
                     data['cluster_name'])
+            # Resolve the allowlist ONCE PER INSTANCE, here, so the template
+            # cannot silently fall back.
+            #
+            # The allowlist is the whole door: every other layer of separation
+            # between two instances on one cluster is already real (each has its
+            # own claude-config and claude-workspace PVC, so its own ~/.claude,
+            # keyring, login and history), and none of it means anything if both
+            # doors admit the same people. An address on the support instance
+            # that also opens the owner's instance drops the operator into the
+            # owner's signed-in session, on the owner's account and billing.
+            #
+            # An unknown key is a hard error, not a no-op. A misspelt instance
+            # name renders, deploys, and admits the global list — indis-
+            # tinguishable from working right up until someone tries the wrong
+            # door, and by then the wrong person is already inside. Raised from
+            # data(), which runs before any file is written, so a bad override
+            # costs a message rather than a half-written kubernetes/ tree.
+            instances = data.get('claude_instances') or ['im']
+            by_instance = data.get('claudecode_allowed_emails_by_instance') or {}
+            unknown = [k for k in by_instance if k not in instances]
+            if unknown:
+                raise KeyError(
+                    "claudecode_allowed_emails_by_instance names "
+                    f"{', '.join(sorted(unknown))}, which is not in "
+                    f"claude_instances ({', '.join(instances)}). An override "
+                    "for an instance that does not exist would leave that "
+                    "instance on the global allowlist and say nothing.")
+            data['claudecode_allowed_emails_by_instance'] = {
+                name: by_instance.get(name, data.get('claudecode_allowed_emails', ''))
+                for name in instances
+            }
         # Backups are encrypted to the cluster's own age public key, taken from
         # .sops.yaml rather than added as another field to fill in. The key is
         # already there, it is already the thing that travels with the cluster

@@ -348,6 +348,22 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # to add someone for this cluster only, e.g. the client's own address.
 # claudecode_allowed_emails: "a@example.com,b@example.com"
 #
+# (OPTIONAL) Per-instance override, keyed by instance name. Absent keys inherit
+# the list above, so leaving this out changes nothing.
+#
+# Use it when a cluster runs more than one instance for different people — the
+# operator's support terminal and the owner's own. Every other layer of
+# separation is already per-instance (each has its own config and workspace PVC,
+# so its own ~/.claude, keyring, login and history); the allowlist was the one
+# that was not, and one shared door undoes the rest.
+#
+# A name here that is not in claude_instances FAILS the render. That is
+# deliberate: an override on a misspelt instance would leave that instance on
+# the global list and say nothing, which looks identical to working until
+# someone opens the wrong door.
+# claudecode_allowed_emails_by_instance:
+#   cc: "owner@example.com"
+#
 # Opt out for a cluster that cannot depend on Auth0 being reachable — the
 # terminal is the rescue path when Omni/SideroLink is down, and OIDC mode puts
 # a third party on that path. The fallback is ttyd basic auth: one shared
@@ -495,6 +511,15 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # line_notify_group_id: ""
 
 # ── default/linebot ───────────────────────────────────────────────────────────
+# REQUIRED when extras includes default/linebot or default/synophoto — `cue vet`
+# rejects an empty one in that case. Both extras read this SINGLE variable, so a
+# cluster running them for two different parties would be billing one key for
+# both.
+#
+# ⚠️ Whose key this is cannot be checked here. A key belonging to the operator
+# rather than to the cluster's owner is set, valid, working, and bills the wrong
+# person — it passes every check in this repo. That answer is recorded at
+# delivery, not enforced here.
 # anthropic_api_key: ""
 # database_url: ""                    # e.g. postgresql://linebot:<pw>@postgres.db.svc/linebot
 # line_channel_access_token: ""       # shared with trello-notifier if both enabled
