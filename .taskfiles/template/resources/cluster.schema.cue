@@ -239,6 +239,20 @@ import (
 	repository_name: string & !="" & !="ferry133/xxxxxx" & !="ferry133/jg-base"
 	repository_branch?: string & !=""
 	repository_visibility?: *"public" | "private"
+	// Where this cluster's shared base manifests come from. Defaulted, not
+	// optional: every cluster has an answer, and the default is the fleet's.
+	//
+	// A cluster whose owner takes over maintenance points these at their own
+	// fork; a cluster that wants to stop tracking `main` pins a tag or a commit.
+	// Nothing else about the rendered Flux tree may change with them — see
+	// ks.yaml.j2 for why renaming the GitRepository tears the cluster down.
+	base_repo_url: *"https://github.com/ferry133/jg-base" | string & !=""
+	base_repo_ref: *"main" | string & !=""
+	// Which Flux ref field `base_repo_ref` lands in. Declared rather than
+	// inferred: a tag and a branch are both just strings, and guessing wrong
+	// produces a GitRepository that reconciles something other than what the
+	// operator named — which reads exactly like it worked.
+	base_repo_ref_kind: *"branch" | "tag" | "semver" | "commit"
 	cloudflare_domain: net.FQDN
 	cloudflare_token: string
 	github_webhook_token?: string & !=""
