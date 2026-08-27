@@ -343,7 +343,27 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # claudecode_auth0_domain: ""
 # claudecode_auth0_client_id: ""
 # claudecode_auth0_client_secret: ""
-# claudecode_oauth2_cookie_secret: ""  # 32-byte base64, e.g. `openssl rand -base64 32`
+# Cookie secret. LEAVE IT UNSET. It is derived from age.key + cluster_name at
+# render time: stable across renders, distinct per cluster, and always in the
+# one alphabet oauth2-proxy accepts. Declaring one is a second copy of a fact
+# the render already knows, and nothing tells you when the two diverge.
+#
+# ⚠️ This line used to read ``openssl rand -base64 32``. That command emits
+# STANDARD base64, and oauth2-proxy only decodes the URL-SAFE alphabet, so a
+# value containing '+' or '/' is refused. Measured over 200 runs: 74% of them
+# contain one. The other 26% work — which is why this survived as advice, and
+# why the failure reads as random rather than as wrong instructions.
+#
+# The symptom is expensive and points nowhere near here: OIDC mode binds ttyd to
+# loopback, so oauth2-proxy is the only door. It CrashLoopBackOffs, and the
+# terminal is simply unreachable — indistinguishable from a failed deploy, an
+# unregistered Auth0 callback, or a dead tunnel (jg-janncotcc, 2026-08-23, 23
+# restarts before anyone read the container log).
+#
+# If you genuinely must pin one, it has to be URL-safe base64 of 16, 24 or 32
+# bytes. scripts/check-claudecode-auth.py rejects anything else before render:
+#   python3 -c "import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
+# claudecode_oauth2_cookie_secret: ""
 # Who may log in. Defaults to the operators listed in auth0.json; set it here
 # to add someone for this cluster only, e.g. the client's own address.
 # claudecode_allowed_emails: "a@example.com,b@example.com"
