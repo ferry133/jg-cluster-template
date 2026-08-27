@@ -308,8 +308,24 @@ def check_documented_defaults(root: Path) -> tuple[list[str], list[str]]:
     """
     sample = root / "cluster.sample.yaml"
     plugin_path = root / "templates/scripts/plugin.py"
-    if not sample.is_file() or not plugin_path.is_file():
-        return [], []
+    # Raise, do not return clean. This check used to `return [], []` when either
+    # file was missing, which prints `ok` — the same word as a sample that was
+    # read and found correct. Measured three ways: present-and-correct → ok,
+    # present-and-wrong → FAIL, ABSENT → ok. Two of those three are the same
+    # word for different facts, which is the thing this file's own docstring
+    # forbids in its opening paragraph.
+    #
+    # It is not hypothetical. `jg-janncotcc` deleted its cluster.sample.yaml on
+    # purpose ("only a maintainer reads this, and this is the customer's repo"),
+    # and removing it from the other user repos is under consideration. Every
+    # one of them would print `ok documented defaults` forever afterwards.
+    missing = [f.name for f in (sample, plugin_path) if not f.is_file()]
+    if missing:
+        raise CannotCheck(
+            f"{', '.join(missing)} not here — nothing to compare. A user repo "
+            "may drop cluster.sample.yaml deliberately; the template repo never "
+            "should, so an absent sample HERE is a finding, not a skip"
+        )
 
     render = plugin_defaults(plugin_path)
     problems = []
