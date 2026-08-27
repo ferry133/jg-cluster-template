@@ -127,6 +127,11 @@ storage_backend: "nfs"
 # written to by longhorn instance-manager. A backup target that has never
 # restored is a hypothesis.
 # longhorn_backup_target: "nfs://10.9.2.13:/volume3/backup1/longhorn"
+#
+# 關掉的方式是把這一行拿掉（或留空）再 `task configure`。**不要用 suspend 關**——
+# 那會讓 RecurringJob 留在 longhorn-system 裡，同時把唯一會報告它的 Flux 物件靜音。
+# 拿掉這一行之後 render 出來的是一個指向空目錄、但仍在 reconcile 的 Kustomization，
+# Flux 才會把它 prune 掉（ferry133/jg-base#29）。
 
 # (OPTIONAL) Which storage class databases use. Defaults to "local-path" and
 # deliberately does not follow storage_backend — NFS is never a correct answer
