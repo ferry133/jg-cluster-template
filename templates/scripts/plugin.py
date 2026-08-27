@@ -271,6 +271,22 @@ class Plugin(makejinja.plugin.Plugin):
         data['node_dns_path'] = 'lan' if all(
             ipaddress.ip_address(s).is_private
             for s in data['node_dns_servers']) else 'public'
+        # Where the shared base manifests come from. Defaulted HERE and not only
+        # in cluster.schema.cue: CUE's `*default` never reaches this file —
+        # plugin.py reads cluster.yaml, not CUE's unified value (the same trap
+        # the longhorn selector documents in .taskfiles/template/Taskfile.yaml).
+        # Without these three lines every existing cluster.yaml, none of which
+        # names them, renders a GitRepository with an empty url.
+        data.setdefault('base_repo_url', 'https://github.com/ferry133/jg-base')
+        data.setdefault('base_repo_ref', 'main')
+        data.setdefault('base_repo_ref_kind', 'branch')
+        # The same repo as a directory next to this one, for bootstrap's helmfile
+        # — it reads HelmRelease values off disk before the cluster can fetch
+        # anything. Derived from the URL rather than declared: two fields for one
+        # fact diverge, and this one only shows up at a re-bootstrap.
+        data.setdefault(
+            'base_repo_dir',
+            data['base_repo_url'].rstrip('/').rsplit('/', 1)[-1].removesuffix('.git'))
         data.setdefault('node_ntp_servers', ['162.159.200.1', '162.159.200.123'])
         data.setdefault('cluster_pod_cidr', '10.42.0.0/16')
         # cluster_svc_cidr is required (no default) — see cluster.schema.cue.

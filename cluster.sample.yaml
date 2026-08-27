@@ -268,6 +268,31 @@ cluster_name: "xxxxxx"
 # repository_branch: "main"
 # repository_visibility: "public"
 
+# ── Where the shared base manifests come from ────────────────────────────────
+# (OPTIONAL) Defaults below are the fleet's. Change them for a cluster whose
+# owner maintains their own base, or to stop tracking a moving branch.
+#
+# Today every cluster follows `main`, so anything pushed to the base repo
+# reaches every cluster within the hour and no cluster can decline. Pinning a
+# tag or a commit here is the supported way to opt out; hand-editing the
+# rendered ks.yaml is not — `task configure` overwrites it, and it disappears
+# looking exactly like it was never changed.
+#
+# base_repo_url: "https://github.com/ferry133/jg-base"
+# base_repo_ref: "main"
+# base_repo_ref_kind: "branch"   # branch | tag | semver | commit
+#
+# ⚠️ Two things ride along with base_repo_url, so change it deliberately:
+#   1. `task bootstrap:apps` reads HelmRelease values from a SIBLING DIRECTORY
+#      named after this URL's last segment. Clone the fork next to this repo
+#      under that name or the next bootstrap fails — and only the next
+#      bootstrap, which is the worst moment to discover it.
+#   2. The rendered GitRepository is still named `jg-base` whatever you point
+#      it at. That name is load-bearing: nine Kustomizations reference it and
+#      `cluster-apps-base` prunes, so renaming it deletes cilium, cert-manager,
+#      coredns and flux-operator along with it. It is a handle, not a claim
+#      about ownership.
+
 # ── NAS ───────────────────────────────────────────────────────────────────────
 # (REQUIRED when storage_backend is "nfs" · not used otherwise)
 # With storage_backend "local-path" there is no NAS and these are omitted; the
