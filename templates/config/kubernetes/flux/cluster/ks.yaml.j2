@@ -39,9 +39,25 @@ metadata:
   namespace: flux-system
 spec:
   interval: 1h
-  url: #{ base_repo_url }#
+  # Both values QUOTED. `cue vet` guarantees these are strings in cluster.yaml,
+  # but it guards the input and the retyping happens in the output: a plain YAML
+  # scalar is retyped by whoever parses the rendered file, and the operators most
+  # likely to set base_repo_ref are exactly the ones pinning a numeric tag.
+  # Measured with yq on the rendered shape:
+  #
+  #     tag: 1.0        -> 1           !!float
+  #     tag: 2.10       -> 2.1         !!float   <- the VALUE changed
+  #     tag: 0755       -> 755         !!int
+  #     tag: 20260828   -> 20260828    !!int
+  #     tag: v1.0       -> "v1.0"      !!str     <- only this shape was safe
+  #
+  # `2.10` becoming `2.1` is the one that matters: not rejected, silently
+  # reconciling a different tag. Third time this repo has been bitten by YAML
+  # retyping a rendered value (jg-base#16's boolean, NODE_DNS_PATH), and the
+  # first two both reached a cluster before anyone noticed.
+  url: "#{ base_repo_url }#"
   ref:
-    #{ base_repo_ref_kind }#: #{ base_repo_ref }#
+    #{ base_repo_ref_kind }#: "#{ base_repo_ref }#"
 ---
 # ── Base Kustomization — installed on every cluster ───────────────────────────
 apiVersion: kustomize.toolkit.fluxcd.io/v1
