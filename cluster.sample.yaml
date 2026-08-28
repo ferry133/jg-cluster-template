@@ -532,13 +532,18 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 #                  2026-07-30). Leave empty to take jg-base's in-cluster
 #                  default `http://omni.omni.svc.cluster.local:8080`
 #   github_token  scoped to the repos factory actually writes
-#   cloudflare    ⚠️ creating a tunnel needs **Edit**, not Read — measured
-#                  2026-08-23, the README used to say Read
+#
+#   ⚠️ There is no factory_cloudflare_token. It existed here from 2026-08-27
+#      to 2026-08-29 and was removed with its consumer (ferry133/jg-base#46).
+#      factory holds no Cloudflare credential: under D11 each customer's
+#      Cloudflare account is the customer's own, and this would have to be one
+#      token per customer held at once, while the field is a single scalar.
+#      Cloudflare account-level work (zone registration, tunnel creation) is a
+#      person's step by design. Setting it now fails `cue vet`.
 #
 # factory_omni_sa_key: ""          # OMNI_SERVICE_ACCOUNT_KEY, Operator role
 # factory_omni_endpoint: ""        # empty = jg-base's ClusterIP default
 # factory_github_token: ""
-# factory_cloudflare_token: ""
 # factory_fleet_ops_deploy_key: |  # multi-line PEM; b64-wrapped at render
 #   -----BEGIN OPENSSH PRIVATE KEY-----
 #   ...
