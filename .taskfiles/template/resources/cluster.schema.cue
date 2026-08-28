@@ -412,10 +412,21 @@ import (
 	// 2/2 Ready holding three empty credentials -- measured on jcom that day:
 	// OMNI_SERVICE_ACCOUNT_KEY, GITHUB_TOKEN and CLOUDFLARE_API_TOKEN were all
 	// len=0 while the pod, the Secret and the env names all read as present.
+	//
+	// Four, not five. `factory_cloudflare_token` was declared here on
+	// 2026-08-27 and removed on 2026-08-29: ferry133/jg-base#44 established
+	// that its premise was gone. That row assumed "the operator's Cloudflare
+	// account holds every customer zone", and D11 (2026-08-25) puts each
+	// customer's Cloudflare account under the customer's own identity —
+	// measured, janncot.cc and jiahd.cc answer from different NS pairs, which
+	// Cloudflare assigns per account. jg-base removed the consuming key in
+	// #46, so a value set here would render into a Secret key that no longer
+	// exists. Do not re-add it without reading that README section: the
+	// deciding argument is that the credential cannot be singular while this
+	// field is a scalar.
 	factory_omni_sa_key?:            string & !=""
 	factory_omni_endpoint?:          string & !=""
 	factory_github_token?:           string & !=""
-	factory_cloudflare_token?:       string & !=""
 	factory_fleet_ops_deploy_key?:   string & !=""
 	postgres_password?: string & !=""
 	trello_api_key?: string
