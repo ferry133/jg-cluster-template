@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import ast
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -347,10 +349,75 @@ def check_documented_defaults(root: Path) -> tuple[list[str], list[str]]:
     return problems, []
 
 
+def check_sample_parses(root: Path) -> tuple[list[str], list[str]]:
+    """`cluster.sample.yaml` has to be YAML, and nothing else here reads it as YAML.
+
+    Measured 2026-08-29 while provisioning `jg-janncotcc`: `c8f9357` dropped the
+    leading `#` from a section banner at `cluster.sample.yaml:145`, and `main`
+    carried an unparseable sample for 21 commits before anyone reached
+    `task init`. Every other check in this file reads that sample line by line,
+    so every one of them printed `ok` over a file that does not parse — a guard
+    that reads the subject and cannot see the defect is the failure mode this
+    repo keeps writing down.
+
+    The cost lands one repo away. `task init` copies the sample to `cluster.yaml`
+    and deletes the sample, so the first thing that objects is
+    `check-claudecode-auth.py`, from inside the customer's brand-new repo, with
+    `yaml: line 114: did not find expected key` — a comment line, 31 lines from
+    the cause. Hence the bisect below: naming the wrong line is nearly as
+    expensive as saying nothing.
+    """
+    sample = root / "cluster.sample.yaml"
+    if not sample.is_file():
+        raise CannotCheck(
+            "cluster.sample.yaml not here — a user repo drops it in `task init`"
+        )
+    if not shutil.which("yq"):
+        raise CannotCheck("yq is not on PATH — run this under `mise exec`")
+
+    def parses(text: str) -> bool:
+        r = subprocess.run(["yq", "-r", "."], input=text, capture_output=True, text=True)
+        return r.returncode == 0
+
+    text = sample.read_text()
+    if parses(text):
+        return [], []
+
+    # Which line actually breaks it. yq reports where it gave up, not where the
+    # damage is, and the two were 31 lines apart the one time this fired.
+    lines = text.splitlines(keepends=True)
+    first_bad = 0
+    for n in range(10, len(lines) + 10, 10):
+        if not parses("".join(lines[:n])):
+            for m in range(max(1, n - 9), n + 1):
+                if not parses("".join(lines[:m])):
+                    first_bad = m
+                    break
+            break
+
+    problems = ["cluster.sample.yaml is not valid YAML"]
+    if first_bad:
+        problems.append(
+            f"cluster.sample.yaml:{first_bad}: {lines[first_bad - 1].rstrip()[:70]!r}"
+        )
+        problems.append(
+            "that is the first line whose presence breaks the parse; the parser's "
+            "own error may name a later line"
+        )
+    else:
+        problems.append("could not narrow it to a line — run `yq -r . cluster.sample.yaml`")
+    problems.append(
+        "`task init` copies this file to cluster.yaml, so shipping it broken "
+        "blocks `task configure` in every repo the template spawns"
+    )
+    return problems, []
+
+
 def main() -> int:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
 
     checks = (
+        ("cluster.sample.yaml parses as YAML", check_sample_parses),
         ("dangling task variables", check_dangling_vars),
         ("divergent defaults", check_divergent_defaults),
         ("documented defaults", check_documented_defaults),
