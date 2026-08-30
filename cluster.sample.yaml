@@ -212,7 +212,27 @@ provisioning_path: "omni"
 
 # ── Network ───────────────────────────────────────────────────────────────────
 # (REQUIRED) network CIDR for the nodes (e.g. 192.168.1.0/24)
-node_cidr: "10.9.9.0/24"
+#
+# **Deliberately absent, not forgotten.** This is the one value that cannot be
+# known before the machine is on the customer's LAN: `factory-agent` 4.6 requires
+# it to come from what Omni reports about the machine, never from a person.
+# Derive it in Phase B (`fleet-ops docs/operations/provision-customer-cluster.md`
+# Step 3b), then uncomment and fill it here.
+#
+# It used to ship as `"10.9.9.0/24"`. That is the subnet of the bench this
+# template is developed on — and this is not hypothetical. `jg-janncotcc`'s one
+# real provisioning run derived the value from the machine and got **exactly
+# that string**; its cluster.yaml carries the note "derived from the machine's
+# reported address, not the sample default". A derivation that never ran would
+# have produced a byte-identical file, and nothing on that bench could have told
+# the two apart.
+#
+# `scripts/check-template-integrity.py` now refuses when this key is absent, and
+# `:configure:` runs it first — before `cue vet`, which is eighth and whose
+# message names `cluster_svc_cidr` rather than this field. You should therefore
+# never see that message; if you do, you ran `cue vet` directly.
+#
+# node_cidr: "192.168.1.0/24"
 
 # (REQUIRED for prosumer/full · appliance: n/a) Unused IPs in node_cidr for the
 # LB / VIP addresses. An appliance discovers its single LAN address at runtime
