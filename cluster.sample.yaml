@@ -212,7 +212,27 @@ provisioning_path: "omni"
 
 # ── Network ───────────────────────────────────────────────────────────────────
 # (REQUIRED) network CIDR for the nodes (e.g. 192.168.1.0/24)
-node_cidr: "10.9.9.0/24"
+#
+# **Deliberately absent, not forgotten.** This is the one value that cannot be
+# known before the machine is on the customer's LAN: `factory-agent` 4.6 requires
+# it to come from what Omni reports about the machine, never from a person.
+# Derive it in Phase B (`fleet-ops docs/operations/provision-customer-cluster.md`
+# Step 3b), then uncomment and fill it here.
+#
+# It used to ship as `"10.9.9.0/24"`. That is the subnet of the bench this
+# template is developed on, so a derivation that silently never ran produced a
+# cluster.yaml **byte-identical** to one where it worked — and every test on that
+# bench passed. Leaving the key out makes `cue vet` refuse instead.
+#
+# ⚠️ The refusal names the wrong field first. Expect:
+#
+#     cluster_svc_cidr: non-concrete value node_cidr for bound !=
+#     node_cidr: incomplete value net.IPCIDR() & !="10.96.0.0/12" & ...
+#
+# `cluster_svc_cidr` is fine; it only mentions `node_cidr` in a `!=` constraint
+# and cannot evaluate while `node_cidr` is absent. Fix `node_cidr` and both go.
+#
+# node_cidr: "192.168.1.0/24"
 
 # (REQUIRED for prosumer/full · appliance: n/a) Unused IPs in node_cidr for the
 # LB / VIP addresses. An appliance discovers its single LAN address at runtime
