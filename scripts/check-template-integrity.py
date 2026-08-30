@@ -364,8 +364,23 @@ def check_sample_parses(root: Path) -> tuple[list[str], list[str]]:
     and deletes the sample, so the first thing that objects is
     `check-claudecode-auth.py`, from inside the customer's brand-new repo, with
     `yaml: line 114: did not find expected key` — a comment line, 31 lines from
-    the cause. Hence the bisect below: naming the wrong line is nearly as
+    the cause. Hence the localisation below: naming the wrong line is nearly as
     expensive as saying nothing.
+
+    That localisation was a prefix bisect until 2026-08-30, when `#48` measured
+    it naming line 32 for damage anywhere in lines 1-31. The reason is a
+    property of this file rather than a coding slip: `deployment_profile` at
+    line 31 is the first non-comment key, so a banner that lost its `#` above
+    it is a valid scalar document on its own, every prefix parses, and the
+    conflict only materialises once the mapping starts. The bisect was faithful
+    to its own definition — first prefix that fails — and that definition is
+    not the damaged line. Banners 15/17/19 sat in that blind spot, the same
+    shape as the defect this check exists for.
+
+    Deletion answers the question actually being asked. Comments and blank
+    lines cannot break YAML, so whichever line does is non-comment and
+    non-blank — 17 of 690 lines today — and the set provably contains it. One
+    `yq` run per candidate, on the failure path only.
     """
     sample = root / "cluster.sample.yaml"
     if not sample.is_file():
@@ -383,29 +398,72 @@ def check_sample_parses(root: Path) -> tuple[list[str], list[str]]:
     if parses(text):
         return [], []
 
-    # Which line actually breaks it. yq reports where it gave up, not where the
-    # damage is, and the two were 31 lines apart the one time this fired.
     lines = text.splitlines(keepends=True)
-    first_bad = 0
-    for n in range(10, len(lines) + 10, 10):
-        if not parses("".join(lines[:n])):
-            for m in range(max(1, n - 9), n + 1):
-                if not parses("".join(lines[:m])):
-                    first_bad = m
-                    break
-            break
+
+    # Whichever line breaks the parse is neither a comment nor blank, so the
+    # culprit is certainly in here. Deleting one candidate at a time answers
+    # "which line is damaged" directly, instead of "where does the parser first
+    # give up", which is the question that named line 32 for damage at line 2.
+    candidates = [
+        i
+        for i, line in enumerate(lines)
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    # Every candidate, not the first hit: deletion finds a minimal repair, and
+    # when more than one line is individually repairable the file does not say
+    # which one a human damaged. Measured 2026-08-30 on a block scalar whose
+    # last line was dedented — deleting either that line or the one above it
+    # parses. Cheap to know (0.7s to sweep all 17 candidates on this file;
+    # 0.2s if it stopped at the first) and silently picking the first would
+    # name a line nobody touched, in the confident voice.
+    repairs = [
+        i + 1 for i in candidates if parses("".join(lines[:i] + lines[i + 1 :]))
+    ]
 
     problems = ["cluster.sample.yaml is not valid YAML"]
-    if first_bad:
+    if repairs:
+        culprit = repairs[0]
         problems.append(
-            f"cluster.sample.yaml:{first_bad}: {lines[first_bad - 1].rstrip()[:70]!r}"
+            f"cluster.sample.yaml:{culprit}: {lines[culprit - 1].rstrip()[:70]!r}"
         )
-        problems.append(
-            "that is the first line whose presence breaks the parse; the parser's "
-            "own error may name a later line"
-        )
+        problems.append("removing that one line makes the rest of the file parse")
+        if len(repairs) > 1:
+            problems.append(
+                "ambiguous — the same is true of "
+                + ", ".join(str(n) for n in repairs[1:])
+                + "; likely a multi-line construct, so read the whole block "
+                "rather than trusting the first line named"
+            )
     else:
-        problems.append("could not narrow it to a line — run `yq -r . cluster.sample.yaml`")
+        # Two lines damaged, or something spanning lines. Fall back to the old
+        # prefix bisect, and say which question this number answers — it is the
+        # weaker one, and reporting it as if it were the same would be worse
+        # than reporting nothing.
+        first_bad = 0
+        for n in range(10, len(lines) + 10, 10):
+            if not parses("".join(lines[:n])):
+                for m in range(max(1, n - 9), n + 1):
+                    if not parses("".join(lines[:m])):
+                        first_bad = m
+                        break
+                break
+        problems.append(
+            f"no single line explains it — {len(candidates)} candidates tried, "
+            "so expect more than one problem, or one that spans lines"
+        )
+        if first_bad:
+            problems.append(
+                f"cluster.sample.yaml:{first_bad}: {lines[first_bad - 1].rstrip()[:70]!r}"
+            )
+            problems.append(
+                "that is only the first line whose presence breaks the parse, "
+                "which can sit well after the damage — treat it as a starting "
+                "point, not the answer"
+            )
+        else:
+            problems.append(
+                "could not narrow it to a line — run `yq -r . cluster.sample.yaml`"
+            )
     problems.append(
         "`task init` copies this file to cluster.yaml, so shipping it broken "
         "blocks `task configure` in every repo the template spawns"
