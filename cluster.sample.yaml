@@ -220,17 +220,17 @@ provisioning_path: "omni"
 # Step 3b), then uncomment and fill it here.
 #
 # It used to ship as `"10.9.9.0/24"`. That is the subnet of the bench this
-# template is developed on, so a derivation that silently never ran produced a
-# cluster.yaml **byte-identical** to one where it worked — and every test on that
-# bench passed. Leaving the key out makes `cue vet` refuse instead.
+# template is developed on — and this is not hypothetical. `jg-janncotcc`'s one
+# real provisioning run derived the value from the machine and got **exactly
+# that string**; its cluster.yaml carries the note "derived from the machine's
+# reported address, not the sample default". A derivation that never ran would
+# have produced a byte-identical file, and nothing on that bench could have told
+# the two apart.
 #
-# ⚠️ The refusal names the wrong field first. Expect:
-#
-#     cluster_svc_cidr: non-concrete value node_cidr for bound !=
-#     node_cidr: incomplete value net.IPCIDR() & !="10.96.0.0/12" & ...
-#
-# `cluster_svc_cidr` is fine; it only mentions `node_cidr` in a `!=` constraint
-# and cannot evaluate while `node_cidr` is absent. Fix `node_cidr` and both go.
+# `scripts/check-template-integrity.py` now refuses when this key is absent, and
+# `:configure:` runs it first — before `cue vet`, which is eighth and whose
+# message names `cluster_svc_cidr` rather than this field. You should therefore
+# never see that message; if you do, you ran `cue vet` directly.
 #
 # node_cidr: "192.168.1.0/24"
 

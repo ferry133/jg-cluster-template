@@ -471,11 +471,52 @@ def check_sample_parses(root: Path) -> tuple[list[str], list[str]]:
     return problems, []
 
 
+def check_derived_not_guessed(root: Path) -> tuple[list[str], list[str]]:
+    """`node_cidr` absent is the correct Phase A state — say so before cue does.
+
+    `:configure:` runs six `check-*` tasks, then `generate-node-config`, then
+    `validate-schemas`. `cue vet` is eighth. Left to cue, an absent `node_cidr`
+    is reported as
+
+        cluster_svc_cidr: non-concrete value node_cidr for bound !=
+        node_cidr: incomplete value net.IPCIDR() & !="10.96.0.0/12" & ...
+
+    — and the first line names a field that is not the problem. This check runs
+    first, so nobody reaches that message.
+
+    Why the field is absent rather than defaulted: the sample used to ship
+    `node_cidr: "10.9.9.0/24"`, which is the subnet of the bench this template is
+    developed on. `jg-janncotcc`'s one real provisioning run derived the value
+    from the machine and got **exactly that string** — its cluster.yaml carries
+    the note "derived from the machine's reported address, not the sample
+    default". A derivation that never ran would have produced a byte-identical
+    file, and nothing on that bench could have told the two apart.
+    """
+    config = root / "cluster.yaml"
+    if not config.is_file():
+        raise CannotCheck("no cluster.yaml here — this is the template repo")
+
+    declared = re.search(r"^node_cidr\s*:", config.read_text(), re.M)
+    if declared:
+        return [], []
+    return [
+        "node_cidr is not declared",
+        "If you are before the box has booted on the customer's LAN, this is "
+        "the expected state and `task configure` is not supposed to pass yet.",
+        "The value comes from what Omni reports about the machine "
+        "(`factory-agent` 4.6), never from a person — see "
+        "`fleet-ops docs/operations/provision-customer-cluster.md` Step 3b.",
+        "Do not guess it: a wrong CIDR renders, passes `cue vet`, and produces "
+        "a cluster that boots and cannot be reached.",
+    ], []
+
+
 def main() -> int:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
 
     checks = (
         ("cluster.sample.yaml parses as YAML", check_sample_parses),
+        ("derived fields are not guessed", check_derived_not_guessed),
         ("dangling task variables", check_dangling_vars),
         ("divergent defaults", check_divergent_defaults),
         ("documented defaults", check_documented_defaults),
