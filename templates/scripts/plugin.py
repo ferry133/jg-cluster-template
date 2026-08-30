@@ -175,6 +175,13 @@ def talos_patches(value: str) -> list[str]:
     return [str(f) for f in sorted(path.glob('*.yaml.j2')) if f.is_file()]
 
 
+
+# The one place the default instance list is written. `claude_instances` and
+# `claude_code_always_on` both default to it, and the Jinja template no longer
+# carries a `default(...)` of its own -- three copies of ['im'] is how they
+# drifted apart (jg-cluster-template#57).
+DEFAULT_CLAUDE_INSTANCES = ['im']
+
 class Plugin(makejinja.plugin.Plugin):
     def __init__(self, data: dict[str, Any]):
         self._data = data
@@ -391,7 +398,26 @@ class Plugin(makejinja.plugin.Plugin):
         # Which claude-code instances stay up. Empty by default: each is a root
         # shell with cluster-admin that the tunnel makes reachable. Named here
         # rather than scaled by hand, which works until the next reconcile.
-        data.setdefault('claude_code_always_on', [])
+        data.setdefault('claude_instances', list(DEFAULT_CLAUDE_INSTANCES))
+        # Defaults to the FIRST declared instance, not to the constant and not to
+        # all of them. Both alternatives are wrong in a way that is hard to see:
+        # the constant leaves a renamed instance (claude_instances: ["ops"]) with
+        # a default naming "im", which is in nobody's instance list, so the
+        # cluster ships with 0 replicas again -- #57 exactly, one rename later.
+        # All of them scales up every root shell the cluster declares, which is
+        # the thing the security note below is about.
+        data.setdefault('claude_code_always_on', data['claude_instances'][:1])
+        # An always-on name that is not an instance renders nothing and says
+        # nothing -- the same shape as the allowlist override check further down,
+        # and the same fix: refuse at data() time, before any file is written.
+        stray = [n for n in data['claude_code_always_on']
+                 if n not in data['claude_instances']]
+        if stray:
+            raise KeyError(
+                f"claude_code_always_on names {', '.join(sorted(stray))}, which "
+                f"is not in claude_instances ({', '.join(data['claude_instances'])}). "
+                "That instance would render no replicas and no error, which is "
+                "indistinguishable from a cluster that was never given a way in.")
         # Auth0 OIDC in front of every claude-code instance, on by default.
         #
         # The alternative is ttyd basic auth, a single shared password in front
@@ -447,7 +473,7 @@ class Plugin(makejinja.plugin.Plugin):
             # door, and by then the wrong person is already inside. Raised from
             # data(), which runs before any file is written, so a bad override
             # costs a message rather than a half-written kubernetes/ tree.
-            instances = data.get('claude_instances') or ['im']
+            instances = data['claude_instances']
             by_instance = data.get('claudecode_allowed_emails_by_instance') or {}
             unknown = [k for k in by_instance if k not in instances]
             if unknown:
