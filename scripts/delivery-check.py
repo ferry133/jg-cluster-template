@@ -639,10 +639,28 @@ def check_gateway(args) -> int:
         print("      loosen this into picking whatever is first.")
         return UNKNOWN
 
-    found = sorted({
-        sp["gateway"] for sp in specs
+    defaults = [
+        sp for sp in specs
         if isinstance(sp, dict) and sp.get("gateway") and not sp.get("dst")
-    })
+    ]
+    # node_default_gateway is `net.IPv4` in cluster.schema.cue, so an IPv6
+    # default route is not a second candidate for it — it is a different
+    # question. Measured 2026-08-30 on a real 145-route capture from a jg-jiahd
+    # node: 110 of them inet6, one of those with an empty dst (no gateway, so
+    # it never reached this line). A node that does have an IPv6 default
+    # gateway would have made the count two and this check would have refused
+    # to choose — a false alarm on a healthy dual-stack node, which is the
+    # failure mode that gets guards switched off.
+    #
+    # `family` absent is kept rather than dropped: an unknown shape should
+    # widen the answer into "cannot tell", never narrow it into a confident one.
+    other = sorted({sp["gateway"] for sp in defaults
+                    if sp.get("family") not in (None, "", "inet4")})
+    found = sorted({sp["gateway"] for sp in defaults
+                    if sp.get("family") in (None, "", "inet4")})
+    if other:
+        print(f"      ({len(other)} non-IPv4 default route(s) not compared: "
+              f"{', '.join(other)} — node_default_gateway is IPv4)")
 
     if not found:
         huh(f"{len(docs)} routes, none of them a default route")
