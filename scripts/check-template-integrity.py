@@ -17,6 +17,25 @@ Three outcomes, not two: `ok`, `FAIL`, and `skip` for a check whose subject is
 not present. A check that cannot see what it is checking must not print the same
 word as one that looked and found nothing wrong.
 
+What `ok` here does NOT mean (`#54`, 2026-08-30)
+------------------------------------------------
+This file runs against whichever repo it sits in. Every per-user cluster repo
+carries its **own copy** of `scripts/`, taken when that repo was created and
+never updated since — the copies have independent git histories, so nothing
+flows downstream on its own.
+
+So a check added here starts protecting **repos created or synced after this
+commit, and no existing cluster**. Measured that day: four different versions of
+this very file in circulation across the fleet, two repos without it at all, and
+an appliance built the same morning already three versions behind.
+
+The trap is that the author sees `exit 0` either way. A guard whose range is
+empty prints exactly what a guard protecting twenty clusters prints. When you
+add a check here, the fleet-wide question is answered by
+`scripts/check-template-drift.py <cluster-repo> <template-repo>`, which since
+`#54` says whether each divergence is *stale* or *edited locally* — run it per
+repo, because there is no mechanism that will do it for you.
+
 Usage: check-template-integrity.py [repo-root]
 """
 
