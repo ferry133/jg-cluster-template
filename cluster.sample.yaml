@@ -236,7 +236,27 @@ cloudflare_gateway_addr: "10.9.9.5"   # envoy-external LB IP
 # lan_shared_addr: "10.9.9.4"
 
 # Optional network overrides (the commented value is the actual default):
-# node_default_gateway: "10.9.9.1"                     # default: .1 of node_cidr
+# node_default_gateway: "10.9.9.1"                     # ASSUMED: .1 of node_cidr
+#   ^ this one is a guess, not a default anyone measured, and `#49` is about
+#     saying so. `.1` is right on every LAN the operator owns — which is also
+#     why nothing has caught it: the assumed string and the true one are
+#     identical here, so a test passes whether the value was derived correctly
+#     or never derived at all. A customer router on `.254` (common) gets
+#     `task configure` success, `cue vet` pass, a cluster that boots, and no
+#     route off the LAN. Measured 2026-08-30: none of the twelve cluster.yaml
+#     on the operator's machine declares it.
+#
+#     It reaches a machine only under `provisioning_path: talos`, where it
+#     becomes each node's default route and — through node_dns_servers below —
+#     its nameserver. On the Omni path `nodes` is empty so the routes block
+#     never renders, and NODE_DEFAULT_GATEWAY has no reader in jg-base at all.
+#     Rendering announces itself on stderr on the path where it lands.
+#
+#     Measure rather than inherit:
+#       talosctl -n <node> get routes                    # the row with no dst
+#       scripts/delivery-check.py gateway --node <node>  # compares, refuses to
+#                                                        # guess, exits 2 when
+#                                                        # it cannot tell
 # node_dns_servers: ["10.9.9.1"]                       # default: node_default_gateway (the LAN's router)
 #   ^ changed 2026-08-27. It used to default to Cloudflare (["1.1.1.1",
 #     "1.0.0.1"]), which meant a node could not see what a LAN client sees:
