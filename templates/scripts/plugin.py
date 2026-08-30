@@ -419,7 +419,17 @@ class Plugin(makejinja.plugin.Plugin):
         if 'claude_code_always_on' not in data:
             _inst = data['claude_instances']
             data['claude_code_always_on'] = list(_inst) if len(_inst) == 1 else []
-            if len(_inst) != 1:
+            # `> 1`, deliberately not `!= 1`. Zero instances is a legal and
+            # deliberate configuration -- claude_instances: [] means this cluster
+            # does not want a web terminal, the schema puts no non-empty
+            # constraint on the field, and the template renders zero
+            # HelmReleases for it. Flagging it would fire on every render of a
+            # cluster that did nothing wrong, and the advice ("Name one") cannot
+            # be followed: there is nothing to name, and naming anything trips
+            # the stray-name KeyError below. That is jg-base#18's shape exactly
+            # -- a guard that flags correct input got silenced, and a silenced
+            # guard reads like coverage. Do not merge these two branches.
+            if len(_inst) > 1:
                 print(
                     f"NOTE: claude_code_always_on is unset and claude_instances "
                     f"names {len(_inst)} ({', '.join(_inst)}), so nothing is kept "
