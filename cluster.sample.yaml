@@ -419,10 +419,12 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 #   - "im"
 #   - "trello"
 #
-# (OPTIONAL) Which instances stay running. Defaults to the default instance
-# list ("im"), so a cluster handed over has a way in -- a new cluster used to
-# ship with 0 replicas and Step 5's "the instance actually answers" assertion
-# then failed with a 503 (#57). Set it to [] to ship with none.
+# (OPTIONAL) Which instances stay running. Unset means: the one instance if
+# claude_instances names exactly one (the usual case, so a cluster handed over
+# has a way in), and NOTHING if it names more than one -- picking one of
+# several would be a guess, and the render says so on stderr. A new cluster
+# used to ship with 0 replicas and Step 5's "the instance actually answers"
+# assertion then failed with a 503 (#57). Set it to [] to ship with none.
 #
 # The trade-off has not gone away: each instance is a root shell with
 # cluster-admin RBAC that the Cloudflare tunnel makes reachable. What makes the

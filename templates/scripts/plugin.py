@@ -398,15 +398,42 @@ class Plugin(makejinja.plugin.Plugin):
         # Which claude-code instances stay up. Empty by default: each is a root
         # shell with cluster-admin that the tunnel makes reachable. Named here
         # rather than scaled by hand, which works until the next reconcile.
+        # list() because the constant is module-level and mutable: without the
+        # copy every cluster rendered in one process shares one list, and an
+        # append anywhere edits the default for all of them. Do not "tidy" it.
         data.setdefault('claude_instances', list(DEFAULT_CLAUDE_INSTANCES))
-        # Defaults to the FIRST declared instance, not to the constant and not to
-        # all of them. Both alternatives are wrong in a way that is hard to see:
-        # the constant leaves a renamed instance (claude_instances: ["ops"]) with
-        # a default naming "im", which is in nobody's instance list, so the
-        # cluster ships with 0 replicas again -- #57 exactly, one rename later.
-        # All of them scales up every root shell the cluster declares, which is
-        # the thing the security note below is about.
-        data.setdefault('claude_code_always_on', data['claude_instances'][:1])
+        # Exactly one instance -> that one. More than one -> do not guess.
+        #
+        # `[:1]` was the first attempt and it is wrong, with the only two real
+        # examples against it: jg-jiahd and jcom both declare ["cc","im"] and
+        # both run **im**, the second one -- and the schema says why, four lines
+        # above this field: "jcom keeps `im` up for support and leaves `cc` at
+        # zero until it is needed." Picking first encodes the opposite rule, and
+        # the stray check below cannot catch it because `cc` IS in the list.
+        #
+        # Refusing to pick is this repo's existing answer to the same shape --
+        # provision.py `derive` refuses when more than one subnet is a candidate.
+        # It costs a cluster that declares two instances a `[]` default, which
+        # Step 5's "the instance actually answers" assertion then catches. That
+        # is the loud failure; a silently-wrong root shell is the quiet one.
+        if 'claude_code_always_on' not in data:
+            _inst = data['claude_instances']
+            data['claude_code_always_on'] = list(_inst) if len(_inst) == 1 else []
+            if len(_inst) != 1:
+                print(
+                    f"NOTE: claude_code_always_on is unset and claude_instances "
+                    f"names {len(_inst)} ({', '.join(_inst)}), so nothing is kept "
+                    f"running and the cluster ships with no way in. Name one: "
+                    f"claude_code_always_on: [\"<instance>\"]",
+                    file=sys.stderr,
+                )
+        # ⚠️ This default moved on 2026-08-31 (#57): it used to be []. An already
+        # delivered cluster that re-renders for an unrelated reason therefore
+        # gains a standing root shell it never asked for -- the same "a default
+        # only moves on re-render" note NAS_BACKUP, LONGHORN_BACKUP and #29's
+        # node_dns_servers each carry. Measured 2026-08-31: all five existing
+        # clusters already declare claude_code_always_on explicitly, so none of
+        # them moves today. That is true until one of them drops the line.
         # An always-on name that is not an instance renders nothing and says
         # nothing -- the same shape as the allowlist override check further down,
         # and the same fix: refuse at data() time, before any file is written.

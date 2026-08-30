@@ -346,10 +346,17 @@ import (
 	// claudecode/claude-code (base app on every cluster). claude_instances
 	// defaults to ["im"] at render time.
 	claude_instances?: [...string]
-	// Which claude-code instances stay running. Empty by default — each is a
-	// root shell with cluster-admin RBAC that the tunnel exposes — so a cluster
-	// that wants one standing names it here. Scaling by hand instead works
+	// Which claude-code instances stay running. Unset means: the one instance if
+	// claude_instances names exactly one, and NOTHING if it names more than one
+	// — the render refuses to pick and says so on stderr (#57). Each is a root
+	// shell with cluster-admin RBAC that the tunnel exposes, so a cluster that
+	// wants a specific one standing names it here. Scaling by hand instead works
 	// until the next reconcile and then disappears without an apparent cause.
+	//
+	// The value lives in templates/scripts/plugin.py (DEFAULT_CLAUDE_INSTANCES
+	// and the rule beside it). Deliberately not restated here: this comment read
+	// "Empty by default" and stayed readable for a day after that stopped being
+	// true — the same defect #57 is about, one layer up.
 	//
 	// A list rather than a flag because clusters do mix: jcom keeps `im` up for
 	// support and leaves `cc` at zero until it is needed.
