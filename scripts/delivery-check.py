@@ -31,11 +31,13 @@ Usage
   delivery-check.py dns          --domain DOMAIN [--token-env VAR]
   delivery-check.py flux         --kubeconfig PATH --expect-sha SHA
   delivery-check.py lan          --domain DOMAIN --expect-addr ADDR
+  delivery-check.py gateway      --node ADDR [--talosconfig PATH] [--routes-json PATH]
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import pathlib
@@ -511,6 +513,165 @@ def check_lan(args) -> int:
     return PASS
 
 
+# --------------------------------------------------- default gateway (5)
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+
+def _merged_config(root: pathlib.Path):
+    """cluster.yaml unified with nodes.yaml, the way `task configure` does it."""
+    if not shutil.which("yq"):
+        return None, "yq is not on PATH — run this under `mise exec`"
+    files = [root / "cluster.yaml"]
+    if (root / "nodes.yaml").is_file():
+        files.append(root / "nodes.yaml")
+    if not files[0].is_file():
+        return None, f"{files[0]} not here — run this inside a cluster repo"
+    r = run(["yq", "eval-all", "-o=json", ". as $i ireduce ({}; . * $i)",
+             *[str(f) for f in files]])
+    if r.returncode != 0:
+        return None, f"yq could not read the config: {r.stderr.strip()[:140]}"
+    try:
+        return json.loads(r.stdout), None
+    except json.JSONDecodeError as e:
+        return None, f"the merged config did not decode as JSON: {e}"
+
+
+def _shipped_gateway(root: pathlib.Path):
+    """(address, provenance, error). provenance is "declared" or "assumed".
+
+    The address comes from the real `Plugin.data()`, never from a second copy
+    of the `.1` rule. `#32` cost the whole fleet its ability to render because
+    this file's neighbour held a copy of one value plugin.py owns, and the copy
+    stayed behind when the original changed.
+    """
+    raw, err = _merged_config(root)
+    if err:
+        return None, None, err
+    provenance = "declared" if "node_default_gateway" in raw else "assumed"
+    loader = root / "scripts" / "check-node-dns-path.py"
+    if not loader.is_file():
+        return None, None, f"{loader} not here — it owns the makejinja stub"
+    try:
+        spec = importlib.util.spec_from_file_location("_cndp", loader)
+        cndp = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cndp)
+        data = cndp.load_plugin().Plugin(dict(raw)).data()
+    except Exception as e:  # a real repo has auth0.json; a bare one does not
+        return None, provenance, f"could not render the config: {type(e).__name__}: {str(e)[:140]}"
+    return data.get("node_default_gateway"), provenance, None
+
+
+def _route_docs(args):
+    """Whatever talosctl says, as a list of decoded JSON documents."""
+    if args.routes_json:
+        f = pathlib.Path(args.routes_json)
+        if not f.is_file():
+            return None, f"{f} not here"
+        text = f.read_text()
+    else:
+        if not shutil.which("talosctl"):
+            return None, "talosctl is not on PATH"
+        cmd = ["talosctl"]
+        if args.talosconfig:
+            cmd += ["--talosconfig", args.talosconfig]
+        cmd += ["-n", args.node, "get", "routes", "-o", "json"]
+        r = run(cmd, timeout=args.timeout)
+        if r.returncode != 0:
+            return None, f"talosctl failed: {(r.stderr or r.stdout).strip()[:200]}"
+        text = r.stdout
+    docs, dec, i = [], json.JSONDecoder(), 0
+    while i < len(text):
+        if text[i].isspace():
+            i += 1
+            continue
+        try:
+            doc, end = dec.raw_decode(text, i)
+        except json.JSONDecodeError as e:
+            return None, f"talosctl output did not decode as JSON at offset {i}: {e}"
+        docs.append(doc)
+        i = end
+    return docs, None
+
+
+def check_gateway(args) -> int:
+    """The nodes' real default route, against the one this repo ships.
+
+    `#49`: `node_default_gateway` defaults to `.1` of `node_cidr`, which is an
+    assumption about someone else's LAN. It is invisible when wrong — configure
+    succeeds, `cue vet` passes, the cluster boots, and nothing leaves the LAN —
+    and it is invisible when right for the wrong reason, because the operator's
+    own LANs are all `.1`, so the assumed string and the measured one match on
+    every cluster this lab can test.
+
+    Positive control, per this file's rule: a node always has routes. Zero
+    routes back is what asking the wrong question looks like, not a node
+    without a gateway, so it reports UNKNOWN rather than a missing default.
+
+    Two default routes are not resolved by picking one — same rule as multiple
+    candidate subnets for `node_cidr`.
+    """
+    shipped, provenance, err = _shipped_gateway(REPO_ROOT)
+    if err:
+        huh(f"cannot tell what this repo ships: {err}")
+        return UNKNOWN
+
+    docs, err = _route_docs(args)
+    if err:
+        huh(f"cannot measure the node's routes: {err}")
+        print(f"      This repo would ship {shipped} ({provenance}). Unverified.")
+        return UNKNOWN
+
+    if not docs:
+        huh("talosctl returned no routes at all")
+        print("      Every node has routes, so this is the wrong question being")
+        print("      asked — wrong node, wrong resource name, or no permission —")
+        print("      not a node without a default gateway.")
+        return UNKNOWN
+
+    specs = [d.get("spec", d) for d in docs]
+    if not any("gateway" in sp for sp in specs):
+        keys = sorted({k for sp in specs if isinstance(sp, dict) for k in sp})
+        huh(f"no route carries a `gateway` key across {len(docs)} routes")
+        print(f"      Keys seen: {', '.join(keys) or 'none'}")
+        print("      The selector below expects `gateway` and `dst`. If talosctl")
+        print("      names them differently, fix the two names here — do not")
+        print("      loosen this into picking whatever is first.")
+        return UNKNOWN
+
+    found = sorted({
+        sp["gateway"] for sp in specs
+        if isinstance(sp, dict) and sp.get("gateway") and not sp.get("dst")
+    })
+
+    if not found:
+        huh(f"{len(docs)} routes, none of them a default route")
+        print("      A default route is one with a gateway and no destination.")
+        return UNKNOWN
+    if len(found) > 1:
+        huh(f"{len(found)} default routes: {', '.join(found)}")
+        print("      Refusing to pick. Which one the node uses depends on metric")
+        print("      and interface, and guessing here would ship a number that")
+        print("      looks measured. Decide on the node, then declare it.")
+        return UNKNOWN
+
+    measured = found[0]
+    if measured != shipped:
+        bad(f"this repo ships {shipped} ({provenance}); the node routes via {measured}")
+        print("      Set node_default_gateway in cluster.yaml to the measured")
+        print("      value and re-run `task configure`. Left alone, the cluster")
+        print("      comes up and nothing reaches the internet.")
+        return FAIL
+
+    if provenance == "assumed":
+        ok(f"default route {measured} — matches, but cluster.yaml does not say so")
+        print("      Declare it anyway: it is right by coincidence today, and")
+        print("      the next node_cidr change silently moves it.")
+        return PASS
+    ok(f"default route {measured} — declared in cluster.yaml and measured on the node")
+    return PASS
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -542,7 +703,17 @@ def main() -> None:
     l.add_argument("--expect-addr", required=True)
     l.set_defaults(func=check_lan)
 
+    g = sub.add_parser("gateway")
+    g.add_argument("--node", help="node address talosctl should ask")
+    g.add_argument("--talosconfig")
+    g.add_argument("--routes-json",
+                   help="a captured `talosctl get routes -o json`, instead of asking a node")
+    g.add_argument("--timeout", type=int, default=30)
+    g.set_defaults(func=check_gateway)
+
     args = p.parse_args()
+    if args.cmd == "gateway" and not args.node and not args.routes_json:
+        p.error("gateway needs --node, or --routes-json to read a capture")
     sys.exit(args.func(args))
 
 

@@ -7,6 +7,7 @@ import hmac
 import ipaddress
 import makejinja
 import re
+import sys
 import json
 
 
@@ -185,7 +186,38 @@ class Plugin(makejinja.plugin.Plugin):
         # Set default values for optional fields.
         # These must match the defaults documented in cluster.sample.yaml —
         # a documented default the code does not apply is a defect.
+        # `.1` of node_cidr is an ASSUMPTION about someone else's LAN, not a
+        # measurement, and `#49` measured every one of the twelve cluster.yaml
+        # on the operator's machine relying on it. It is right here because
+        # ferry133's LANs are `.1` — which is also why nothing has caught it:
+        # the assumed value and the true one are the same string, so every test
+        # this lab can run passes either way. A customer on `.254` (common)
+        # gets `task configure` success, `cue vet` pass, a cluster that boots,
+        # and no route off the LAN.
+        #
+        # It stays a default rather than becoming required: making it required
+        # would stop `task configure` in all twelve repos to catch a value that
+        # is, on this fleet, correct — and a guard that fires on correct input
+        # gets switched off. What changes is that the assumption stops being
+        # silent. `scripts/delivery-check.py gateway` measures the real default
+        # route and compares; the notice below marks the render log on the one
+        # path where this value reaches a machine.
+        assumed_gateway = 'node_default_gateway' not in data
         data.setdefault('node_default_gateway', nthhost(data.get('node_cidr'), 1))
+        if assumed_gateway and data.get('provisioning_path') == 'talos':
+            # Only this path. On the Omni path `nodes` is empty, so the routes
+            # block in talconfig.yaml.j2 never renders, the global Talos
+            # patches are not applied, and NODE_DEFAULT_GATEWAY has no reader
+            # in jg-base at all (measured 2026-08-30: 0 files, against 17 for
+            # NAS_SERVER as a positive control). Announcing there would be a
+            # warning about a value nothing consumes.
+            print(
+                f"NOTE: node_default_gateway is assumed, not measured — "
+                f"{data['node_default_gateway']} is .1 of {data.get('node_cidr')}. "
+                f"It becomes every node's default route and nameserver. "
+                f"Verify with: scripts/delivery-check.py gateway --node <addr>",
+                file=sys.stderr,
+            )
         # 2026-08-27: the LAN's router, not Cloudflare. Measured on jg-jiahd
         # (Omni path, no Talos patches applied) that the nodes were already on
         # `10.9.9.1` via DHCP while this file rendered `1.1.1.1` -- so the old
