@@ -3,7 +3,7 @@
 # claude_instances in cluster.yaml -- jg-jiahd overrides it to "cc"
 # (cc.jiahd.cc). The shared manifests (namespace, SA/RBAC, OCIRepository,
 # secrets) come from jg-base kubernetes/apps/base/claudecode.
-#% for instance in claude_instances | default(['im']) %#
+#% for instance in claude_instances %#
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
