@@ -142,7 +142,7 @@ storage_backend: "nfs"
 # move is a dump and restore, not a re-render. Writing it down keeps "not yet
 # moved" visible instead of silent.
 # db_storage_class: "local-path"
-  ── claude-code storage ───────────────────────────────────────────────────────
+# ── claude-code storage ───────────────────────────────────────────────────────
 # (OPTIONAL) Which class holds ~/.claude and the keyring (one PVC, two mounts).
 # Defaults to default_storage_class — i.e. wherever this cluster already has it.
 #
