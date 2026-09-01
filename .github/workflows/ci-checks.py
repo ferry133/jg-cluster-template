@@ -40,6 +40,7 @@ RUN = [
     "check-forwarded-header-trust.py",
     "check-lb-pool-render.py",
     "check-nas-backup.py",
+    "check-private-repo-chain.py",
     "check-node-dns-path.py",
     "check-template-integrity.py",
 ]
