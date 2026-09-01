@@ -32,6 +32,7 @@ Usage
   delivery-check.py flux         --kubeconfig PATH --expect-sha SHA
   delivery-check.py lan          --domain DOMAIN --expect-addr ADDR
   delivery-check.py gateway      --node ADDR [--talosconfig PATH] [--routes-json PATH]
+  delivery-check.py deploy-key   --repo OWNER/NAME [--pubkey PATH]
 """
 
 from __future__ import annotations
@@ -690,6 +691,62 @@ def check_gateway(args) -> int:
     return PASS
 
 
+# ------------------------------------------------- deploy key (6)
+
+def check_deploy_key(args) -> int:
+    """The deploy key exists locally AND GitHub has it.
+
+    `#56`: `task init` runs `ssh-keygen` and the template renders the private
+    half into a Secret, so every artefact a person would look at is present —
+    and `gh api repos/<repo>/keys` was empty on jg-janncotcc. Nothing in either
+    repo registers the public half, and on a PUBLIC repo nothing ever notices,
+    because Flux clones anonymously. It surfaces only when the repo goes
+    private, as `GitRepository READY=False` during a provisioning run.
+
+    Registering is a runbook step (fleet-ops), not something this repo should
+    do behind an operator's back — a write to someone's GitHub account is not a
+    side effect of a check. Detecting it is this repo's half.
+
+    Positive control: the local public key is compared to what GitHub returns,
+    so a repo carrying somebody else's key is a finding rather than a pass.
+    "The list is not empty" would accept exactly that.
+    """
+    pub = pathlib.Path(args.pubkey)
+    if not pub.is_file():
+        huh(f"{pub} is not here — run `task init` in the cluster repo first")
+        return UNKNOWN
+    if not shutil.which("gh"):
+        huh("gh is not on PATH")
+        return UNKNOWN
+
+    # ssh-keygen writes "<type> <base64> <comment>"; GitHub returns and compares
+    # the first two fields only, so the comment must not take part.
+    local = " ".join(pub.read_text().split()[:2])
+
+    r = run(["gh", "api", f"repos/{args.repo}/keys", "--jq", ".[].key"])
+    if r.returncode != 0:
+        huh(f"could not list deploy keys: {r.stderr.strip()[:160]}")
+        print("      Not reporting a missing key: no answer and an empty answer")
+        print("      are different, and only one of them is a finding.")
+        return UNKNOWN
+
+    remote = [" ".join(k.split()[:2]) for k in r.stdout.splitlines() if k.strip()]
+    if local in remote:
+        ok(f"{args.repo} carries this repo's deploy key ({len(remote)} key(s) registered)")
+        return PASS
+
+    if not remote:
+        bad(f"{args.repo} has no deploy keys at all")
+    else:
+        bad(f"{args.repo} has {len(remote)} deploy key(s), none of them this one")
+    print("      Register it:")
+    print(f"        gh api -X POST repos/{args.repo}/keys \\")
+    print(f"          -f title='flux' -f key=\"$(cat {pub})\" -F read_only=true")
+    print("      Until then a private repo cannot be synced: Flux authenticates")
+    print("      with the matching private half and GitHub will refuse it.")
+    return FAIL
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -728,6 +785,11 @@ def main() -> None:
                    help="a captured `talosctl get routes -o json`, instead of asking a node")
     g.add_argument("--timeout", type=int, default=30)
     g.set_defaults(func=check_gateway)
+
+    k = sub.add_parser("deploy-key")
+    k.add_argument("--repo", required=True, help="OWNER/NAME on GitHub")
+    k.add_argument("--pubkey", default="github-deploy.key.pub")
+    k.set_defaults(func=check_deploy_key)
 
     args = p.parse_args()
     if args.cmd == "gateway" and not args.node and not args.routes_json:

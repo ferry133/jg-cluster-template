@@ -9,8 +9,16 @@
 {{- $check := exec "sh" (list "-c" (printf "test -f '%s' && echo yes || echo no" $base)) | trim -}}
 {{- $path := ternary $base $extras (eq $check "yes") -}}
 {{- $values := (fromYaml (readFile $path)).spec.values -}}
+{{/* Bootstrap writes the sync URL literally: there is no cluster-secrets to
+     substitute from yet. It must therefore make the same public/private choice
+     that cluster-secrets.sops.yaml.j2 makes for the steady state, and the two
+     have to agree -- `#56`. */}}
 {{- if and (eq .Release.Namespace "flux-system") (eq .Release.Name "flux-instance") -}}
+#% if repository_visibility == 'private' %#
+{{- $values = mergeOverwrite $values (dict "instance" (dict "sync" (dict "url" "ssh://git@github.com/#{ repository_name }#.git" "pullSecret" "github-deploy-key"))) -}}
+#% else %#
 {{- $values = mergeOverwrite $values (dict "instance" (dict "sync" (dict "url" "https://github.com/#{ repository_name }#.git"))) -}}
+#% endif %#
 {{- end -}}
 {{- $yaml := $values | toYaml -}}
 {{- $yaml = $yaml | replace "${COREDNS_CLUSTER_IP}" "#{ coredns_cluster_ip }#" -}}
