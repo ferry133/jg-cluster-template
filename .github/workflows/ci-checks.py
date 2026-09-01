@@ -7,9 +7,21 @@ pass on their own, and five cannot see their subject from here. The five are
 listed with the reason rather than dropped, because a list that silently stops
 at the runnable ones reads exactly like a list that covers everything.
 
-`--audit` fails if `scripts/check-*` contains anything not in either list. That
-is the failure this file exists for: `#58` added a check script and nothing ran
-it, which is how a repo with eleven guards ended up with no CI at all.
+`--audit` fails if any guard in `scripts/` is in neither list. That is the
+failure this file exists for: `#58` added a check script and nothing ran it,
+which is how a repo with eleven guards ended up with no CI at all.
+
+The inventory is deliberately not a plain `check-*` glob. It was, for one day,
+and the acceptance review found the hole the same evening: a guard whose name
+does not start with `check-` was invisible to the audit, **and the output was
+byte-identical to full coverage** — `ok 12 check scripts` either way. That is
+this file's own failure mode occurring inside this file. It was not
+hypothetical: `delivery-check.py` has always been such a file.
+
+So the inventory is "starts with `check-`, or has `check` anywhere in the name",
+and the naming convention is no longer load-bearing. A guard called something
+else entirely is still invisible; that residue is named here rather than left
+to be rediscovered.
 """
 
 from __future__ import annotations
@@ -46,11 +58,31 @@ SKIP = {
         "needs a live cluster (kubectl) and the age key to decrypt secrets",
     "check-template-drift.py":
         "compares two repos; needs a per-user repo to compare against",
+    # Not named `check-*`, and invisible to the audit until 2026-09-01. Its
+    # subcommands each need something this checkout has not got — a domain, a
+    # kubeconfig, an escrowed key — so SKIP is where it belongs. The defect was
+    # never that it did not run; it was that nothing could tell it had not been
+    # classified.
+    "delivery-check.py":
+        "subcommands need a domain, a kubeconfig or an escrowed key; run at delivery",
 }
 
 
 def scripts_present() -> set[str]:
-    return {p.name for p in (ROOT / "scripts").glob("check-*")}
+    """Every file in `scripts/` that looks like a guard.
+
+    Two globs, not one. `check-*` alone was the whole inventory until the
+    `#59` acceptance review, and it silently excluded `delivery-check.py` while
+    printing the same line it prints when nothing is missing.
+    """
+    d = ROOT / "scripts"
+    prefixed = {p.name for p in d.glob("check-*") if p.is_file()}
+    infixed = {
+        p.name
+        for p in d.glob("*")
+        if p.is_file() and "check" in p.name and not p.name.startswith("check-")
+    }
+    return prefixed | infixed
 
 
 def audit() -> int:
@@ -59,15 +91,18 @@ def audit() -> int:
     missing = sorted(known - present)
     for name in unclassified:
         print(f"FAIL  scripts/{name} is in neither RUN nor SKIP")
-        print("      A check script with no runner is how #59 happened. Add it")
-        print("      to RUN, or to SKIP with the reason it cannot run here.")
+        print("      A guard with no runner is how #59 happened. Add it to RUN,")
+        print("      or to SKIP with the reason it cannot run here.")
+        print("      (Counted because the name starts with `check-` or contains")
+        print("      `check`. A guard named neither is still invisible — say so")
+        print("      in the name, or add it to a list here by hand.)")
     for name in missing:
         print(f"FAIL  {name} is listed here but not in scripts/")
         print("      A list naming a file that no longer exists still reads as")
         print("      coverage.")
     if unclassified or missing:
         return 1
-    print(f"ok    {len(present)} check scripts, {len(RUN)} run here, "
+    print(f"ok    {len(present)} guards found in scripts/, {len(RUN)} run here, "
           f"{len(SKIP)} cannot see their subject from a bare checkout")
     return 0
 
