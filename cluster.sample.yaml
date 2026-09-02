@@ -441,10 +441,17 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 #   - "im"
 #
 # ── How the terminal is guarded ───────────────────────────────────────────────
-# Auth0 OIDC by default. Nothing to set here: the shared Auth0 application's
-# domain, client_id and client_secret come from `auth0.json` in this directory
-# (gitignored — see Stage 4 of fleet-ops docs/deploy/manual.md), and the oauth2-proxy
-# cookie secret is derived from age.key + cluster_name at render time.
+# Auth0 OIDC by default, and since 2026-08-25 **this cluster gets its own Auth0
+# tenant** — so claudecode_auth0_domain / _client_id / _client_secret and
+# claudecode_allowed_emails are required here, from that tenant. They are not
+# inherited from an auth0.json copied out of another cluster directory; that
+# fallback made "forgot to set it" and "deliberately shares a tenant" produce
+# the same result, and the same result was the shared one (jgct#64).
+#
+# A cluster that genuinely shares another's application sets
+# claudecode_auth0_shared: true and puts that auth0.json here (gitignored — see
+# Stage 4 of fleet-ops docs/deploy/manual.md). The oauth2-proxy cookie secret is
+# derived from age.key + cluster_name at render time either way.
 #
 # One step no render can take for you — in the Auth0 application (Regular Web
 # Application), per instance:

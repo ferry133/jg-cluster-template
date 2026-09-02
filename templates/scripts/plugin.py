@@ -147,9 +147,11 @@ def auth0_config(file_path: str = 'auth0.json') -> dict[str, str]:
             data = json.load(file)
     except FileNotFoundError:
         raise FileNotFoundError(
-            f"File not found: {file_path} — claude-code defaults to Auth0 login. "
-            f"Copy auth0.json from another cluster directory, or set "
-            f"`claudecode_auth0: false` in cluster.yaml to use ttyd basic auth.")
+            f"File not found: {file_path} — `claudecode_auth0_shared: true` is "
+            f"set, which is the only thing that makes reading it legitimate, "
+            f"and it is not in this directory. Either put this cluster's own "
+            f"Auth0 values in cluster.yaml and drop the flag, or supply the "
+            f"shared application's auth0.json here.")
     except json.JSONDecodeError:
         raise ValueError(f"Could not decode JSON file: {file_path}")
 
