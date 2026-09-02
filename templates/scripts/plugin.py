@@ -486,11 +486,14 @@ class Plugin(makejinja.plugin.Plugin):
             bool(data['claudecode_auth0']) if 'claudecode_auth0' in data
             else True)
         if data['claudecode_auth0_enabled']:
-            # Read auth0.json only for what cluster.yaml has not already
-            # answered. The clusters that configured Auth0 before the file
-            # existed spell all of it out inline, and requiring the file from
-            # them anyway would break their next `task configure` over a value
-            # they already have.
+            # The paragraph that stood here justified reading auth0.json for
+            # whatever cluster.yaml left out, on the grounds that requiring the
+            # file would break `task configure` for clusters that already spell
+            # everything out inline. Those clusters are unaffected — they set
+            # all four. What it also protected was the cluster that set none,
+            # and breaking THAT one is the point of `#64`. Removed rather than
+            # left to contradict the paragraph below it.
+            #
             # 2026-08-25 ruling: each cluster gets its OWN Auth0 tenant. Until
             # `#64` this block read auth0.json for whatever cluster.yaml had
             # left out, which made "forgot to set it" and "deliberately shares
@@ -522,7 +525,12 @@ class Plugin(makejinja.plugin.Plugin):
                     "or — only if this cluster is deliberately sharing another "
                     "cluster's tenant — set `claudecode_auth0_shared: true` and "
                     "put auth0.json in this directory.")
-            if shared:
+            # `and missing`, not `if shared` alone: the path from a shared
+            # tenant back to an own one is fill in the four values, delete
+            # auth0.json, drop the flag — and forgetting the last step used to
+            # raise FileNotFoundError over a file nothing needed. Found in
+            # acceptance review of `#64` (case c09).
+            if shared and missing:
                 auth0 = auth0_config()
                 for field in fields:
                     data.setdefault(f'claudecode_auth0_{field}', auth0[field])

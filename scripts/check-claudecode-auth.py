@@ -96,10 +96,22 @@ def auth0_enabled(path: Path) -> bool:
 
 
 def check_auth0(config: Path) -> list[str]:
-    """Whatever cluster.yaml does not override has to come from auth0.json.
+    """cluster.yaml must carry this cluster's own tenant; auth0.json is opt-in.
 
-    allowed_emails counts among those: OIDC mode renders the allowlist into a
-    ConfigMap, and an absent one fails the render rather than defaulting open.
+    allowed_emails counts among the required values: OIDC mode renders the
+    allowlist into a ConfigMap, and an absent one fails the render rather than
+    defaulting open.
+
+    This docstring said the opposite until 2026-09-03 — "whatever cluster.yaml
+    does not override has to come from auth0.json" — sitting directly above the
+    function that now implements the reverse. It survived the `#64` sweep
+    because that sweep grepped for the words the other copies used (`shared`,
+    `same application`, `copy … another cluster`) and this one uses none of
+    them. **"I grepped" and "I grepped for the right words" read identically.**
+    Found by the acceptance reviewer; two more (cluster.sample.yaml's
+    "Overrides, rarely needed" and "Defaults to the operators listed in
+    auth0.json") were then found by listing every mention of the filename and
+    reading them, instead of searching for remembered phrasing.
     """
     from_config = {
         field: yq(f'.claudecode_auth0_{field} // ""', config)
