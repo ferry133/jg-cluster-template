@@ -120,13 +120,23 @@ def github_push_token(file_path: str = 'github-push-token.txt') -> str:
         raise RuntimeError(f"Unexpected error while reading {file_path}: {e}")
 
 
-# Return the shared claude-code Auth0 application's fields from auth0.json
+# Return a claude-code Auth0 application's fields from auth0.json
+#
+# ⚠️ This is the SHARED-tenant path and it is now opt-in. Reading it is gated on
+# `claudecode_auth0_shared` in cluster.yaml; see the caller.
+#
+# The paragraph that used to be here said "every cluster fronts claude-code with
+# the same Auth0 application". That was true when it was written and was
+# overturned on 2026-08-25 — `fleet-ops docs/operations/provision-customer-cluster.md`
+# Step 2: *this cluster gets its own Auth0 tenant*. The code kept implementing
+# the old design for eight days, and `#64` is what that cost: three clusters
+# shared one tenant, the runbook's own assertion passed over it, and it took
+# ferry133 asking "are these the customer's values?" to find out.
 #
 # A local file rather than cluster.yaml fields because this template repo is
-# public and every cluster fronts claude-code with the same Auth0 application:
-# one copied file per cluster directory beats pasting the same client secret
-# into twenty configs. Same idiom as cloudflare-tunnel.json — gitignored, read
-# at render time, never committed.
+# public: a client secret does not belong in a public repo even per-cluster.
+# Same idiom as cloudflare-tunnel.json — gitignored, read at render time, never
+# committed.
 #
 # Missing here is a hard stop, not an empty default: OIDC mode gives ttyd no
 # fallback (it binds loopback), so a cluster rendered with a blank client
@@ -479,9 +489,38 @@ class Plugin(makejinja.plugin.Plugin):
             # existed spell all of it out inline, and requiring the file from
             # them anyway would break their next `task configure` over a value
             # they already have.
+            # 2026-08-25 ruling: each cluster gets its OWN Auth0 tenant. Until
+            # `#64` this block read auth0.json for whatever cluster.yaml had
+            # left out, which made "forgot to set it" and "deliberately shares
+            # a tenant" produce identical output — and the identical output was
+            # the shared one. Three clusters ended up on one tenant that way,
+            # past a runbook assertion whose prose said "registered under the
+            # same Google account" while nothing checked it.
+            #
+            # Sharing is still allowed, because a cluster may genuinely want it
+            # — it just has to say so. The flag is the whole difference between
+            # a decision and an accident.
             fields = ('domain', 'client_id', 'client_secret')
-            if not all(data.get(f'claudecode_auth0_{f}') for f in fields) \
-                    or not data.get('claudecode_allowed_emails'):
+            shared = bool(data.get('claudecode_auth0_shared'))
+            missing = [f for f in fields
+                       if not data.get(f'claudecode_auth0_{f}')]
+            # The allowlist came from the same file, so dropping the fallback
+            # without this would trade a silent shared tenant for a silently
+            # empty door — oauth2-proxy admits nobody and the terminal is the
+            # cluster's rescue path.
+            if not data.get('claudecode_allowed_emails'):
+                missing.append('allowed_emails (claudecode_allowed_emails)')
+            if missing and not shared:
+                raise KeyError(
+                    "claude-code Auth0 is enabled and cluster.yaml is missing: "
+                    + ", ".join(missing)
+                    + ". Since 2026-08-25 each cluster uses its OWN Auth0 "
+                    "tenant, so these are not inherited from auth0.json any "
+                    "more. Set them in cluster.yaml from this cluster's tenant, "
+                    "or — only if this cluster is deliberately sharing another "
+                    "cluster's tenant — set `claudecode_auth0_shared: true` and "
+                    "put auth0.json in this directory.")
+            if shared:
                 auth0 = auth0_config()
                 for field in fields:
                     data.setdefault(f'claudecode_auth0_{field}', auth0[field])

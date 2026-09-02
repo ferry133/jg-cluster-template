@@ -362,8 +362,9 @@ import (
 	// support and leaves `cc` at zero until it is needed.
 	claude_code_always_on?: [...string]
 	// Auth0 OIDC login in front of every claude-code instance. Defaults to true
-	// at render time; the four claudecode_auth0_* / allowed_emails values come
-	// from the gitignored auth0.json unless set here.
+	// at render time. When on, this cluster's own claudecode_auth0_* values and
+	// claudecode_allowed_emails are REQUIRED — they are not inherited from
+	// auth0.json unless claudecode_auth0_shared says so (jgct#64).
 	//
 	// Setting it false falls back to ttyd basic auth, which then needs
 	// ttyd_credential — checked by scripts/check-claudecode-auth.py.
@@ -373,11 +374,24 @@ import (
 	// offending value in its error, and a check that leaks the credential into
 	// a terminal and CI log to complain about it is worse than no check.
 	ttyd_credential?: string & !=""
-	// Each overrides the matching field in auth0.json. Rarely needed — every
-	// cluster fronts claude-code with the same Auth0 application.
+	// This cluster's OWN Auth0 tenant (2026-08-25 ruling). Required in practice
+	// whenever claudecode_auth0 is not false — enforced in plugin.py rather than
+	// here, because a CUE condition on an optional bool is not concrete and
+	// `cue vet` reports it against an unrelated field (measured on node_cidr,
+	// jgct#51).
+	//
+	// They are no longer inherited from auth0.json: that fallback made
+	// "forgot to set it" and "deliberately shares a tenant" identical, and the
+	// identical answer was the shared one (jgct#64). Sharing now needs
+	// claudecode_auth0_shared below.
 	claudecode_auth0_domain?: string & !=""
 	claudecode_auth0_client_id?: string & !=""
 	claudecode_auth0_client_secret?: string & !=""
+	// Opt in to reading the three values above (and allowed_emails) from a
+	// gitignored auth0.json in this cluster's directory — i.e. this cluster
+	// deliberately shares another cluster's tenant. Absent, a missing field is
+	// an error rather than an inheritance.
+	claudecode_auth0_shared?: bool
 	// Derived from age.key + cluster_name at render time when absent, so it is
 	// stable across renders and distinct per cluster. Leaving it unset is the
 	// good case — the derivation has always emitted the shape oauth2-proxy
