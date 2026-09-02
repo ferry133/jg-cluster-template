@@ -83,8 +83,24 @@ def main() -> int:
         print("      the same shape as the defect this check exists for.")
         return 2
 
-    text = sibling.read_text()
-    if "FLUX_SYNC_PULL_SECRET" in text:
+    # An actual `pullSecret:` key, not the string anywhere in the file. This
+    # was a substring test until 2026-09-03, and it passed on
+    #
+    #     # TODO: add FLUX_SYNC_PULL_SECRET here one day
+    #
+    # — measured while accepting the jg-base PR that closes this gap. A guard
+    # that counts mentions instead of settings reads exactly like one that
+    # counts settings, and this repo's own comments are dense enough that the
+    # difference was going to be reached eventually.
+    #
+    # `^\s*pullSecret` excludes comment lines for free: a `#` would have to come
+    # first, and then the key is no longer at the start of the line.
+    wired = re.search(
+        r"^\s*pullSecret\s*:\s*.*FLUX_SYNC_PULL_SECRET",
+        sibling.read_text(),
+        re.M,
+    )
+    if wired:
         print("ok    private, and jg-base's flux-instance carries "
               "pullSecret: ${FLUX_SYNC_PULL_SECRET}")
         return 0
