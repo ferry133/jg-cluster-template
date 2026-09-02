@@ -441,10 +441,17 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 #   - "im"
 #
 # ── How the terminal is guarded ───────────────────────────────────────────────
-# Auth0 OIDC by default. Nothing to set here: the shared Auth0 application's
-# domain, client_id and client_secret come from `auth0.json` in this directory
-# (gitignored — see Stage 4 of fleet-ops docs/deploy/manual.md), and the oauth2-proxy
-# cookie secret is derived from age.key + cluster_name at render time.
+# Auth0 OIDC by default, and since 2026-08-25 **this cluster gets its own Auth0
+# tenant** — so claudecode_auth0_domain / _client_id / _client_secret and
+# claudecode_allowed_emails are required here, from that tenant. They are not
+# inherited from an auth0.json copied out of another cluster directory; that
+# fallback made "forgot to set it" and "deliberately shares a tenant" produce
+# the same result, and the same result was the shared one (jgct#64).
+#
+# A cluster that genuinely shares another's application sets
+# claudecode_auth0_shared: true and puts that auth0.json here (gitignored — see
+# Stage 4 of fleet-ops docs/deploy/manual.md). The oauth2-proxy cookie secret is
+# derived from age.key + cluster_name at render time either way.
 #
 # One step no render can take for you — in the Auth0 application (Regular Web
 # Application), per instance:
@@ -456,7 +463,10 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # Miss that step and login fails with an Auth0 error, not a fallback: in OIDC
 # mode ttyd binds loopback only and the proxy is the sole way in.
 #
-# Overrides, rarely needed — each wins over the matching auth0.json field:
+# (REQUIRED when claudecode_auth0 is not false) This cluster's OWN Auth0 tenant.
+# Not overrides and not rare: since 2026-08-25 these ARE the values, read from
+# the tenant registered for this cluster. Only under claudecode_auth0_shared do
+# they fall back to auth0.json, and then each still wins over that file.
 # claudecode_auth0_domain: ""
 # claudecode_auth0_client_id: ""
 # claudecode_auth0_client_secret: ""
@@ -481,8 +491,12 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # bytes. scripts/check-claudecode-auth.py rejects anything else before render:
 #   python3 -c "import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
 # claudecode_oauth2_cookie_secret: ""
-# Who may log in. Defaults to the operators listed in auth0.json; set it here
-# to add someone for this cluster only, e.g. the client's own address.
+# (REQUIRED when claudecode_auth0 is not false) Who may log in. This is the
+# whole door — oauth2-proxy admits exactly these addresses and nobody else.
+# It no longer defaults to the operators listed in auth0.json: that made an
+# unset allowlist silently inherit whoever the shared file listed. Under
+# claudecode_auth0_shared it still falls back to that file, and setting it here
+# still wins — e.g. to add the client's own address.
 # claudecode_allowed_emails: "a@example.com,b@example.com"
 #
 # (OPTIONAL) Per-instance override, keyed by instance name. Absent keys inherit

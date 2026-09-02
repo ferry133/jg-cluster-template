@@ -120,13 +120,23 @@ def github_push_token(file_path: str = 'github-push-token.txt') -> str:
         raise RuntimeError(f"Unexpected error while reading {file_path}: {e}")
 
 
-# Return the shared claude-code Auth0 application's fields from auth0.json
+# Return a claude-code Auth0 application's fields from auth0.json
+#
+# ⚠️ This is the SHARED-tenant path and it is now opt-in. Reading it is gated on
+# `claudecode_auth0_shared` in cluster.yaml; see the caller.
+#
+# The paragraph that used to be here said "every cluster fronts claude-code with
+# the same Auth0 application". That was true when it was written and was
+# overturned on 2026-08-25 — `fleet-ops docs/operations/provision-customer-cluster.md`
+# Step 2: *this cluster gets its own Auth0 tenant*. The code kept implementing
+# the old design for eight days, and `#64` is what that cost: three clusters
+# shared one tenant, the runbook's own assertion passed over it, and it took
+# ferry133 asking "are these the customer's values?" to find out.
 #
 # A local file rather than cluster.yaml fields because this template repo is
-# public and every cluster fronts claude-code with the same Auth0 application:
-# one copied file per cluster directory beats pasting the same client secret
-# into twenty configs. Same idiom as cloudflare-tunnel.json — gitignored, read
-# at render time, never committed.
+# public: a client secret does not belong in a public repo even per-cluster.
+# Same idiom as cloudflare-tunnel.json — gitignored, read at render time, never
+# committed.
 #
 # Missing here is a hard stop, not an empty default: OIDC mode gives ttyd no
 # fallback (it binds loopback), so a cluster rendered with a blank client
@@ -137,9 +147,11 @@ def auth0_config(file_path: str = 'auth0.json') -> dict[str, str]:
             data = json.load(file)
     except FileNotFoundError:
         raise FileNotFoundError(
-            f"File not found: {file_path} — claude-code defaults to Auth0 login. "
-            f"Copy auth0.json from another cluster directory, or set "
-            f"`claudecode_auth0: false` in cluster.yaml to use ttyd basic auth.")
+            f"File not found: {file_path} — `claudecode_auth0_shared: true` is "
+            f"set, which is the only thing that makes reading it legitimate, "
+            f"and it is not in this directory. Either put this cluster's own "
+            f"Auth0 values in cluster.yaml and drop the flag, or supply the "
+            f"shared application's auth0.json here.")
     except json.JSONDecodeError:
         raise ValueError(f"Could not decode JSON file: {file_path}")
 
@@ -474,14 +486,51 @@ class Plugin(makejinja.plugin.Plugin):
             bool(data['claudecode_auth0']) if 'claudecode_auth0' in data
             else True)
         if data['claudecode_auth0_enabled']:
-            # Read auth0.json only for what cluster.yaml has not already
-            # answered. The clusters that configured Auth0 before the file
-            # existed spell all of it out inline, and requiring the file from
-            # them anyway would break their next `task configure` over a value
-            # they already have.
+            # The paragraph that stood here justified reading auth0.json for
+            # whatever cluster.yaml left out, on the grounds that requiring the
+            # file would break `task configure` for clusters that already spell
+            # everything out inline. Those clusters are unaffected — they set
+            # all four. What it also protected was the cluster that set none,
+            # and breaking THAT one is the point of `#64`. Removed rather than
+            # left to contradict the paragraph below it.
+            #
+            # 2026-08-25 ruling: each cluster gets its OWN Auth0 tenant. Until
+            # `#64` this block read auth0.json for whatever cluster.yaml had
+            # left out, which made "forgot to set it" and "deliberately shares
+            # a tenant" produce identical output — and the identical output was
+            # the shared one. Three clusters ended up on one tenant that way,
+            # past a runbook assertion whose prose said "registered under the
+            # same Google account" while nothing checked it.
+            #
+            # Sharing is still allowed, because a cluster may genuinely want it
+            # — it just has to say so. The flag is the whole difference between
+            # a decision and an accident.
             fields = ('domain', 'client_id', 'client_secret')
-            if not all(data.get(f'claudecode_auth0_{f}') for f in fields) \
-                    or not data.get('claudecode_allowed_emails'):
+            shared = bool(data.get('claudecode_auth0_shared'))
+            missing = [f for f in fields
+                       if not data.get(f'claudecode_auth0_{f}')]
+            # The allowlist came from the same file, so dropping the fallback
+            # without this would trade a silent shared tenant for a silently
+            # empty door — oauth2-proxy admits nobody and the terminal is the
+            # cluster's rescue path.
+            if not data.get('claudecode_allowed_emails'):
+                missing.append('allowed_emails (claudecode_allowed_emails)')
+            if missing and not shared:
+                raise KeyError(
+                    "claude-code Auth0 is enabled and cluster.yaml is missing: "
+                    + ", ".join(missing)
+                    + ". Since 2026-08-25 each cluster uses its OWN Auth0 "
+                    "tenant, so these are not inherited from auth0.json any "
+                    "more. Set them in cluster.yaml from this cluster's tenant, "
+                    "or — only if this cluster is deliberately sharing another "
+                    "cluster's tenant — set `claudecode_auth0_shared: true` and "
+                    "put auth0.json in this directory.")
+            # `and missing`, not `if shared` alone: the path from a shared
+            # tenant back to an own one is fill in the four values, delete
+            # auth0.json, drop the flag — and forgetting the last step used to
+            # raise FileNotFoundError over a file nothing needed. Found in
+            # acceptance review of `#64` (case c09).
+            if shared and missing:
                 auth0 = auth0_config()
                 for field in fields:
                     data.setdefault(f'claudecode_auth0_{field}', auth0[field])
