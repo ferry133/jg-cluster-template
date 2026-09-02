@@ -33,11 +33,13 @@ Usage
   delivery-check.py lan          --domain DOMAIN --expect-addr ADDR
   delivery-check.py gateway      --node ADDR [--talosconfig PATH] [--routes-json PATH]
   delivery-check.py deploy-key   --repo OWNER/NAME [--pubkey PATH]
+  delivery-check.py tunnel-cert  --domain DOMAIN [--cert PATH] [--token-env VAR]
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import importlib.util
 import json
 import os
@@ -747,6 +749,132 @@ def check_deploy_key(args) -> int:
     return FAIL
 
 
+# ------------------------------------------------ tunnel cert (7)
+
+CERT_BLOCK = re.compile(
+    r"-----BEGIN ARGO TUNNEL TOKEN-----(.*?)-----END ARGO TUNNEL TOKEN-----", re.S
+)
+
+
+def _cert_binding(cert: pathlib.Path) -> tuple[dict, str | None]:
+    """The accountID/zoneID a cloudflared cert is bound to.
+
+    The file is a base64 JSON blob with exactly three keys: `accountID`,
+    `zoneID` and `apiToken`. **The third is a credential.** Only the first two
+    are ever returned, and nothing here formats the parsed object as a whole —
+    a check that leaks the secret it is validating is a worse trade than the
+    check is worth.
+    """
+    try:
+        text = cert.read_text()
+    except OSError as e:
+        return {}, f"could not read it: {e}"
+    m = CERT_BLOCK.search(text)
+    if not m:
+        return {}, "no ARGO TUNNEL TOKEN block in it — is this a cloudflared cert?"
+    try:
+        payload = json.loads(base64.b64decode("".join(m.group(1).split())))
+    except Exception as e:  # noqa: BLE001 — malformed is "cannot tell", not a finding
+        return {}, f"the token block did not decode: {type(e).__name__}"
+    if not isinstance(payload, dict):
+        return {}, "the token block is not an object"
+    return (
+        {k: payload.get(k) for k in ("accountID", "zoneID") if payload.get(k)},
+        None,
+    )
+
+
+def check_tunnel_cert(args) -> int:
+    """Which Cloudflare account `cloudflared tunnel login` actually bound to.
+
+    Nothing checks this today, and every downstream step passes when it is
+    wrong: `cloudflared tunnel create` succeeds, `cloudflare-tunnel.json` is
+    written, `task configure` renders. The cluster comes up and the tunnel
+    answers **1033**.
+
+    Measured 2026-09-02 (`#63`): re-running the runbook's Step 2 opened a
+    browser already signed in as the operator, while the account being
+    authorised had to be the customer's. The authorisation page even lists a
+    `Moved` remnant of the old account with the right name and an `Active`
+    plan. What stopped it was a person reading the screen.
+
+    So this is the after-the-fact half. It cannot prevent clicking Authorize in
+    the wrong window — nothing measured that day could — it catches it before
+    the cert is used for anything.
+
+    The filename is never evidence. `fleet-ops docs/deploy/manual.md` Stage 4
+    says so, and the fixture that proves it is called `cert.pem.for.janncot`
+    while being bound to the operator's own account.
+    """
+    cert = pathlib.Path(args.cert).expanduser()
+    if not cert.is_file():
+        huh(f"{cert} is not here")
+        print("      That is also the state right before `cloudflared tunnel")
+        print("      login` — absent and wrong are different answers, so this")
+        print("      reports neither pass nor fail.")
+        return UNKNOWN
+
+    binding, err = _cert_binding(cert)
+    if err:
+        huh(f"{cert}: {err}")
+        return UNKNOWN
+    if "accountID" not in binding or "zoneID" not in binding:
+        huh(f"{cert} carries {sorted(binding) or 'nothing'} — expected accountID and zoneID")
+        return UNKNOWN
+
+    token = os.environ.get(args.token_env or "CLOUDFLARE_TOKEN", "")
+    if not token:
+        huh(f"${args.token_env or 'CLOUDFLARE_TOKEN'} not set — cannot ask "
+            "Cloudflare which account owns this domain")
+        print(f"      The cert is bound to account {binding['accountID']},")
+        print(f"      zone {binding['zoneID']}. Compare by hand, or set the token.")
+        return UNKNOWN
+
+    req = urllib.request.Request(
+        f"https://api.cloudflare.com/client/v4/zones?name={args.domain}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            body = json.load(r)
+    except Exception as e:  # noqa: BLE001
+        huh(f"could not query Cloudflare: {e}")
+        return UNKNOWN
+
+    zones = body.get("result") or []
+    if len(zones) != 1:
+        huh(f"Cloudflare returned {len(zones)} zones named {args.domain}")
+        print("      Zero means this token cannot see the zone — which is itself")
+        print("      a finding, but not the one this check makes. More than one")
+        print("      is ambiguous and picking would invent an answer.")
+        return UNKNOWN
+
+    want_zone = zones[0].get("id")
+    want_account = (zones[0].get("account") or {}).get("id")
+    got_zone, got_account = binding["zoneID"], binding["accountID"]
+
+    wrong = []
+    if got_account != want_account:
+        wrong.append(("account", got_account, want_account))
+    if got_zone != want_zone:
+        wrong.append(("zone", got_zone, want_zone))
+
+    if not wrong:
+        ok(f"{cert.name} is bound to the account and zone that own {args.domain}")
+        print(f"      account {got_account}  zone {got_zone}")
+        return PASS
+
+    bad(f"{cert.name} is bound to the wrong Cloudflare account for {args.domain}")
+    for what, got, want in wrong:
+        print(f"      {what}: cert says {got}")
+        print(f"      {' ' * len(what)}  {args.domain} belongs to {want}")
+    print("      Re-run `cloudflared tunnel login` in a browser signed in as the")
+    print("      account that owns this domain, and check the window before")
+    print("      authorising. A tunnel built on this cert answers 1033 and")
+    print("      nothing before that point complains.")
+    return FAIL
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -790,6 +918,12 @@ def main() -> None:
     k.add_argument("--repo", required=True, help="OWNER/NAME on GitHub")
     k.add_argument("--pubkey", default="github-deploy.key.pub")
     k.set_defaults(func=check_deploy_key)
+
+    t = sub.add_parser("tunnel-cert")
+    t.add_argument("--domain", required=True)
+    t.add_argument("--cert", default="~/.cloudflared/cert.pem")
+    t.add_argument("--token-env", default="CLOUDFLARE_TOKEN")
+    t.set_defaults(func=check_tunnel_cert)
 
     args = p.parse_args()
     if args.cmd == "gateway" and not args.node and not args.routes_json:
