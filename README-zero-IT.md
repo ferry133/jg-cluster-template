@@ -43,9 +43,9 @@
 
 ## 第三步：開機
 
-按主機**正面的圓形按鈕**，按一下就好。
+按主機**正面的開機按鈕**（上面有電源符號），按一下就好。
 
-[IMG: zero-it-assets/power-button.jpeg | 圓形按鈕上通常會有這個符號]
+[IMG: zero-it-assets/power-button.png | 開機按鈕長這樣，按下去按鈕會亮]
 
 前面的燈會亮起來。
 
