@@ -144,7 +144,9 @@ storage_backend: "nfs"
 # db_storage_class: "local-path"
 # ── claude-code storage ───────────────────────────────────────────────────────
 # (OPTIONAL) Which class holds ~/.claude and the keyring (one PVC, two mounts).
-# Defaults to default_storage_class — i.e. wherever this cluster already has it.
+# Defaults to db_storage_class — the block tier (#76, 2026-09-05: claude's
+# memory never lives on NFS). Set it explicitly only to record a PVC that
+# actually sits elsewhere — an existing cluster's record, not a wish.
 #
 # The block tier is where it belongs: gnome-keyring does file locking and claude
 # writes small and often, which is the argument NFS already loses for databases.
