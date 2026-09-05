@@ -353,24 +353,6 @@ class Plugin(makejinja.plugin.Plugin):
             'nfs': 'sc-nas',
             'replicated': 'longhorn',
         }.get(_backend, 'local-path'))
-        # claude-code's config PVC (~/.claude plus the keyring on a subPath).
-        # Defaults to what it renders TODAY, not to db_storage_class.
-        #
-        # The block tier is the right destination — gnome-keyring's file locking
-        # and claude's small frequent writes lose the same argument against NFS
-        # that databases do — but `storageClassName` is immutable, so a default
-        # that names a different class does not move anything. It renders a PVC
-        # the cluster cannot accept, on every cluster, at whatever moment each
-        # one next runs `task configure`. Measured: that default would move
-        # jg-jiahd sc-nas→longhorn and jcom sc-nas→local-path, and jcom is
-        # single-node, which is the case that must NOT move.
-        #
-        # So the move is per cluster, deliberate, and by the copy procedure in
-        # cluster.sample.yaml. Naming the current class here is also how a
-        # cluster RECORDS that it has not moved yet — same use as
-        # db_storage_class, for the same reason.
-        data.setdefault('claudecode_config_storage_class',
-                        data['default_storage_class'])
         # Whether the workspace PVC is rendered at all. True, and the sample
         # says in words that false deletes data: on the NFS class the
         # provisioner's archiveOnDelete catches it, on local-path and
@@ -383,6 +365,22 @@ class Plugin(makejinja.plugin.Plugin):
         # and restored — a PVC's storageClassName is immutable, so the move is
         # not something a re-render can perform.
         data.setdefault('db_storage_class', 'local-path')
+        # claude-code's config PVC (~/.claude plus the keyring on a subPath).
+        # Defaults to db_storage_class — the block tier — since 2026-09-05
+        # (#76): ferry133 ruled claude's auto & explicit memory never live on
+        # NFS. Changing this default was gated on every pre-ruling cluster
+        # migrating first and RECORDING its class in cluster.yaml, because
+        # `storageClassName` is immutable: on an unmigrated cluster the new
+        # default moves nothing — it renders a PVC the cluster cannot accept,
+        # and the only symptom is a pod that never starts while every
+        # Kustomization reads Ready. The previous default (default_storage_class,
+        # "whatever it renders TODAY") existed for exactly that reason; the
+        # gate was jg-jiahd#4 and jcom#5 both closing.
+        #
+        # Must sit AFTER the db_storage_class setdefault above — it reads the
+        # resolved value.
+        data.setdefault('claudecode_config_storage_class',
+                        data['db_storage_class'])
         # Whether the database extras render their NAS backup CronJob:
         # 'nfs' or 'none'. Derived, never declared — it is a restatement of
         # "is there a NAS", and a second copy of that fact would eventually
