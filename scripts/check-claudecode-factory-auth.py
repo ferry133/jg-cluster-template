@@ -176,6 +176,41 @@ def check_guard() -> int:
          "claudecode_auth0_client_secret: cs\n"
          "claudecode_allowed_emails: owner@c.example\n", 0, ""),
     ]
+    # The callback URLs the guard prints are the operator's whole notice that
+    # an Auth0 registration is pending -- and registering into the wrong
+    # application, or not at all, both fail silently at login.
+    dom = "cloudflare_domain: t.example\n"
+    rc, out = run_guard(COMPLETE, base + dom)
+    if "im.t.example/oauth2/callback" not in out:
+        print("FAIL  guard: base im callback not printed when claude_instances "
+              "is empty — the case every live cluster is in (measured "
+              "2026-09-07: jcom and jg-jiahd printed nothing)")
+        failed += 1
+    elif "FACTORY" not in out:
+        print("FAIL  guard: im's callback printed without saying it belongs to "
+              "the FACTORY app — registering it in the customer app is a hole, "
+              "not a typo")
+        failed += 1
+    else:
+        print("PASS  guard: base im callback printed, under the FACTORY app")
+
+    rc, out = run_guard(
+        COMPLETE,
+        'cluster_name: t\nclaude_instances: ["cc"]\n' + dom +
+        "claudecode_auth0_domain: c\nclaudecode_auth0_client_id: ci\n"
+        "claudecode_auth0_client_secret: cs\n"
+        "claudecode_allowed_emails: o@c.example\n")
+    if "cc.t.example/oauth2/callback" not in out or "CUSTOMER" not in out:
+        print(f"FAIL  guard: extra instance callback missing or not attributed "
+              f"to the CUSTOMER app: {out.strip()[:160]}")
+        failed += 1
+    elif "*." in out:
+        print("FAIL  guard: output still offers a wildcard — refused by "
+              "ferry133 2026-09-07 (any subdomain could then use the factory app)")
+        failed += 1
+    else:
+        print("PASS  guard: extra instance under the CUSTOMER app, no wildcard")
+
     for label, auth0_json, cluster_yaml, want_rc, needle in cases:
         rc, out = run_guard(auth0_json, cluster_yaml)
         if rc != want_rc:
