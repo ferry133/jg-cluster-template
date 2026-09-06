@@ -35,6 +35,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 # Exit 0 in a bare checkout. Measured, not assumed.
 RUN = [
+    "check-claude-config-storage-default.py",
     "check-claude-instances-default.py",
     "check-encrypt-secrets.sh",
     "check-forwarded-header-trust.py",
