@@ -192,7 +192,13 @@ def talos_patches(value: str) -> list[str]:
 # `claude_code_always_on` both default to it, and the Jinja template no longer
 # carries a `default(...)` of its own -- three copies of ['im'] is how they
 # drifted apart (jg-cluster-template#57).
-DEFAULT_CLAUDE_INSTANCES = ['im']
+#
+# [] since 2026-09-06: the default `im` instance ships from jg-base
+# (kubernetes/apps/base/claudecode/claude-code/im/), switched on per cluster
+# by the claude-code-im patch in flux/cluster/ks.yaml.j2. This template now
+# renders EXTRA instances only, and "im" in claude_instances is refused below
+# -- it would fight the base HelmRelease over the same object name.
+DEFAULT_CLAUDE_INSTANCES = []
 
 class Plugin(makejinja.plugin.Plugin):
     def __init__(self, data: dict[str, Any]):
@@ -414,6 +420,22 @@ class Plugin(makejinja.plugin.Plugin):
         # copy every cluster rendered in one process shares one list, and an
         # append anywhere edits the default for all of them. Do not "tidy" it.
         data.setdefault('claude_instances', list(DEFAULT_CLAUDE_INSTANCES))
+        # "im" is the base instance's name and the base HelmRelease is also
+        # named `im` in the same namespace -- a rendered twin would have two
+        # Flux Kustomizations fighting over one object, each apply flipping
+        # ownership labels, and which one wins depends on reconcile timing.
+        # Refused at data() time, before any file is written. A cluster that
+        # wants a differently-configured default terminal renames its
+        # instance; a cluster that cannot accept the base im's hardwired
+        # Auth0 sets claudecode_auth0: false (which parks the base im on the
+        # empty im/disabled path) and names a basic-auth instance here.
+        if 'im' in data['claude_instances']:
+            raise KeyError(
+                "claude_instances contains 'im', but since 2026-09-06 the "
+                "default im instance ships from jg-base and this template no "
+                "longer renders it. Drop 'im' from claude_instances (and from "
+                "claude_code_always_on) -- the base instance replaces it, "
+                "PVCs are adopted by name -- or rename this instance.")
         # Exactly one instance -> that one. More than one -> do not guess.
         #
         # `[:1]` was the first attempt and it is wrong, with the only two real
@@ -444,8 +466,9 @@ class Plugin(makejinja.plugin.Plugin):
             if len(_inst) > 1:
                 print(
                     f"NOTE: claude_code_always_on is unset and claude_instances "
-                    f"names {len(_inst)} ({', '.join(_inst)}), so nothing is kept "
-                    f"running and the cluster ships with no way in. Name one: "
+                    f"names {len(_inst)} ({', '.join(_inst)}), so no EXTRA "
+                    f"instance is kept running (the base im from jg-base still "
+                    f"is, when claudecode_auth0 is on). Name one to keep: "
                     f"claude_code_always_on: [\"<instance>\"]",
                     file=sys.stderr,
                 )
@@ -456,6 +479,12 @@ class Plugin(makejinja.plugin.Plugin):
         # node_dns_servers each carry. Measured 2026-08-31: all five existing
         # clusters already declare claude_code_always_on explicitly, so none of
         # them moves today. That is true until one of them drops the line.
+        #
+        # And it moved AGAIN on 2026-09-06, with claude_instances itself: both
+        # default to [] now that the standing terminal is jg-base's im. The
+        # ratchet still holds -- nothing changes anywhere until a cluster
+        # re-renders, and the re-render that picks this up is the same one
+        # that flips claude-code-im on, so the swap is one commit per cluster.
         # An always-on name that is not an instance renders nothing and says
         # nothing -- the same shape as the allowlist override check further down,
         # and the same fix: refuse at data() time, before any file is written.
@@ -756,6 +785,23 @@ class Plugin(makejinja.plugin.Plugin):
             data.setdefault('is_single_node', len(data.get('nodes') or []) <= 1)
         else:
             data.setdefault('is_single_node', False)
+        # Down here because is_single_node is only known now. The base im and
+        # every claude instance are hostNetwork on :7681 with a REQUIRED pod
+        # anti-affinity (hostnetwork-group: claude-code), so on one node a
+        # second running instance never schedules -- it sits Pending, forever,
+        # and Pending is quiet. Extras kept at replicas 0 never schedule and
+        # are fine to declare; only an always-on extra collides with the base
+        # im. A note, not an error: the operator may be about to disable one.
+        if (data['is_single_node'] and data.get('claudecode_auth0_enabled')
+                and data.get('claude_code_always_on')):
+            print(
+                f"NOTE: single-node cluster with the base im enabled and "
+                f"claude_code_always_on="
+                f"{data['claude_code_always_on']}: both are hostNetwork on "
+                f":7681 with a required anti-affinity, so the always-on extra "
+                f"will sit Pending forever on this cluster.",
+                file=sys.stderr,
+            )
         data.setdefault('repository_branch', 'main')
         data.setdefault('repository_visibility', 'public')
 

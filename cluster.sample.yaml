@@ -412,19 +412,22 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # cilium_native_routing: true
 
 # ── claudecode/claude-code (base app — deployed on every cluster) ─────────────
-# One instance named "im" is created by default, reachable at
-# im.<cloudflare_domain>. Override the list to rename it or add more
-# (jg-jiahd sets ["cc"], i.e. cc.jiahd.cc):
+# The default instance "im" (im.<cloudflare_domain>) ships from jg-base since
+# 2026-09-06: static HelmRelease, always running, `latest` image tag, Auth0
+# hardwired. It needs NOTHING in this file beyond the Auth0 values below —
+# re-rendering is what switches it on. This list is for EXTRA instances only
+# (jg-jiahd adds "cc", i.e. cc.jiahd.cc); "im" in it is a render error, since
+# the base HelmRelease already owns that name:
 # claude_instances:
-#   - "im"
 #   - "trello"
 #
-# (OPTIONAL) Which instances stay running. Unset means: the one instance if
-# claude_instances names exactly one (the usual case, so a cluster handed over
-# has a way in), and NOTHING if it names more than one -- picking one of
-# several would be a guess, and the render says so on stderr. A new cluster
-# used to ship with 0 replicas and Step 5's "the instance actually answers"
-# assertion then failed with a 503 (#57). Set it to [] to ship with none.
+# (OPTIONAL) Which EXTRA instances stay running — the base im always does.
+# Unset means: the one instance if claude_instances names exactly one, and
+# NOTHING if it names more than one -- picking one of several would be a
+# guess, and the render says so on stderr (#57). Set it to [] to keep every
+# extra at 0 replicas. On a single-node cluster an always-on extra never
+# schedules at all: every instance is hostNetwork on :7681 with a required
+# anti-affinity against the base im (the render notes this on stderr).
 #
 # The trade-off has not gone away: each instance is a root shell with
 # cluster-admin RBAC that the Cloudflare tunnel makes reachable. What makes the

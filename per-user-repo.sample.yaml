@@ -88,8 +88,10 @@ spec:
 ---
 # ── claude-code instances — base app, always present ──────────────────────────
 # claude-code itself comes from jg-base apps/base/claudecode via
-# cluster-apps-base above. Only the per-instance HelmReleases live in this
-# repo, rendered from claude_instances (default ["im"] -> im.<domain>).
+# cluster-apps-base above — including the default im.<domain> HelmRelease
+# since 2026-09-06 (switched on by the claude-code-im patch this repo's
+# flux/cluster/ks.yaml emits). Only EXTRA-instance HelmReleases live in this
+# repo, rendered from claude_instances (default []).
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
