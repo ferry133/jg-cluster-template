@@ -142,4 +142,16 @@ if __name__ == "__main__":
     args = ap.parse_args()
     if not (args.audit or args.run):
         ap.error("pass --audit or --run")
+    # data()-based checks derive secrets from age.key (jgct#85: postgres
+    # password; cookie secret). A CI checkout has none, so mint a throwaway for
+    # the run and remove it after. One place, so a NEW data() check needs no
+    # age.key wiring of its own -- the fragile alternative is stubbing age_key
+    # in every such check and remembering to in the next one.
+    if args.run:
+        _age = ROOT / "age.key"
+        if not _age.exists():
+            subprocess.run(["age-keygen", "-o", str(_age)],
+                           check=True, capture_output=True)
+            import atexit
+            atexit.register(lambda: _age.unlink(missing_ok=True))
     sys.exit((audit() if args.audit else 0) or (run() if args.run else 0))

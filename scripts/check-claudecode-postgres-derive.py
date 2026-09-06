@@ -55,9 +55,6 @@ def load_plugin():
         "_plugin", ROOT / "templates" / "scripts" / "plugin.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    # Derivation reads age.key; stub it to a fixed string so this test is
-    # deterministic and needs no real key. Tests the HMAC wiring, not the key.
-    mod.age_key = lambda *a, **k: "jgct-postgres-check-fixed-age-key"
     return mod
 
 
