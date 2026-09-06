@@ -50,6 +50,10 @@ def load_plugin():
         "_plugin", ROOT / "templates" / "scripts" / "plugin.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    # jgct#85: data() now derives the postgres password (and cookie secret) from
+    # age.key; a bare checkout has none. These checks do not test those derived
+    # values, so stub age_key to a fixed string -- deterministic, no secret file.
+    mod.age_key = lambda *a, **k: "jgct-check-fixed-age-key"
     return mod
 
 
