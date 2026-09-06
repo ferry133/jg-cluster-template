@@ -472,12 +472,23 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # if an old cluster.yaml still carries it. The oauth2-proxy cookie secret is
 # derived from age.key + cluster_name at render time either way.
 #
-# One step no render can take for you — in the Auth0 application (Regular Web
-# Application), per instance:
-#   Allowed Callback URLs: https://<instance>.<domain>/oauth2/callback
-#   Allowed Logout URLs / Web Origins: https://<instance>.<domain>
-# A wildcard (https://*.<domain>/oauth2/callback) covers a whole customer
-# domain at once. `task configure` prints the exact URLs it expects.
+# One step no render can take for you — and since jgct#84 it lands in TWO
+# different Auth0 applications (both Regular Web Application):
+#
+#   the FACTORY app (auth0.json)   im.<domain> — every cluster, one entry each
+#   the CUSTOMER app               each name in claude_instances
+#
+# In each, register all three exactly:
+#   Allowed Callback URLs: https://<host>/oauth2/callback
+#   Allowed Logout URLs:   https://<host>
+#   Allowed Web Origins:   https://<host>
+#
+# NO WILDCARD in the factory app (ferry133, 2026-09-07): https://*.<domain>
+# there would let ANY subdomain of a customer's domain use the factory
+# application as its callback, and only im.<domain> is meant to. Per-cluster
+# exact entries — a line on the factory provisioning checklist, and a
+# Management API call each once factory-agent automates it.
+# `task configure` prints the exact URLs it expects, per application.
 #
 # Miss that step and login fails with an Auth0 error, not a fallback: in OIDC
 # mode ttyd binds loopback only and the proxy is the sole way in.
