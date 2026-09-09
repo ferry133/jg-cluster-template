@@ -43,20 +43,31 @@ def b64encode(value: str) -> str:
 # apps/base/claudecode/postgres/backup/{none,nfs}/. ferry133/jg-base#82 (B)
 # retires that pg_dump CronJob -- the offsite backup already covers the same
 # database -- and step 3 of that issue deletes those two directories. Delete
-# these two names in the SAME window, together with the "while it still
-# exists" line in ks.yaml.j2 that classifies them. Order matters one way only:
-# directories first, names after, because a name removed while its directory
-# still exists turns a re-referenced position into an abort with a misleading
-# message.
+# these two names in the SAME window as their rows in the CASES table of
+# scripts/check-ks-position-labels.py, which is where the two `nfs`/`none`
+# entries and the words "while it still exists" actually live. Order matters
+# one way only: directories first, names after, because a name removed while
+# its directory still exists turns a re-referenced position into an abort.
 #
-# Nothing here will go red if you forget. The coverage check in
-# scripts/check-ks-position-labels.py is "every position the template emits is
-# classified" -- a subset test, deliberately, because the equality version
-# would fail every run between jgct PR#93 and that step 3, and a check that
-# fires on correct input gets switched off. So the reminders are: this comment
-# (trigger: you, editing this file) and jg-base#82 staying open until all
-# three items are done (trigger: whoever sweeps that repo's open issues).
-# Two triggers, on purpose -- the first version of this had one, and it was a
+# What will and will not go red, precisely -- the loose version of this
+# sentence was wrong in one direction and someone had to run it to find out:
+#
+#   Nothing tells you to START. No check fires while these names sit here
+#   unused, because the coverage check is "every position the template emits
+#   is classified" -- a subset test, deliberately: the equality version would
+#   fail every run between jgct PR#93 and that step 3, and a check that fires
+#   on correct input gets switched off.
+#
+#   Once you start, CI holds you to finishing. Delete these two names alone
+#   and check-ks-position-labels.py exits 1, because its CASES table still
+#   asks for them. That is the guard working, not a mistake: finish the other
+#   half rather than reverting this one.
+#
+# So there are three reminders, and their triggers are deliberately different
+# (two defences sharing one trigger are one defence): this comment (you,
+# editing this file), jg-base#82 staying open until all three items are done
+# (whoever sweeps that repo's open issues), and that CI failure (whoever
+# executes step 3). The first version of this had one trigger, and it was a
 # chat message.
 EMPTY_POSITIONS = frozenset({'disabled', 'none'})
 LIVE_POSITIONS = frozenset({'enabled', 'app', 'nfs'})
@@ -79,12 +90,18 @@ def ks_position_label(position: str) -> str:
     # same way and makejinja exits 1), so whoever adds a position is told to
     # say which kind it is instead of finding out from a wrong comment later.
     raise KeyError(
-        f"ks.yaml.j2 uses the Kustomization position {position!r}, which is in "
-        f"neither EMPTY_POSITIONS {sorted(EMPTY_POSITIONS)} nor LIVE_POSITIONS "
-        f"{sorted(LIVE_POSITIONS)} in templates/scripts/plugin.py. Add it to "
-        f"whichever it is: EMPTY if ./<basepath>/{position}/ renders no "
-        f"resources (the comment then says Flux prunes what was applied), LIVE "
-        f"if it renders any. Guessing is what jgct#94 was.")
+        f"Unknown Kustomization position {position!r}: it is in neither "
+        f"EMPTY_POSITIONS {sorted(EMPTY_POSITIONS)} nor LIVE_POSITIONS "
+        f"{sorted(LIVE_POSITIONS)} in templates/scripts/plugin.py. The caller "
+        f"is either ks.yaml.j2 or the CASES table in "
+        f"scripts/check-ks-position-labels.py, and which one it is decides "
+        f"the fix -- so read this in both directions before editing. ADDING a "
+        f"position: classify it here, EMPTY if ./<basepath>/{position}/ "
+        f"renders no resources (the comment then says Flux prunes what was "
+        f"applied), LIVE if it renders any. RETIRING one: you have removed it "
+        f"here and its CASES row is still asking for it -- delete that row "
+        f"too. Do not put the name back to make this stop. Guessing either "
+        f"way is what jgct#94 was.")
 
 
 # Return the nth host in a CIDR range
