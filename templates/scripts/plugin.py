@@ -21,6 +21,51 @@ def b64encode(value: str) -> str:
     return base64.b64encode(value.encode('utf-8')).decode('utf-8')
 
 
+# The `# enabled: …` / `# disabled: …` line rendered above each Kustomization
+# patch in kubernetes/flux/cluster/ks.yaml. That comment is the only place a
+# per-user repo says what this cluster turned on and why, and the people who
+# read it are usually asking why something is missing -- so a label that says
+# the opposite of the truth reads exactly like a measured fact.
+#
+# jgct#94: the template asked `position == 'enabled'` and let every other name
+# fall through to "disabled (…pruned)", which announced claudecode-db -- the
+# always-on explicit-memory database, position `app` -- as disabled and about
+# to be pruned, three lines above its own `suspend: false`.
+#
+# Positions are a vocabulary, not a two-state switch. Two of them name a
+# directory that renders nothing, which is what makes Flux prune whatever the
+# patch previously applied; the rest name a directory with resources in it.
+# The distinction the comment is trying to state is EMPTY vs NOT, so classify
+# on that and nothing else.
+EMPTY_POSITIONS = frozenset({'disabled', 'none'})
+LIVE_POSITIONS = frozenset({'enabled', 'app', 'nfs'})
+
+DISABLED_LABEL = 'disabled (empty path, so anything previously applied is pruned)'
+
+
+# Label one position for that comment. Unknown positions ABORT the render.
+def ks_position_label(position: str) -> str:
+    if position in EMPTY_POSITIONS:
+        return DISABLED_LABEL
+    if position in LIVE_POSITIONS:
+        return 'enabled'
+    # Deliberately fatal rather than a guess. makejinja runs with
+    # `undefined = "chainable"`, so anything the template cannot resolve
+    # renders as an empty string without a word of warning -- a lookup table
+    # living in the .j2 would meet a newly added position by labelling it
+    # silently, which is this very bug with a different trigger. Raising here
+    # stops `task configure` (measured: plugin.py's auth0_config() raises the
+    # same way and makejinja exits 1), so whoever adds a position is told to
+    # say which kind it is instead of finding out from a wrong comment later.
+    raise KeyError(
+        f"ks.yaml.j2 uses the Kustomization position {position!r}, which is in "
+        f"neither EMPTY_POSITIONS {sorted(EMPTY_POSITIONS)} nor LIVE_POSITIONS "
+        f"{sorted(LIVE_POSITIONS)} in templates/scripts/plugin.py. Add it to "
+        f"whichever it is: EMPTY if ./<basepath>/{position}/ renders no "
+        f"resources (the comment then says Flux prunes what was applied), LIVE "
+        f"if it renders any. Guessing is what jgct#94 was.")
+
+
 # Return the nth host in a CIDR range
 def nthhost(value: str, query: int) -> str:
     try:
@@ -889,6 +934,7 @@ class Plugin(makejinja.plugin.Plugin):
             basename,
             nthhost,
             b64encode,
+            ks_position_label,
         ]
 
 
