@@ -85,6 +85,12 @@ CASES = [
     ("enabled", False),
     ("disabled", True),
     ("app", False),      # claudecode-db: always on, and jgct#94's victim
+    # These two live and die with the same two names in plugin.py's
+    # EMPTY_POSITIONS / LIVE_POSITIONS. jg-base#82 step 3 retires both: delete
+    # the rows here in the same commit that deletes the names there. Removing
+    # only one side fails this file with a KeyError naming the position, which
+    # is the third of the three reminders that step 3 is half done -- the other
+    # two being plugin.py's own comment and jg-base#82 staying open.
     ("nfs", False),      # the NAS backup CronJob, while it still exists
     ("none", True),      # its empty twin
 ]
@@ -126,7 +132,19 @@ def main() -> int:
     failed = 0
 
     for position, wants_pruned in CASES:
-        got = label(position)
+        try:
+            got = label(position)
+        except KeyError as e:
+            # Reached when the two sides of the coupling above disagree --
+            # in practice, half of jg-base#82 step 3. A traceback here reads
+            # like the guard broke; it did not, it is holding the line.
+            print(f"FAIL  {position!r} is in CASES but plugin.py no longer "
+                  f"classifies it.")
+            print(f"        If you are retiring it (jg-base#82 step 3), delete "
+                  f"its row here too — do not put the name back.")
+            print(f"        If you are not, it needs classifying: {str(e)[:100]}")
+            failed += 1
+            continue
         says_pruned = "pruned" in got
         if says_pruned == wants_pruned:
             print(f"PASS  {position!r} -> {got!r}")
