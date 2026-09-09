@@ -37,6 +37,27 @@ def b64encode(value: str) -> str:
 # patch previously applied; the rest name a directory with resources in it.
 # The distinction the comment is trying to state is EMPTY vs NOT, so classify
 # on that and nothing else.
+#
+# SUNSET, and read this before editing either set: 'none' and 'nfs' are here
+# only for as long as ferry133/jg-base ships
+# apps/base/claudecode/postgres/backup/{none,nfs}/. ferry133/jg-base#82 (B)
+# retires that pg_dump CronJob -- the offsite backup already covers the same
+# database -- and step 3 of that issue deletes those two directories. Delete
+# these two names in the SAME window, together with the "while it still
+# exists" line in ks.yaml.j2 that classifies them. Order matters one way only:
+# directories first, names after, because a name removed while its directory
+# still exists turns a re-referenced position into an abort with a misleading
+# message.
+#
+# Nothing here will go red if you forget. The coverage check in
+# scripts/check-ks-position-labels.py is "every position the template emits is
+# classified" -- a subset test, deliberately, because the equality version
+# would fail every run between jgct PR#93 and that step 3, and a check that
+# fires on correct input gets switched off. So the reminders are: this comment
+# (trigger: you, editing this file) and jg-base#82 staying open until all
+# three items are done (trigger: whoever sweeps that repo's open issues).
+# Two triggers, on purpose -- the first version of this had one, and it was a
+# chat message.
 EMPTY_POSITIONS = frozenset({'disabled', 'none'})
 LIVE_POSITIONS = frozenset({'enabled', 'app', 'nfs'})
 
