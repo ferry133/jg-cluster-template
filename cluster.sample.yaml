@@ -386,6 +386,19 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # workspace uses the profile's default storage class instead.
 # nas_coding_path: "/volume/coding"
 
+# (REQUIRED whenever nas_server is set) The dedicated backup export on THIS
+# NAS, where every database's dump CronJob writes. Read it off the machine —
+# the volume number is per-NAS, not a fleet constant: 10.9.1.12 keeps it at
+# /volume2/backup1 and 10.9.2.13 at /volume3/backup1. jg-base used to hardwire
+# one of those beside a per-cluster server, and the cluster it was wrong for
+# went two months with a healthy-looking CronJob and no backup at all
+# (ferry133/jg-base#82). There is deliberately no default: rendering fails and
+# names this field instead.
+#
+# Kept separate from nas_path so the backup share can be ShareSynced off-site
+# on its own, without dragging the live data share along.
+nas_backup_path: "/volume/backup1"
+
 # (REQUIRED for appliance) Has age.key been escrowed outside this cluster?
 # Backups are encrypted to the cluster's own public key, so age.key is the only
 # thing that can read them — and on a single-node appliance it sits on the very

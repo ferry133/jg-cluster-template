@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Assert what `nas_backup` derives to, per whether the cluster has a NAS.
+"""Assert the two halves of the NAS backup decision: whether, and where.
+
+They live in one file on purpose. `nas_backup` says whether a backup CronJob
+renders at all; `nas_backup_path` says which export it writes to. Both are
+statements about the same machine, and ferry133/jg-base#82 is what splitting
+them across places costs: jg-base templated `server: ${NAS_SERVER}` per
+cluster and hardwired `path: /volume2/backup1` beside it. Correct on jcom's
+NAS, `mount.nfs: access denied` on jg-jiahd's, whose exports are all under
+/volume3 -- and the CronJob object stayed healthy while not one dump had ever
+been written. A guard that checked only the `whether` half would have been
+green throughout.
 
 This one word decides whether the database extras render their NAS backup
 CronJob at all (jg-base selects a directory with it:
@@ -30,6 +40,7 @@ Exit 0 if every case matches, 1 otherwise.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 import types
 from pathlib import Path
@@ -91,22 +102,29 @@ CASES = [
     ),
     (
         "NFS-backed cluster",
-        dict(storage_backend="nfs", nas_server="10.9.1.12", nas_path="/volume1/k8s"),
+        dict(storage_backend="nfs", nas_server="10.9.1.12", nas_path="/volume1/k8s",
+             nas_backup_path="/volume2/backup1"),
         "nfs",
     ),
     (
         "a NAS with the database on longhorn is still a NAS — jg-jiahd's shape, "
         "and the reason db_storage_class is not the gate",
         dict(storage_backend="nfs", nas_server="10.9.2.13", nas_path="/volume1/k8s",
+             nas_backup_path="/volume3/backup1",
              db_storage_class="longhorn", replicated_storage=True),
         "nfs",
     ),
     (
         "a NAS declared without storage_backend nfs still gets its backup",
-        dict(nas_server="10.9.1.12"),
+        dict(nas_server="10.9.1.12", nas_backup_path="/volume2/backup1"),
         "nfs",
     ),
 ]
+
+# The two live clusters that actually have a NAS sit on different volume
+# numbers. Written out because the constant that broke #82 looked reasonable
+# to everyone who only ever saw one of these.
+FLEET_PATHS = {"10.9.1.12": "/volume2/backup1", "10.9.2.13": "/volume3/backup1"}
 
 
 def main() -> int:
@@ -159,13 +177,104 @@ def main() -> int:
     print(f"\n(directories checked in jg-base: {sorted(answers)} — verify against"
           " kubernetes/apps/extras/*/postgres/backup/ when that repo changes)")
 
+    # ---- the WHERE half (ferry133/jg-base#82) ----------------------------
+    #
+    # Refused rather than defaulted, and that is the whole point: a default is
+    # the same defect one move later. /volume2/backup1 was a real path on a
+    # real NAS, which is why it survived review in three manifests, and on the
+    # other NAS it failed exactly like an unset path would -- silently, daily,
+    # behind a healthy-looking CronJob.
+    for server, path in sorted(FLEET_PATHS.items()):
+        d = dict(BASE, nas_server=server, nas_path="/volume1/k8s",
+                 nas_backup_path=path)
+        try:
+            plugin.Plugin(d).data()
+        except Exception as e:  # noqa: BLE001
+            print(f"FAIL  {server} + {path} raised {type(e).__name__}: {e}")
+            failed += 1
+            continue
+        if d.get("nas_backup_path") != path:
+            print(f"FAIL  {server}: declared {path}, render carries "
+                  f"{d.get('nas_backup_path')!r} — the path was rewritten")
+            failed += 1
+        else:
+            print(f"PASS  {server} keeps its own export {path}")
+
+    # THE NEGATIVE CONTROL. This is jg-jiahd's cluster.yaml as it stands: a NAS,
+    # and nothing saying where its backups go. It has to stop being accepted,
+    # because what jg-base does with an empty path is mount nothing and say so
+    # nowhere.
+    d = dict(BASE, nas_server="10.9.2.13", nas_path="/volume1/k8s")
+    try:
+        plugin.Plugin(d).data()
+    except KeyError as e:
+        if "nas_backup_path" in str(e):
+            print("PASS  a NAS with no backup export is refused, by name")
+        else:
+            print(f"FAIL  refused without naming the field: {e}")
+            failed += 1
+    except Exception as e:  # noqa: BLE001
+        print(f"FAIL  wrong exception: {type(e).__name__}: {e}")
+        failed += 1
+    else:
+        print("FAIL  a NAS with no nas_backup_path was ACCEPTED — it renders an")
+        print("      empty NAS_BACKUP_PATH, and an empty mount is as quiet as")
+        print("      the wrong one was.")
+        failed += 1
+
+    # ...and not quietly borrowed from the neighbouring field. The backup share
+    # is a separate export so it can be ShareSynced off-site on its own;
+    # deriving it from nas_path would rebuild #82 with a tidier default.
+    if "nas_backup_path" in d:
+        print(f"FAIL  nas_path was reused as the backup export: "
+              f"{d['nas_backup_path']!r}")
+        failed += 1
+    else:
+        print("PASS  nas_path is not borrowed as the backup export")
+
+    # A cluster with no NAS is asked for nothing. jg-janncotcc: a guard that
+    # demanded a backup export from every cluster would block its render over
+    # a share it does not have.
+    d = dict(BASE)
+    try:
+        plugin.Plugin(d).data()
+    except Exception as e:  # noqa: BLE001
+        print(f"FAIL  a NAS-less cluster was blocked: {type(e).__name__}: {e}")
+        failed += 1
+    else:
+        if d.get("nas_backup_path"):
+            print(f"FAIL  no NAS, yet a backup export appeared: "
+                  f"{d['nas_backup_path']!r}")
+            failed += 1
+        else:
+            print("PASS  no NAS -> nothing demanded, nothing invented")
+
+    # And the value has to reach cluster-secrets. Without this line every case
+    # above can pass while no file emits the variable -- a guard proving a
+    # field that goes nowhere, which is jgct#90 seen from the other side.
+    tmpl = ROOT / ("templates/config/kubernetes/components/sops/"
+                   "cluster-secrets.sops.yaml.j2")
+    if not tmpl.is_file():
+        print(f"FAIL  cannot find {tmpl}")
+        failed += 1
+    elif re.search(r'^[ \t]*NAS_BACKUP_PATH:[ \t]*"#\{[ \t]*nas_backup_path',
+                   tmpl.read_text(), re.MULTILINE):
+        print("PASS  cluster-secrets emits NAS_BACKUP_PATH from the field")
+    else:
+        print("FAIL  nothing emits NAS_BACKUP_PATH into cluster-secrets — the")
+        print("      value stops at the plugin and jg-base substitutes nothing.")
+        failed += 1
+
     print()
     if failed:
         print(f"{failed} case(s) failed.")
         print("Stuck 'nfs' turns an appliance's database Kustomization red; stuck")
         print("'none' stops every NAS cluster's dumps without anything going red.")
+        print("A missing or borrowed nas_backup_path does the third thing: the")
+        print("CronJob runs, reports healthy, and writes nowhere (jg-base#82).")
         return 1
-    print(f"ok — {len(CASES)} cases match; the derivation varies and stays a string")
+    print(f"ok — {len(CASES)} derivation cases match (varies, stays a string), "
+          f"and the backup export is per-NAS, demanded, and emitted")
     return 0
 
 

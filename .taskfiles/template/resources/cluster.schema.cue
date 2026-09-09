@@ -295,10 +295,20 @@ import (
 	// fail their next `cue vet` over a value that harms nothing. NAS_CODING_PATH
 	// is still rendered into cluster-secrets and still read by nobody.
 	nas_coding_path?: string & !=""
+	// The dedicated `backup1` export that every database's dump CronJob writes
+	// to, as an absolute path on THIS cluster's NAS. Separate from nas_path so
+	// the backups can be ShareSynced off-site on their own, and separate from
+	// nas_server because the volume number is per-machine: jg-base hardwired
+	// /volume2/backup1 in three manifests, which is right on one NAS and
+	// `access denied` on another (ferry133/jg-base#82). Required once there is
+	// a NAS at all -- see plugin.py, which refuses rather than defaulting: a
+	// plausible-but-wrong path fails exactly like an unset one.
+	nas_backup_path?: string & !=""
 
 	if storage_backend == "nfs" {
 		nas_server: net.IPv4 & !=""
 		nas_path: string & !=""
+		nas_backup_path: string & !=""
 	}
 	cluster_name: string & !=""
 	coredns_cluster_ip?: net.IPv4

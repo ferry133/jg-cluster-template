@@ -461,6 +461,30 @@ class Plugin(makejinja.plugin.Plugin):
         # it silently. That default is why this can ship without touching every
         # per-user repo at once.
         data['nas_backup'] = 'nfs' if data.get('nas_server') else 'none'
+        # WHERE those dumps land. Refused rather than defaulted, and the reason
+        # is the defect this exists for (ferry133/jg-base#82): jg-base hardwired
+        # `path: /volume2/backup1` next to a per-cluster ${NAS_SERVER}. That
+        # path is correct on jcom's NAS, so it survived review in three
+        # manifests; on jg-jiahd, whose exports are all under /volume3, the
+        # mount was denied and the backup CronJob had never once succeeded
+        # while its object stayed healthy. A default here would just move that
+        # mine: the volume number belongs to the machine, and a wrong path
+        # fails exactly like an unset one, silently and daily.
+        #
+        # Only demanded where a NAS backup is actually selected. A cluster with
+        # no NAS (nas_backup == 'none') renders the empty string and nothing
+        # consumes it, so jg-janncotcc keeps rendering untouched.
+        if data['nas_backup'] == 'nfs' and not data.get('nas_backup_path'):
+            raise KeyError(
+                "nas_server is set, so this cluster renders an NFS backup "
+                "CronJob, but cluster.yaml is missing nas_backup_path -- the "
+                "absolute path of the dedicated backup export on THAT NAS "
+                "(e.g. /volume2/backup1 or /volume3/backup1; check the machine, "
+                "do not copy another cluster's). Not defaulted on purpose: "
+                "ferry133/jg-base#82 is what a plausible-but-wrong path costs, "
+                "and it costs it silently -- the CronJob reports healthy while "
+                "no dump is ever written."
+            )
         # Which claude-code instances stay up. Empty by default: each is a root
         # shell with cluster-admin that the tunnel makes reachable. Named here
         # rather than scaled by hand, which works until the next reconcile.
