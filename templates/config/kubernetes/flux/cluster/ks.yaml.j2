@@ -267,7 +267,7 @@ spec:
      'pg_dump CronJob to the NAS backup1 share' if nas_backup == 'nfs'
         else 'no NAS: empty none path so Flux prunes the CronJob rather than a suspend that would strand it')) %#
 #% for name, basepath, position, why in _enabled %#
-    # #{ 'enabled' if position == 'enabled' else 'disabled (empty path, so anything previously applied is pruned)' }#: #{ why }#
+    # #{ position | ks_position_label }#: #{ why }#
     - patch: |-
         apiVersion: kustomize.toolkit.fluxcd.io/v1
         kind: Kustomization
