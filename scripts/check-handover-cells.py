@@ -62,7 +62,9 @@ def main() -> int:
         d = dict(dir=".", domain="example.com", instance="im", repo=None,
                  pubkey="x", kubeconfig="/nonexistent/kubeconfig",
                  token_env="NO_TOKEN_HERE", tunnel_credentials="t.json",
-                 auth0_json="auth0.json", resolver=None, trigger=False)
+                 auth0_json="auth0.json", resolver=None, trigger=False,
+                 expect_addr=None, machine_uuid=None, node_token_json=None,
+                 join_token_list=None, expect_usecounts=None)
         d.update(kw)
         return types.SimpleNamespace(**d)
 
@@ -170,6 +172,72 @@ def main() -> int:
     check("13 出貨值", m.cell_r2_endpoint(A()), 0)
     m._doh_a = lambda name: ([], "DoH query failed: boom")
     check("13 正對照本身壞了 → 不能回 FAIL", m.cell_r2_endpoint(A()), 2, m.NEED_TOOL)
+
+    # ---- cell 9 (phase 3): the only cell that must run from the customer LAN
+    check("9 沒給 --expect-addr", m.cell_echo_int_from_lan(A()), 2, m.NEED_TOOL)
+    m._curl_status = lambda url, resolve=None, timeout=15: (None, "curl: (6) Could not resolve host")
+    check("9 兩個請求都到不了（不在那個 LAN 上）",
+          m.cell_echo_int_from_lan(A(expect_addr="10.9.1.30")), 2, m.NEED_PLACE)
+    m._curl_status = lambda url, resolve=None, timeout=15: (200, None)
+    check("9 具名與釘位址都 200", m.cell_echo_int_from_lan(A(expect_addr="10.9.1.30")), 0)
+    m._curl_status = lambda url, resolve=None, timeout=15: ((200, None) if resolve else (None, "curl: (6)"))
+    check("9 只有釘位址通（名字沒指到閘道）",
+          m.cell_echo_int_from_lan(A(expect_addr="10.9.1.30")), 1)
+    m._curl_status = lambda url, resolve=None, timeout=15: ((None, "timeout") if resolve else (200, None))
+    n = check("9 只有具名通（名字指到別的東西——看起來最健康的那個）",
+              m.cell_echo_int_from_lan(A(expect_addr="10.9.1.30")), 1)
+    m._curl_status = lambda url, resolve=None, timeout=15: (503, None)
+    check("9 兩邊都不是 200", m.cell_echo_int_from_lan(A(expect_addr="10.9.1.30")), 1)
+
+    # ---- cell 1 (phase 3): PERSISTENT is checkable, usecount has no recorded command
+    check("1 沒有 uuid 也沒有 capture", m.cell_arrived_on_own_identity(A()), 2, m.NEED_TOOL)
+    check("1 capture 檔不存在",
+          m.cell_arrived_on_own_identity(A(node_token_json="/nonexistent.json")), 2, m.NEED_TOOL)
+    cap = pathlib.Path(__file__).resolve().parent.parent / ".handover-cell1-fixture.json"
+    try:
+        cap.write_text('{"spec": {"state": 1}}')
+        n = check("1 state 1 = PERSISTENT（但 usecount 仍未查）",
+                  m.cell_arrived_on_own_identity(A(node_token_json=str(cap))), 2, m.NEED_HUMAN)
+        checked += 1
+        # Assert the STRUCTURE, not the sentence: what was not checked
+        # ("usecount") and why nobody here can ("no command ... recorded").
+        # Binding a test to one wording makes a rewording look like a
+        # regression, which is how wording assertions get deleted.
+        # 斷言結構不是句子：它必須說出 usecount 不被當成通過條件、以及那是量到的。
+        if "usecount" in n and "does NOT" in n and "gates on it" in n:
+            print("PASS  cell 1 說出 usecount 不是通過條件，以及那句話是量到的")
+        else:
+            print("FAIL  cell 1 沒有說出 usecount 為什麼不算數——而 runbook 原本"
+                  "說它是「the row that matters」，沉默會被讀成同意")
+            print(f"        note: {n[:200]}")
+            failed += 1
+
+        # usecount **不得**改變這一格的結論：給或不給、動或沒動，rc 都一樣。
+        # 這是這次重寫的重點，所以它要有自己的一格而不是靠人記得。
+        cap2 = cap.parent / ".handover-cell1-tokens.txt"
+        cap2.write_text("ID NAME USECOUNT EXPIRATION\nabc tok-a 2 never\ndef tok-b 0 never\n")
+        try:
+            rc_a, note_a, why_a = m.cell_arrived_on_own_identity(
+                A(node_token_json=str(cap), join_token_list=str(cap2)))
+            rc_b, note_b, why_b = m.cell_arrived_on_own_identity(
+                A(node_token_json=str(cap), join_token_list=str(cap2),
+                  expect_usecounts="tok-a=9,tok-b=9"))
+            checked += 1
+            if rc_a == rc_b == 2 and "tok-a=2" in note_a and "MOVED" in note_b:
+                print("PASS  usecount 動了也不改變結論（rc 都是 2），但被印出來追")
+            else:
+                print(f"FAIL  usecount 影響了結論或沒被印出來：rc={rc_a}/{rc_b}")
+                failed += 1
+        finally:
+            cap2.unlink(missing_ok=True)
+        cap.write_text('{"spec": {"state": 2}}')
+        check("1 state 2 = 不是 PERSISTENT",
+              m.cell_arrived_on_own_identity(A(node_token_json=str(cap))), 1)
+        cap.write_text('{"spec": {}}')
+        check("1 輸出裡根本沒有 state（形狀變了）",
+              m.cell_arrived_on_own_identity(A(node_token_json=str(cap))), 2, m.NEED_TOOL)
+    finally:
+        cap.unlink(missing_ok=True)
 
     print()
     if failed:
