@@ -41,6 +41,7 @@ RUN = [
     "check-claude-instances-default.py",
     "check-encrypt-secrets.sh",
     "check-forwarded-header-trust.py",
+    "check-handover-cells.py",
     "check-ks-position-labels.py",
     "check-lb-pool-render.py",
     "check-nas-backup.py",

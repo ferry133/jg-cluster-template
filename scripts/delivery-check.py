@@ -52,6 +52,7 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 
 PASS, FAIL, UNKNOWN = 0, 1, 2
@@ -897,7 +898,7 @@ WHY_TEXT = {
     NEED_PLACE: "need a different vantage point — re-run from there",
     NEED_TOOL: "need a tool or credential here — install/set it, same place",
     NEED_HUMAN: "a person must answer this half; no run of this can",
-    NOT_YET: "not implemented yet (jgct#102 phase 2)",
+    NOT_YET: "not implemented yet (jgct#102, a later phase)",
 }
 
 
@@ -1130,8 +1131,11 @@ def cell_private_repo(args) -> tuple[int, str, str | None]:
                 worsen(FAIL)
 
     if not args.kubeconfig:
-        parts.append("FluxInstance sync line: phase 2 (needs --kubeconfig)")
-        worsen(UNKNOWN, NOT_YET)
+        # Implemented since phase 1 -- it runs the moment a kubeconfig is on
+        # hand. Absent one, this is a vantage problem, and calling it "not
+        # implemented" put it in the same list as the cells nobody has written.
+        parts.append("FluxInstance sync line: needs --kubeconfig to be read")
+        worsen(UNKNOWN, NEED_PLACE)
     else:
         r = run(["kubectl", "--kubeconfig", args.kubeconfig, "-n", "flux-system",
                  "get", "fluxinstance", "flux", "-o", "json"])
@@ -1187,11 +1191,337 @@ def cell_echo_ext(args) -> tuple[int, str, str | None]:
     return PASS, f"{host} 200 with cf-ray {hdrs['cf-ray'][:20]}", None
 
 
-def _phase_two(cell: int, needs: str):
+def _doh_a(name: str) -> tuple[list[str], str | None]:
+    """A records for `name` from a public resolver, never the local one.
+
+    Cell 13 exists because the local resolver answers for the LAN: an endpoint
+    of `http://10.9.1.12:9000` returned 200 from the lab bench. Asking a
+    resolver outside the building is the whole point.
+    """
+    url = ("https://cloudflare-dns.com/dns-query?name="
+           + urllib.parse.quote(name) + "&type=A")
+    req = urllib.request.Request(url, headers={"accept": "application/dns-json"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.load(r)
+    except Exception as e:  # noqa: BLE001
+        return [], f"DoH query failed: {e}"
+    return sorted({a["data"] for a in data.get("Answer", []) if a.get("type") == 1}), None
+
+
+def _is_public_v4(addr: str) -> bool:
+    try:
+        parts = [int(x) for x in addr.split(".")]
+    except ValueError:
+        return False
+    if len(parts) != 4:
+        return False
+    a, b = parts[0], parts[1]
+    if a in (10, 127) or (a == 192 and b == 168) or (a == 172 and 16 <= b <= 31):
+        return False
+    if a == 169 and b == 254:
+        return False
+    return True
+
+
+def _kubectl(args, *rest: str) -> tuple[bool, str, str]:
+    """(ok, stdout, reason). No --kubeconfig is a vantage problem, not a fail."""
+    if not args.kubeconfig:
+        return False, "", "no --kubeconfig: this run cannot see the cluster"
+    if not shutil.which("kubectl"):
+        return False, "", "kubectl is not on PATH"
+    r = run(["kubectl", "--kubeconfig", args.kubeconfig, *rest])
+    if r.returncode != 0:
+        return False, "", r.stderr.strip()[:140] or f"kubectl exited {r.returncode}"
+    return True, r.stdout, ""
+
+
+def _secret_values(args, ns: str, name: str) -> tuple[dict | None, str | None]:
+    """Decoded keys of one Secret.
+
+    The values come back so a check can assert their shape; NOTHING here may
+    print one. Cells 11 and 13 read a capability URL and an endpoint out of
+    these, and this output gets pasted into handover notes.
+    """
+    okc, out, err = _kubectl(args, "-n", ns, "get", "secret", name, "-o", "json")
+    if not okc:
+        return None, err
+    try:
+        raw = (json.loads(out).get("data") or {})
+    except json.JSONDecodeError as e:
+        return None, f"secret {ns}/{name} did not decode as JSON: {e}"
+    vals = {}
+    for k, v in raw.items():
+        try:
+            vals[k] = base64.b64decode(v).decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            vals[k] = ""
+    return vals, None
+
+
+def _dig(resolver: str, name: str, timeout: int = 5) -> tuple[list[str], str | None]:
+    if not shutil.which("dig"):
+        return [], "dig is not on PATH"
+    r = run(["dig", f"@{resolver}", "+short", f"+time={timeout}", "+tries=1", "A", name])
+    if r.returncode != 0:
+        return [], r.stderr.strip()[:120] or f"dig exited {r.returncode}"
+    return [ln.strip() for ln in r.stdout.splitlines()
+            if ln.strip() and not ln.strip().endswith(".")], None
+
+
+def _newest_completed_job_log(args) -> tuple[str | None, str, str | None, str | None]:
+    """(job name, its log, reason there is none).
+
+    One reader for cells 7 and 12: they are asking different questions of the
+    same run, and two readers would drift into asking them of two different
+    runs.
+
+    "It ran" and "you can still see what it printed" are separate facts. A
+    Job object outlives its pod, so a scheduled run whose pod has been
+    reclaimed leaves the first true and the second false -- and only the second
+    can answer these cells. That case is UNKNOWN, never a pass.
+    """
+    okj, jout, jerr = _kubectl(args, "-n", "monitoring", "get", "jobs",
+                              "-l", "app=daily-check", "-o", "json")
+    if not okj:
+        # Cannot reach the cluster at all: a vantage problem, not a "wait for
+        # the schedule" problem. The two 2s have opposite next actions.
+        return None, "", jerr, NEED_PLACE
+    jobs = [j for j in json.loads(jout or "{}").get("items", [])
+            if (j.get("status") or {}).get("succeeded", 0)]
+    if not jobs:
+        return None, "", "no completed daily-check Job", NEED_TOOL
+    jobs.sort(key=lambda j: (j.get("status") or {}).get("completionTime") or "")
+    name = jobs[-1]["metadata"]["name"]
+    okl, logs, lerr = _kubectl(args, "-n", "monitoring", "logs", f"job/{name}",
+                              "--tail", "400")
+    if not okl or not logs.strip():
+        return name, "", (f"job/{name} completed but its log is gone "
+                          f"({lerr or 'empty output'}) — the pod was reclaimed. "
+                          f"That it ran and what it printed are different "
+                          f"facts"), NEED_TOOL
+    return name, logs, None, None
+
+
+def cell_node_dns_path(args) -> tuple[int, str, str | None]:
+    """6. NODE_DNS_PATH is `lan`, and the resolver answers BOTH questions.
+
+    Unset derives to `public` in silence and turns daily-check's check 18 into
+    a `➖`, which travels in the same email as a pass. And a resolver is only
+    the right one if it answers a public name AND a split-horizon one: the
+    cluster's own k8s-gateway address fails the first, which is why one dig is
+    not enough (jgct#102, cell 6).
+    """
+    vals, err = _secret_values(args, "monitoring", "daily-check-config")
+    if vals is None:
+        return UNKNOWN, err, NEED_PLACE
+    got = (vals.get("NODE_DNS_PATH") or "").strip()
+    if got != "lan":
+        return FAIL, (f"NODE_DNS_PATH is {got or '(empty)'!r}, not 'lan' — unset "
+                      f"derives to public in silence and check 18 becomes a ➖, "
+                      f"which reads like a pass in the same email"), None
+    if not args.resolver:
+        return UNKNOWN, ("NODE_DNS_PATH is 'lan'. The resolver itself is "
+                         "unchecked: pass --resolver ADDR (the candidate from "
+                         "Step 5) so both questions get asked"), NEED_TOOL
+    pub, perr = _dig(args.resolver, "ghcr.io")
+    if perr:
+        return UNKNOWN, f"dig unavailable: {perr}", NEED_TOOL
+    internal = f"internal.{args.domain}"
+    priv, _ = _dig(args.resolver, internal)
+    if pub and priv:
+        return PASS, (f"NODE_DNS_PATH=lan and {args.resolver} answers both "
+                      f"ghcr.io and {internal}"), None
+    missing = []
+    if not pub:
+        missing.append("ghcr.io (a public name — the cluster's own k8s-gateway "
+                       "address fails exactly here)")
+    if not priv:
+        missing.append(f"{internal} (the split-horizon name)")
+    return FAIL, (f"{args.resolver} did not answer: {'; '.join(missing)}. A "
+                  f"resolver that answers one of the two is the wrong one"), None
+
+
+def cell_daily_check_ran(args) -> tuple[int, str, str | None]:
+    """7. daily-check has actually produced THE ROW, not merely run.
+
+    Two corrections live in this function, both from FO-runbook [5fe39a]:
+
+    The runbook said `kubectl create job --from=cronjob/daily-check`. A gate
+    that changes what it is checking is a gate nobody runs on a customer
+    cluster, and a check nobody runs equals no check.
+
+    My first read-only version then asserted `lastScheduleTime != <none>` plus
+    a completed Job -- and that proves only that it RAN. A completed Job whose
+    check 18 printed `➖ not measured` satisfies it exactly, which is
+    jg-janncotcc's shape and the thing this cell exists to catch. The Job's
+    success and what check 18 printed are independent: `lastScheduleTime` means
+    the controller created a Job, `lastSuccessfulTime` means exit 0, and both
+    stop short of the row.
+
+    So the evidence is the row itself, read out of the run's log: still
+    read-only, and the assertion rather than a proxy for it.
+    """
+    name, logs, why, kind = _newest_completed_job_log(args)
+    if logs == "":
+        if kind == NEED_PLACE:
+            return UNKNOWN, why, NEED_PLACE
+        hint = (". Wait for the schedule, or re-run with --trigger (which "
+                "WRITES a Job)") if not args.trigger else ""
+        if args.trigger and name is None:
+            okt, _, terr = _kubectl(args, "-n", "monitoring", "create", "job",
+                                   f"handover-check-{os.getpid()}",
+                                   "--from=cronjob/daily-check")
+            if not okt:
+                return FAIL, f"{why}; --trigger could not create a Job: {terr}", None
+            return UNKNOWN, (f"{why}. --trigger created a Job (this run WROTE to "
+                             f"the cluster) — read this cell again once it "
+                             f"finishes"), NEED_TOOL
+        return UNKNOWN, f"{why}{hint}", kind or NEED_TOOL
+    row = None
+    for line in logs.splitlines():
+        if "LAN resolves internal names" in line:
+            row = line.strip()
+    if row is None:
+        return UNKNOWN, (f"job/{name} left a log with no 'LAN resolves internal "
+                         f"names' line at all — it may have exited at the 'not "
+                         f"configured' guard (cell 10), or the summary was "
+                         f"truncated"), NEED_TOOL
+    if row.startswith("➖"):
+        return FAIL, (f"job/{name} printed: {row[:150]} — the row exists and "
+                      f"measures nothing, and a ➖ travels in the same mail as "
+                      f"the passes"), None
+    if row.startswith("❌") or row.startswith("⚠️"):
+        return FAIL, f"job/{name} printed: {row[:150]}", None
+    return PASS, f"job/{name} printed: {row[:150]}", None
+
+
+def cell_daily_check_configured(args) -> tuple[int, str, str | None]:
+    """10. daily_check_* is configured.
+
+    With them unset the CronJob prints "not configured" and exits 0, so
+    nothing anywhere goes red -- the deliberate design (jg-base's guard), and
+    the reason this cell exists at all.
+    """
+    vals, err = _secret_values(args, "monitoring", "daily-check-config")
+    if vals is None:
+        return UNKNOWN, err, NEED_PLACE
+    need = ("SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM",
+            "NOTIFY_EMAIL_TO")
+    empty = [k for k in need if not (vals.get(k) or "").strip()]
+    if empty:
+        return FAIL, (f"empty in daily-check-config: {', '.join(empty)} — the "
+                      f"Job prints 'not configured' and exits 0, so no cluster "
+                      f"and no inbox will ever say so"), None
+    shown = {k: ("set" if "PASSWORD" in k else vals[k]) for k in need}
+    return PASS, ("daily-check-config: "
+                  + ", ".join(f"{k}={shown[k]}" for k in need)), None
+
+
+def cell_dead_man_switch(args) -> tuple[int, str, str | None]:
+    """11. The dead-man switch actually has somewhere to ping.
+
+    Measured on jg-janncotcc 2026-08-23: FAIL_COUNT=2 and the ping went to an
+    empty string. A failing check that pings nowhere holds nothing up.
+
+    The URL is a capability -- anyone holding it can silence the alarm -- so
+    this reports set/length, never the value.
+    """
+    vals, err = _secret_values(args, "monitoring", "daily-check-config")
+    if vals is None:
+        return UNKNOWN, err, NEED_PLACE
+    url = (vals.get("HEALTHCHECKS_PING_URL") or "").strip()
+    if not url:
+        return FAIL, ("HEALTHCHECKS_PING_URL is empty — the dead-man switch "
+                      "pings nowhere, so a cluster that stops reporting looks "
+                      "exactly like a cluster that is fine"), None
+    if not url.startswith("https://"):
+        return FAIL, (f"HEALTHCHECKS_PING_URL does not start with https:// "
+                      f"({len(url)} chars, value not printed)"), None
+    return PASS, f"dead-man switch URL is set ({len(url)} chars, not printed)", None
+
+
+def cell_recipients_readback(args) -> tuple[int, str, str | None]:
+    """12. Who the last real run actually mailed, read off that run.
+
+    Off the run, not off the Secret: the Secret is what you think you set. This
+    half is the machine's; whether those are the right people, and whether they
+    would act, is a person's and is not attempted here.
+    """
+    name, logs, why, kind = _newest_completed_job_log(args)
+    if logs == "":
+        if kind == NEED_PLACE:
+            return UNKNOWN, why, NEED_PLACE
+        return UNKNOWN, (f"{why} — the same evidence cell 7 is missing, and for "
+                         f"the same reason"), NEED_TOOL
+    to = re.search(r"==> Sending email to (.+)", logs)
+    sent = "Email sent successfully." in logs
+    if to and sent:
+        return PASS, (f"job/{name} mailed {to.group(1).strip()} and msmtp "
+                      f"accepted it. Whether those are the people who would "
+                      f"act is a person's question, not this one's"), NEED_HUMAN
+    if to and not sent:
+        return FAIL, (f"job/{name} addressed {to.group(1).strip()} but msmtp "
+                      f"returned non-zero — the report was composed and not "
+                      f"delivered"), None
+    return UNKNOWN, (f"job/{name} logs have no 'Sending email to' line — it may "
+                     f"have exited at the 'not configured' guard (cell 10)"), NEED_TOOL
+
+
+def cell_r2_endpoint(args) -> tuple[int, str, str | None]:
+    """13. The offsite endpoint, read OFF THE CLUSTER, is a shipping value.
+
+    Off the cluster on purpose: read from cluster.yaml it would pass in exactly
+    the situation it exists to catch -- edited locally, never applied. My first
+    implementation did that, and FO-runbook [5fe39a] caught it before it
+    shipped.
+
+    Then resolved through a public resolver, never the local one, with a
+    positive control in the same shape: jg-janncotcc shipped
+    `http://10.9.1.12:9000`, which answered 200 from the lab bench.
+    """
+    vals, err = _secret_values(args, "monitoring", "offsite-backup-config")
+    if vals is None:
+        return UNKNOWN, err, NEED_PLACE
+    ep = (vals.get("BACKUP_R2_ENDPOINT") or "").strip()
+    if not ep:
+        return UNKNOWN, ("BACKUP_R2_ENDPOINT is empty on the cluster — offsite "
+                         "backup is not configured here, which is a decision, "
+                         "not a defect this cell can judge"), NEED_HUMAN
+    if not ep.startswith("https://"):
+        return FAIL, (f"BACKUP_R2_ENDPOINT on the cluster is {ep[:60]!r} — not "
+                      f"https://. A LAN address answers 200 from inside the "
+                      f"building and nothing from anywhere else"), None
+    host = ep.split("://", 1)[1].split("/", 1)[0].split(":", 1)[0]
+    control, cerr = _doh_a("cloudflare.com")
+    if cerr or not control:
+        return UNKNOWN, (f"the positive control (cloudflare.com) did not resolve "
+                         f"over DoH{': ' + cerr if cerr else ''} — this box "
+                         f"cannot ask a public resolver, so a non-answer for "
+                         f"{host} would mean nothing"), NEED_TOOL
+    addrs, aerr = _doh_a(host)
+    if aerr:
+        return UNKNOWN, f"DoH query for {host} failed: {aerr}", NEED_TOOL
+    if not addrs:
+        return FAIL, (f"{host} does not resolve from a public resolver, while "
+                      f"the control does — this endpoint only exists inside "
+                      f"the building"), None
+    private = [a for a in addrs if not _is_public_v4(a)]
+    if private:
+        return FAIL, (f"{host} resolves to {', '.join(private)} — a private "
+                      f"address, so the offsite copy never leaves the site"), None
+    return PASS, f"{host} (read off the cluster) resolves publicly", None
+
+def _not_implemented(cell: int, needs: str):
+    """A cell nobody has written yet, which is NOT the same as one that cannot
+    reach its subject from here. The phase number deliberately does not appear:
+    it was "phase 2" for both of these until the phases were re-cut, and a
+    label that was true when written is the exact shape this file keeps
+    finding elsewhere (FO-runbook [5fe39a], twice)."""
     def f(args) -> tuple[int, str, str | None]:
         return UNKNOWN, (f"needs {needs}. Reported as 2 rather than omitted: a "
                          f"table missing rows reads like a table that passed"), NOT_YET
-    f.__name__ = f"cell_{cell}_phase_two"
+    f.__name__ = f"cell_{cell}_not_implemented"
     return f
 
 
@@ -1204,19 +1534,19 @@ def _phase_two(cell: int, needs: str):
 # applied. The half that resolves the name from outside is vantage-independent
 # and comes with it.
 HANDOVER_CELLS = [
-    (1, "join token usecount unchanged; node token PERSISTENT", _phase_two(1, "omnictl")),
+    (1, "join token usecount unchanged; node token PERSISTENT", _not_implemented(1, "omnictl")),
     (2, "tunnel AccountTag == the zone's account", cell_tunnel_account),
     (3, "factory auth0.json present and complete", cell_factory_auth0),
     (4, "im redirects to the factory tenant's /authorize", cell_im_front_door),
     (5, "private repo: visibility, FluxInstance sync, deploy key", cell_private_repo),
-    (6, "NODE_DNS_PATH=lan and the resolver answers both questions", _phase_two(6, "a kubeconfig and dig")),
-    (7, "daily-check has actually produced a row", _phase_two(7, "a kubeconfig")),
+    (6, "NODE_DNS_PATH=lan and the resolver answers both questions", cell_node_dns_path),
+    (7, "daily-check printed check 18's row, and it measured something", cell_daily_check_ran),
     (8, "echo-ext answers 200 through Cloudflare (cf-ray)", cell_echo_ext),
-    (9, "echo-int answers from the LAN, with and without --resolve", _phase_two(9, "a LAN client")),
-    (10, "daily_check_* is configured", _phase_two(10, "a kubeconfig")),
-    (11, "the dead-man switch has a ping URL", _phase_two(11, "a kubeconfig")),
-    (12, "health-check recipients read back from a real run", _phase_two(12, "a kubeconfig")),
-    (13, "backup_r2_endpoint read back off the cluster", _phase_two(13, "the value read off the cluster, not cluster.yaml")),
+    (9, "echo-int answers from the LAN, with and without --resolve", _not_implemented(9, "a LAN client")),
+    (10, "daily_check_* is configured", cell_daily_check_configured),
+    (11, "the dead-man switch has a ping URL", cell_dead_man_switch),
+    (12, "health-check recipients read back from a real run", cell_recipients_readback),
+    (13, "backup_r2_endpoint read back off the cluster", cell_r2_endpoint),
 ]
 
 
@@ -1325,6 +1655,9 @@ def main() -> None:
     hv.add_argument("--token-env", default="CLOUDFLARE_TOKEN")
     hv.add_argument("--tunnel-credentials", default="cloudflare-tunnel.json")
     hv.add_argument("--auth0-json", default="auth0.json")
+    hv.add_argument("--resolver", help="the candidate LAN resolver cell 6 should ask")
+    hv.add_argument("--trigger", action="store_true",
+                    help="cell 7 only: WRITE a Job when nothing has run yet")
     hv.set_defaults(func=check_handover)
 
     t = sub.add_parser("tunnel-cert")
