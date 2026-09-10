@@ -1512,6 +1512,224 @@ def cell_r2_endpoint(args) -> tuple[int, str, str | None]:
                       f"address, so the offsite copy never leaves the site"), None
     return PASS, f"{host} (read off the cluster) resolves publicly", None
 
+def _curl_status(url: str, resolve: str | None = None,
+                 timeout: int = 15) -> tuple[int | None, str | None]:
+    """(status, error) for one GET, optionally pinning the address.
+
+    Separate from _curl_headers because cell 9 needs --resolve and cell 9 only;
+    same subprocess shape, so the two agree about what "reachable" means.
+    """
+    if not shutil.which("curl"):
+        return None, "curl is not on PATH"
+    cmd = ["curl", "-sS", "-o", os.devnull, "-w", "%{http_code}",
+           "-m", str(timeout)]
+    if resolve:
+        cmd += ["--resolve", resolve]
+    cmd.append(url)
+    r = run(cmd)
+    if r.returncode != 0:
+        return None, (r.stderr.strip()[:140] or f"curl exited {r.returncode}")
+    try:
+        return int(r.stdout.strip()[-3:]), None
+    except ValueError:
+        return None, f"curl printed {r.stdout.strip()[:40]!r}, not a status"
+
+
+def cell_echo_int_from_lan(args) -> tuple[int, str, str | None]:
+    """9. echo-int answers from a LAN client, by name AND by pinned address.
+
+    Two requests, because they fail for different reasons and only both
+    together say the handover path works:
+
+      by name        exercises the LAN's resolver -> internal gateway
+      with --resolve skips the resolver entirely and speaks to the gateway
+
+    Same 200 from both: DNS and ingress are each fine. Only the pinned one
+    works: the gateway is fine and the name does not reach it. Only the named
+    one works: the name resolves to something that is NOT the address handed
+    over -- which looks healthiest of all and is the one worth catching.
+
+    This is the only cell that must run from the customer's LAN. Off it, the
+    honest answer is 2 with a vantage note; a run from the office that reports
+    anything else about this cell is reporting about the office.
+    """
+    host = f"echo-int.{args.domain}"
+    if not args.expect_addr:
+        return UNKNOWN, (f"--expect-addr not given: without the address this "
+                         f"cluster hands over, the second request has nothing "
+                         f"to pin to and the first cannot be judged"), NEED_TOOL
+
+    by_name, e1 = _curl_status(f"https://{host}/")
+    pinned, e2 = _curl_status(f"https://{host}/",
+                              resolve=f"{host}:443:{args.expect_addr}")
+
+    if e1 and e2:
+        return UNKNOWN, (f"neither request reached {host} ({e1}) — if this is "
+                         f"not the customer's LAN, that is the expected answer "
+                         f"and not a finding"), NEED_PLACE
+    if by_name == 200 and pinned == 200:
+        return PASS, (f"{host} answers 200 by name and pinned to "
+                      f"{args.expect_addr}: the LAN's resolver and the internal "
+                      f"gateway are both on the handover path"), None
+    if pinned == 200 and by_name != 200:
+        return FAIL, (f"{host} answers 200 pinned to {args.expect_addr} but "
+                      f"{by_name or e1} by name — the internal gateway is fine "
+                      f"and the LAN does not resolve the name to it"), None
+    if by_name == 200 and pinned != 200:
+        return FAIL, (f"{host} answers 200 by name but {pinned or e2} when "
+                      f"pinned to {args.expect_addr} — the name resolves to "
+                      f"something that is NOT the address being handed over. "
+                      f"This is the shape that looks healthiest from a browser "
+                      f"and is wrong at handover"), None
+    return FAIL, (f"{host} answered {by_name or e1} by name and "
+                  f"{pinned or e2} pinned — neither path serves it"), None
+
+
+def _omni_json(args, kind: str, capture: str | None,
+               *cmd: str) -> tuple[object | None, str | None, str | None]:
+    """Read one Omni resource, from a capture if one is given.
+
+    A capture is a first-class input here, the way `gateway --routes-json`
+    already treats one: the person who can reach Omni is often not the person
+    reviewing the check, and requiring both in one place means the check is
+    never run at all.
+    """
+    if capture:
+        p = pathlib.Path(capture)
+        if not p.is_file():
+            return None, f"{capture} is not here", NEED_TOOL
+        try:
+            return json.loads(p.read_text()), None, None
+        except json.JSONDecodeError as e:
+            return None, f"{capture} did not decode as JSON: {e}", None
+    if not shutil.which("omnictl"):
+        return None, (f"no --{kind} capture and omnictl is not on PATH — this "
+                      f"box cannot ask Omni"), NEED_TOOL
+    r = run(["omnictl", *cmd])
+    if r.returncode != 0:
+        return None, (f"omnictl could not read it: "
+                      f"{r.stderr.strip()[:140]}"), NEED_PLACE
+    try:
+        return json.loads(r.stdout or "null"), None, None
+    except json.JSONDecodeError as e:
+        return None, f"omnictl output did not decode as JSON: {e}", None
+
+
+def _join_token_usecounts(args) -> tuple[dict | None, str | None]:
+    """{token name: usecount} from `omnictl jointoken list`, or a capture.
+
+    Read for context only. NEVER a pass condition -- see
+    cell_arrived_on_own_identity for why the runbook's original assertion about
+    this number does not hold.
+
+    `jointoken` is not a COSI resource, which is why `omnictl get <kind>` has
+    no name for it and why grepping the runbook for one found nothing.
+    """
+    text = None
+    if args.join_token_list:
+        p = pathlib.Path(args.join_token_list)
+        if not p.is_file():
+            return None, f"{args.join_token_list} is not here"
+        text = p.read_text()
+    elif shutil.which("omnictl"):
+        r = run(["omnictl", "jointoken", "list"])
+        if r.returncode != 0:
+            return None, f"omnictl jointoken list failed: {r.stderr.strip()[:120]}"
+        text = r.stdout
+    else:
+        return None, "no --join-token-list capture and omnictl is not on PATH"
+
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return None, "the join token listing was empty"
+    header = lines[0].split()
+    try:
+        col = next(i for i, h in enumerate(header) if "USE" in h.upper())
+    except StopIteration:
+        return None, (f"no USE* column in the listing header ({' '.join(header)[:60]}) "
+                      f"— the output shape changed")
+    # Key on the NAME column, not on field 0. Field 0 is the ID in
+    # omnictl v1.8.1's listing, and keying on it made every count look like it
+    # belonged to a token nobody names in Step -1 -- caught by this file's own
+    # "usecount must not change the verdict" case, which compares names.
+    name_col = next((i for i, h in enumerate(header) if h.upper() == "NAME"), 0)
+    out = {}
+    for ln in lines[1:]:
+        f = ln.split()
+        if len(f) > max(col, name_col) and f[col].isdigit():
+            out[f[name_col]] = int(f[col])
+    return (out, None) if out else (None, "no rows parsed out of the listing")
+
+
+def cell_arrived_on_own_identity(args) -> tuple[int, str, str | None]:
+    """1. The machine came back as itself, not as a new registration.
+
+    The runbook called an unchanged join-token `usecount` "the row that
+    matters". **It does not carry that weight**, and the measurement that
+    refutes it was already in fleet-ops
+    (`openspec/changes/zero-it-onboarding/5.2-shipping-shape-run.md`,
+    2026-09-03): a real maintenance-mode re-registration, a machine returning
+    on a different token, and all three tokens' usecounts unmoved (0/2/2). So
+    "unchanged" looks the same whether the disk came back carrying what was
+    shipped or came back as somebody else -- the two things this cell exists to
+    tell apart. In the same run a REVOKED token's usecount stayed 1 and the
+    machine still came back: what authorised it was the unique token.
+
+    So the assertion is the node unique token being PERSISTENT, and usecount is
+    read for context and printed. A jump is worth chasing; unchanged proves
+    nothing and must not be able to turn this cell green -- gating on it would
+    make this cell pass in exactly the situation it is meant to catch.
+
+    PERSISTENT is what makes a shipped machine independent of the join token;
+    it is granted because Talos is installed, not because it is in a cluster.
+    (Command, verified offline against omnictl v1.8.1: `omnictl jointoken list`
+    -- `jointoken` is not a COSI resource, which is why `omnictl get <kind>`
+    has no name for it. Found by FO-runbook [5fe39a]; the refutation is theirs
+    too.)
+    """
+    if not args.machine_uuid and not args.node_token_json:
+        return UNKNOWN, ("--machine-uuid (or --node-token-json capture) not "
+                         "given: nothing to ask about"), NEED_TOOL
+    data, err, kind = _omni_json(
+        args, "node-token-json", args.node_token_json,
+        "get", "nodeuniquetokenstatus", args.machine_uuid or "", "-o", "json")
+    if data is None:
+        return UNKNOWN, err, kind or NEED_TOOL
+
+    spec = data.get("spec") if isinstance(data, dict) else None
+    state = (spec or {}).get("state") if isinstance(spec, dict) else None
+    if state is None and isinstance(data, dict):
+        state = data.get("state")
+    if state is None:
+        return UNKNOWN, ("could not find a `state` in the nodeuniquetokenstatus "
+                         "output — the shape changed, and a missing field is "
+                         "not the same as a non-PERSISTENT token"), NEED_TOOL
+    if state != 1:
+        return FAIL, (f"node unique token state is {state!r}, not 1 "
+                      f"(PERSISTENT) — this machine still depends on the join "
+                      f"token, so it did not arrive on its own identity"), None
+    counts, cerr = _join_token_usecounts(args)
+    if counts is None:
+        ctx = f"join token usecounts not read here ({cerr})"
+    else:
+        ctx = "join token usecounts: " + ", ".join(
+            f"{k}={v}" for k, v in sorted(counts.items()))
+        if args.expect_usecounts:
+            want = dict(kv.split("=", 1) for kv in args.expect_usecounts.split(",")
+                        if "=" in kv)
+            moved = [f"{k} {want[k]}->{counts[k]}" for k in want
+                     if k in counts and str(counts[k]) != want[k]]
+            ctx += ("; MOVED since Step -1: " + ", ".join(moved) + " — chase it"
+                    if moved else "; unchanged since Step -1")
+    return UNKNOWN, (
+        f"node unique token is PERSISTENT (state 1) — that is the assertion, "
+        f"and it holds. {ctx}. Context only: an unchanged usecount does NOT "
+        f"prove the machine arrived on its own identity (measured 2026-09-03, "
+        f"fleet-ops zero-it-onboarding 5.2), so nothing here gates on it. "
+        f"Whether this machine is the one that was shipped is still a person's "
+        f"call"), NEED_HUMAN
+
+
 def _not_implemented(cell: int, needs: str):
     """A cell nobody has written yet, which is NOT the same as one that cannot
     reach its subject from here. The phase number deliberately does not appear:
@@ -1534,7 +1752,7 @@ def _not_implemented(cell: int, needs: str):
 # applied. The half that resolves the name from outside is vantage-independent
 # and comes with it.
 HANDOVER_CELLS = [
-    (1, "join token usecount unchanged; node token PERSISTENT", _not_implemented(1, "omnictl")),
+    (1, "arrived on its own identity: node token PERSISTENT", cell_arrived_on_own_identity),
     (2, "tunnel AccountTag == the zone's account", cell_tunnel_account),
     (3, "factory auth0.json present and complete", cell_factory_auth0),
     (4, "im redirects to the factory tenant's /authorize", cell_im_front_door),
@@ -1542,7 +1760,7 @@ HANDOVER_CELLS = [
     (6, "NODE_DNS_PATH=lan and the resolver answers both questions", cell_node_dns_path),
     (7, "daily-check printed check 18's row, and it measured something", cell_daily_check_ran),
     (8, "echo-ext answers 200 through Cloudflare (cf-ray)", cell_echo_ext),
-    (9, "echo-int answers from the LAN, with and without --resolve", _not_implemented(9, "a LAN client")),
+    (9, "echo-int answers from the LAN, by name and pinned", cell_echo_int_from_lan),
     (10, "daily_check_* is configured", cell_daily_check_configured),
     (11, "the dead-man switch has a ping URL", cell_dead_man_switch),
     (12, "health-check recipients read back from a real run", cell_recipients_readback),
@@ -1658,6 +1876,17 @@ def main() -> None:
     hv.add_argument("--resolver", help="the candidate LAN resolver cell 6 should ask")
     hv.add_argument("--trigger", action="store_true",
                     help="cell 7 only: WRITE a Job when nothing has run yet")
+    hv.add_argument("--expect-addr", help="cell 9: the internal address handed over")
+    hv.add_argument("--machine-uuid", help="cell 1: the machine Omni knows")
+    hv.add_argument("--join-token-list",
+                    help="cell 1: a captured `omnictl jointoken list`; read for "
+                         "context, never a pass condition")
+    hv.add_argument("--expect-usecounts",
+                    help="cell 1: NAME=N,NAME=N from Step -1; a move is printed "
+                         "to chase, not failed on")
+    hv.add_argument("--node-token-json",
+                    help="cell 1: a captured `omnictl get nodeuniquetokenstatus"
+                         " <uuid> -o json`, instead of asking Omni here")
     hv.set_defaults(func=check_handover)
 
     t = sub.add_parser("tunnel-cert")
