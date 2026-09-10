@@ -85,14 +85,12 @@ CASES = [
     ("enabled", False),
     ("disabled", True),
     ("app", False),      # claudecode-db: always on, and jgct#94's victim
-    # These two live and die with the same two names in plugin.py's
-    # EMPTY_POSITIONS / LIVE_POSITIONS. jg-base#82 step 3 retires both: delete
-    # the rows here in the same commit that deletes the names there. Removing
-    # only one side fails this file with a KeyError naming the position, which
-    # is the third of the three reminders that step 3 is half done -- the other
-    # two being plugin.py's own comment and jg-base#82 staying open.
-    ("nfs", False),      # the NAS backup CronJob, while it still exists
-    ("none", True),      # its empty twin
+    # A row here is a claim about a directory in ferry133/jg-base, so a
+    # position that is retired there loses its row in the same commit that
+    # drops it from plugin.py's vocabulary. Removing only one side fails this
+    # file, naming the position -- which is deliberate, see the except below.
+    # ('nfs', False) and ('none', True) sat here until 2026-09-10, retired with
+    # the NFS backup CronJob by ferry133/jg-base#82 (B).
 ]
 
 
@@ -136,12 +134,12 @@ def main() -> int:
             got = label(position)
         except KeyError as e:
             # Reached when the two sides of the coupling above disagree --
-            # in practice, half of jg-base#82 step 3. A traceback here reads
+            # in practice, half of a position being retired. A traceback reads
             # like the guard broke; it did not, it is holding the line.
             print(f"FAIL  {position!r} is in CASES but plugin.py no longer "
                   f"classifies it.")
-            print(f"        If you are retiring it (jg-base#82 step 3), delete "
-                  f"its row here too — do not put the name back.")
+            print(f"        If you are retiring it, delete its row here too — "
+                  f"do not put the name back.")
             print(f"        If you are not, it needs classifying: {str(e)[:100]}")
             failed += 1
             continue
