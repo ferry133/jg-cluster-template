@@ -828,8 +828,7 @@ def check_tunnel_cert(args) -> int:
 
     token = os.environ.get(args.token_env or "CLOUDFLARE_TOKEN", "")
     if not token:
-        huh(f"${args.token_env or 'CLOUDFLARE_TOKEN'} not set — cannot ask "
-            "Cloudflare which account owns this domain")
+        huh(_no_token(args.token_env, args.domain))
         print(f"      The cert is bound to account {binding['accountID']},")
         print(f"      zone {binding['zoneID']}. Compare by hand, or set the token.")
         return UNKNOWN
@@ -902,6 +901,27 @@ WHY_TEXT = {
 }
 
 
+def _no_token(token_env: str, domain: str) -> str:
+    """One wording for one condition. Two wordings for the same state read as
+    two different states to whoever greps the output."""
+    return (f"${token_env or 'CLOUDFLARE_TOKEN'} not set — cannot ask Cloudflare "
+            f"which account owns {domain}")
+
+
+def _is_cluster_repo(d: pathlib.Path) -> bool:
+    """Is this a cluster's own directory, or somewhere else entirely?
+
+    Same marker _merged_config already uses ("run this inside a cluster repo"),
+    and it decides the meaning of a missing file: inside a cluster repo, absent
+    means the thing was never created (FAIL); outside one, absent means this
+    check is looking in the wrong place (UNKNOWN). Cells 2 and 3 gave opposite
+    answers to that same question until FO-runbook [5fe39a] put them side by
+    side on one empty directory -- and both answers were wrong, in opposite
+    directions.
+    """
+    return (d / "cluster.yaml").is_file()
+
+
 def _cf_zone(domain: str, token_env: str) -> tuple[dict | None, str | None]:
     """The one Cloudflare zone named `domain`, or a reason there is no answer.
 
@@ -911,8 +931,7 @@ def _cf_zone(domain: str, token_env: str) -> tuple[dict | None, str | None]:
     """
     token = os.environ.get(token_env or "CLOUDFLARE_TOKEN", "")
     if not token:
-        return None, (f"${token_env or 'CLOUDFLARE_TOKEN'} not set — cannot ask "
-                      f"Cloudflare which account owns {domain}")
+        return None, _no_token(token_env, domain)
     req = urllib.request.Request(
         f"https://api.cloudflare.com/client/v4/zones?name={domain}",
         headers={"Authorization": f"Bearer {token}"},
@@ -964,9 +983,16 @@ def cell_tunnel_account(args) -> tuple[int, str, str | None]:
     so "the two agree" is an inference, not an assertion. Merged, either
     failure would hide behind the other, and all three roads end at 1033.
     """
-    p = pathlib.Path(args.dir) / args.tunnel_credentials
+    d = pathlib.Path(args.dir)
+    p = d / args.tunnel_credentials
     if not p.is_file():
-        return UNKNOWN, f"{p} not here (sibling check: tunnel-cert)", NEED_PLACE
+        if not _is_cluster_repo(d):
+            return UNKNOWN, (f"{d} is not a cluster repo (no cluster.yaml), so "
+                             f"a missing {args.tunnel_credentials} says nothing "
+                             f"— run this in the cluster's directory"), NEED_PLACE
+        return FAIL, (f"{p} is not here, in a cluster repo that has a "
+                      f"cluster.yaml — `cloudflared tunnel create` never "
+                      f"produced a credential (sibling check: tunnel-cert)"), None
     try:
         tag = json.loads(p.read_text()).get("AccountTag") or ""
     except json.JSONDecodeError as e:
@@ -991,8 +1017,13 @@ def cell_factory_auth0(args) -> tuple[int, str, str | None]:
     Key NAMES and lengths only. The file holds a client_secret and this output
     gets pasted into handover notes.
     """
-    p = pathlib.Path(args.dir) / args.auth0_json
+    d = pathlib.Path(args.dir)
+    p = d / args.auth0_json
     if not p.is_file():
+        if not _is_cluster_repo(d):
+            return UNKNOWN, (f"{d} is not a cluster repo (no cluster.yaml), so "
+                             f"a missing {args.auth0_json} says nothing — run "
+                             f"this in the cluster's directory"), NEED_PLACE
         return FAIL, (f"{p} is not here — the base im is Auth0-gated on every "
                       f"cluster (jgct#84), so a missing factory file means no "
                       f"rescue terminal at all"), None
@@ -1064,14 +1095,20 @@ def cell_private_repo(args) -> tuple[int, str, str | None]:
     The deploy-key third calls check_deploy_key rather than restating it: a
     second implementation drifts, and the copy that drifts keeps passing.
     """
-    parts, worst, why = [], PASS, None
+    parts, worst, kinds = [], PASS, set()
 
     def worsen(rc, kind=None):
-        nonlocal worst, why
+        # Every reason, not the first one. This cell can be 2 for three
+        # different reasons at once, and keeping only the first hid it from the
+        # phase-2 list: whoever lands phase 2 would not know half of cell 5 was
+        # still missing (FO-runbook [5fe39a] on PR#103).
+        nonlocal worst
+        if rc == UNKNOWN and kind:
+            kinds.add(kind)
         if rc == FAIL:
-            worst, why = FAIL, None
+            worst = FAIL
         elif rc == UNKNOWN and worst != FAIL:
-            worst, why = UNKNOWN, why or kind
+            worst = UNKNOWN
 
     if not args.repo:
         parts.append("--repo not given: GitHub visibility unchecked")
@@ -1127,7 +1164,7 @@ def cell_private_repo(args) -> tuple[int, str, str | None]:
         parts.append(f"deploy-key -> {first[:100]}")
         worsen(rc, NEED_TOOL)
 
-    return worst, " | ".join(parts), why
+    return worst, " | ".join(parts), (kinds if worst == UNKNOWN else None)
 
 
 def cell_echo_ext(args) -> tuple[int, str, str | None]:
@@ -1192,14 +1229,26 @@ def check_handover(args) -> int:
             rc, note, why = UNKNOWN, f"the check itself raised {type(e).__name__}: {e}", NEED_TOOL
         results.append((num, title, rc, note, why))
 
+    order = (NEED_PLACE, NEED_TOOL, NEED_HUMAN, NOT_YET)
+
+    def kinds_of(why) -> list[str]:
+        """None / one kind / several. A cell blocked on more than one thing
+        belongs in every list, or the list it is missing from is the one
+        somebody is working through."""
+        if not why:
+            return []
+        one = {why} if isinstance(why, str) else set(why)
+        return [k for k in order if k in one]
+
     mark = {PASS: "PASS ", FAIL: "FAIL ", UNKNOWN: "?    "}
     for num, title, rc, note, why in results:
-        suffix = f"   [{why}]" if rc == UNKNOWN and why else ""
+        ks = kinds_of(why) if rc == UNKNOWN else []
+        suffix = f"   [{'+'.join(ks)}]" if ks else ""
         print(f"{mark[rc]} {num:>2}. {title}{suffix}")
         print(f"          {note}")
 
     fails = [n for n, _, rc, _, _ in results if rc == FAIL]
-    unknown = [(n, why) for n, _, rc, _, why in results if rc == UNKNOWN]
+    unknown = [(n, kinds_of(why)) for n, _, rc, _, why in results if rc == UNKNOWN]
     print()
     print(f"{len(results) - len(fails) - len(unknown)}/{len(results)} cells pass.")
 
@@ -1207,8 +1256,8 @@ def check_handover(args) -> int:
         word = "cell" if len(unknown) == 1 else "cells"
         print(f"{len(unknown)} {word} could not be answered here. That is not a pass,")
         print("and the next action differs by kind:")
-        for kind in (NEED_PLACE, NEED_TOOL, NEED_HUMAN, NOT_YET):
-            cells = [str(n) for n, w in unknown if w == kind]
+        for kind in order:
+            cells = [str(n) for n, ks in unknown if kind in ks]
             if cells:
                 print(f"      {WHY_TEXT[kind]}")
                 print(f"          cells {', '.join(cells)}")
