@@ -239,6 +239,59 @@ def main() -> int:
     finally:
         cap.unlink(missing_ok=True)
 
+    # ---- 兩個關於「這張表能不能全綠」的不變量，寫成可執行的而不是註解
+    #
+    # runbook 要告訴 operator「不要等一張全綠的表」，而那句話的正確版本取決於
+    # 哪幾格結構上回不了 PASS。用讀的會讀錯：cell 5 回傳的是變數不是字面的
+    # PASS，靜態掃描說它不能過，實際餵滿三件它就過。所以這裡用行為量。
+    import io as _io, contextlib as _ctx
+
+    never_pass = []
+    for num, title, fn in m.HANDOVER_CELLS:
+        src = fn.__doc__ or ""
+        # 行為判準：把這一格能拿到的東西都給滿，看它回不回 0。
+        # 只對兩個「設計上把最後一步交給人」的格子斷言，其餘不猜。
+        if fn is m.cell_arrived_on_own_identity:
+            cap = pathlib.Path(__file__).resolve().parent.parent / ".nvp1.json"
+            cap.write_text('{"spec": {"state": 1}}')
+            try:
+                rc, _, _ = fn(A(node_token_json=str(cap)))
+            finally:
+                cap.unlink(missing_ok=True)
+            never_pass.append((num, rc))
+        elif fn is m.cell_im_front_door:
+            m._curl_headers = lambda url, timeout=15: (302, {"location": "https://t/authorize"}, None)
+            rc, _, _ = fn(A())
+            never_pass.append((num, rc))
+    checked += 1
+    if all(rc != 0 for _, rc in never_pass) and len(never_pass) == 2:
+        print("PASS  cells 1 與 4 在最好的情況下仍不回 0（設計上把最後一步交給人）")
+    else:
+        print(f"FAIL  期望 cells 1、4 結構上回不了 0，量到 {never_pass}")
+        print("        runbook 依這件事告訴 operator「不要等一張全綠的表」——")
+        print("        它若改變，那一頁就開始描述一個不存在的東西")
+        failed += 1
+
+    # 帶著 person 的 PASS 必須在表上看得見。cell 12 過了機器那半、
+    # 人那半還欠著，而一個沒有標記的 PASS 會把那件事藏起來。
+    m._newest_completed_job_log = lambda a: (
+        "j1", "==> Sending email to ops@x\nEmail sent successfully.\n", None, None)
+    m._secret_values = lambda a, ns, n: (None, "no --kubeconfig")
+    m._curl_headers = lambda url, timeout=15: (None, {}, "no")
+    buf = _io.StringIO()
+    with _ctx.redirect_stdout(buf):
+        m.check_handover(A())
+    out = buf.getvalue()
+    checked += 1
+    row12 = [ln for ln in out.splitlines() if ln.startswith("PASS ") and " 12." in ln]
+    if row12 and "[person]" in row12[0] and "needs a person for the other half" in out:
+        print("PASS  cell 12 的 PASS 帶著 [person]，而且表尾點名了它")
+    else:
+        print("FAIL  一個帶著人那半的 PASS 沒有被標出來——與把「量不到」併進"
+              "「通過」是同一個動作，只是晚一列")
+        print(f"        row: {row12[:1]}")
+        failed += 1
+
     print()
     if failed:
         print(f"{failed} of {checked} cases did not match.")

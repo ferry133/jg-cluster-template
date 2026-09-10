@@ -1790,13 +1790,20 @@ def check_handover(args) -> int:
 
     mark = {PASS: "PASS ", FAIL: "FAIL ", UNKNOWN: "?    "}
     for num, title, rc, note, why in results:
-        ks = kinds_of(why) if rc == UNKNOWN else []
+        # A kind on a PASS is shown too. Cell 12 passes its machine half and
+        # still leaves a person's half open ("are these the people who would
+        # act"), and hiding that behind a bare PASS is the same move as folding
+        # "cannot measure" into "passed" -- one row later. It stays PASS,
+        # because the half a machine can do was done.
+        ks = kinds_of(why) if rc in (UNKNOWN, PASS) else []
         suffix = f"   [{'+'.join(ks)}]" if ks else ""
         print(f"{mark[rc]} {num:>2}. {title}{suffix}")
         print(f"          {note}")
 
     fails = [n for n, _, rc, _, _ in results if rc == FAIL]
     unknown = [(n, kinds_of(why)) for n, _, rc, _, why in results if rc == UNKNOWN]
+    passed_human = [n for n, _, rc, _, why in results
+                    if rc == PASS and NEED_HUMAN in kinds_of(why)]
     print()
     print(f"{len(results) - len(fails) - len(unknown)}/{len(results)} cells pass.")
 
@@ -1811,6 +1818,10 @@ def check_handover(args) -> int:
                 print(f"          cells {', '.join(cells)}")
         print("      No single run of this is authoritative. What Step 5 needs is")
         print("      one PASS per cell from somewhere that could measure it.")
+
+    if passed_human:
+        print(f"{', '.join(str(n) for n in passed_human)}: passed the half a "
+              f"machine can do, and still needs a person for the other half.")
 
     if fails:
         word = "cell" if len(fails) == 1 else "cells"
