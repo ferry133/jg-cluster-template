@@ -34,13 +34,17 @@ Usage
   delivery-check.py gateway      --node ADDR [--talosconfig PATH] [--routes-json PATH]
   delivery-check.py deploy-key   --repo OWNER/NAME [--pubkey PATH]
   delivery-check.py tunnel-cert  --domain DOMAIN [--cert PATH] [--token-env VAR]
+  delivery-check.py handover     --domain DOMAIN [--dir PATH] [--repo OWNER/NAME]
+                                 [--kubeconfig PATH] [--instance NAME]
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -824,33 +828,20 @@ def check_tunnel_cert(args) -> int:
 
     token = os.environ.get(args.token_env or "CLOUDFLARE_TOKEN", "")
     if not token:
-        huh(f"${args.token_env or 'CLOUDFLARE_TOKEN'} not set — cannot ask "
-            "Cloudflare which account owns this domain")
+        huh(_no_token(args.token_env, args.domain))
         print(f"      The cert is bound to account {binding['accountID']},")
         print(f"      zone {binding['zoneID']}. Compare by hand, or set the token.")
         return UNKNOWN
 
-    req = urllib.request.Request(
-        f"https://api.cloudflare.com/client/v4/zones?name={args.domain}",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as r:
-            body = json.load(r)
-    except Exception as e:  # noqa: BLE001
-        huh(f"could not query Cloudflare: {e}")
+    zone, err = _cf_zone(args.domain, args.token_env)
+    if zone is None:
+        huh(err)
+        print("      (the same query backs handover cell 2, which compares the")
+        print("      tunnel credential's AccountTag against this zone)")
         return UNKNOWN
 
-    zones = body.get("result") or []
-    if len(zones) != 1:
-        huh(f"Cloudflare returned {len(zones)} zones named {args.domain}")
-        print("      Zero means this token cannot see the zone — which is itself")
-        print("      a finding, but not the one this check makes. More than one")
-        print("      is ambiguous and picking would invent an answer.")
-        return UNKNOWN
-
-    want_zone = zones[0].get("id")
-    want_account = (zones[0].get("account") or {}).get("id")
+    want_zone = zone.get("id")
+    want_account = (zone.get("account") or {}).get("id")
     got_zone, got_account = binding["zoneID"], binding["accountID"]
 
     wrong = []
@@ -873,6 +864,411 @@ def check_tunnel_cert(args) -> int:
     print("      authorising. A tunnel built on this cert answers 1033 and")
     print("      nothing before that point complains.")
     return FAIL
+
+
+# ------------------------------------------------- handover (§7.1a, jgct#102)
+#
+# Step 5 of the provisioning runbook is the last gate before a cluster is
+# handed over, and it is 22 cells long. Five already had subcommands here, four
+# can only be answered by a person, and the thirteen in between were executable
+# with nothing behind them (jgct#102).
+#
+# One subcommand rather than thirteen, decided in that issue: eight subcommands
+# means the person on site runs seven of them on a bad day, and **the one not
+# run reads exactly like the one that passed**. A table loses a row visibly; a
+# missing invocation loses nothing visibly.
+#
+# No run of this is authoritative. Cells need different vantage points and
+# different tools, so what Step 5 needs is one PASS per cell from somewhere
+# that could measure it. That is why every 2 below carries a KIND: "go stand
+# somewhere else" and "install something here" are both 2, and their next
+# actions are opposite -- collapsing them into one count is the same mistake
+# as collapsing "cannot measure" into "passed" (FO-runbook [5fe39a],
+# jgct#102).
+
+# Why a cell could not answer. The point of separating these is the next
+# action, which differs for each.
+NEED_PLACE = "vantage"    # re-run from a place that can see it
+NEED_TOOL = "tool"        # install or configure something here
+NEED_HUMAN = "person"     # no machine can answer this half
+NOT_YET = "phase2"        # jgct#102 phase 2
+
+WHY_TEXT = {
+    NEED_PLACE: "need a different vantage point — re-run from there",
+    NEED_TOOL: "need a tool or credential here — install/set it, same place",
+    NEED_HUMAN: "a person must answer this half; no run of this can",
+    NOT_YET: "not implemented yet (jgct#102 phase 2)",
+}
+
+
+def _no_token(token_env: str, domain: str) -> str:
+    """One wording for one condition. Two wordings for the same state read as
+    two different states to whoever greps the output."""
+    return (f"${token_env or 'CLOUDFLARE_TOKEN'} not set — cannot ask Cloudflare "
+            f"which account owns {domain}")
+
+
+def _is_cluster_repo(d: pathlib.Path) -> bool:
+    """Is this a cluster's own directory, or somewhere else entirely?
+
+    Same marker _merged_config already uses ("run this inside a cluster repo"),
+    and it decides the meaning of a missing file: inside a cluster repo, absent
+    means the thing was never created (FAIL); outside one, absent means this
+    check is looking in the wrong place (UNKNOWN). Cells 2 and 3 gave opposite
+    answers to that same question until FO-runbook [5fe39a] put them side by
+    side on one empty directory -- and both answers were wrong, in opposite
+    directions.
+    """
+    return (d / "cluster.yaml").is_file()
+
+
+def _cf_zone(domain: str, token_env: str) -> tuple[dict | None, str | None]:
+    """The one Cloudflare zone named `domain`, or a reason there is no answer.
+
+    Shared with check_tunnel_cert rather than copied: two copies of a
+    Cloudflare query would drift, and the copy that drifts is the one that
+    keeps returning a comfortable answer.
+    """
+    token = os.environ.get(token_env or "CLOUDFLARE_TOKEN", "")
+    if not token:
+        return None, _no_token(token_env, domain)
+    req = urllib.request.Request(
+        f"https://api.cloudflare.com/client/v4/zones?name={domain}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            body = json.load(r)
+    except Exception as e:  # noqa: BLE001
+        return None, f"could not query Cloudflare: {e}"
+    zones = body.get("result") or []
+    if len(zones) != 1:
+        return None, (f"Cloudflare returned {len(zones)} zones named {domain} — "
+                      f"zero means this token cannot see it (a finding, but not "
+                      f"this one); more than one would mean picking, which "
+                      f"invents an answer")
+    return zones[0], None
+
+
+def _curl_headers(url: str, timeout: int = 15) -> tuple[int | None, dict, str | None]:
+    """(status, headers, error) for one request, WITHOUT following redirects.
+
+    The redirect is the assertion in cell 4, so following it would throw away
+    the thing being measured.
+    """
+    if not shutil.which("curl"):
+        return None, {}, "curl is not on PATH"
+    r = run(["curl", "-sS", "-o", os.devnull, "-D", "-", "-m", str(timeout),
+             "--max-redirs", "0", url])
+    if r.returncode != 0:
+        return None, {}, (r.stderr.strip()[:160] or f"curl exited {r.returncode}")
+    status, hdrs = None, {}
+    for line in r.stdout.splitlines():
+        if line.startswith("HTTP/"):
+            parts = line.split()
+            status = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+            hdrs = {}
+        elif ":" in line:
+            k, v = line.split(":", 1)
+            hdrs[k.strip().lower()] = v.strip()
+    return status, hdrs, None
+
+
+def cell_tunnel_account(args) -> tuple[int, str, str | None]:
+    """2. The tunnel was created in the account that owns the zone.
+
+    Not merged with `tunnel-cert`, deliberately, and each names the other in
+    its output. They read files produced by different commands -- cert.pem by
+    `cloudflared tunnel login`, cloudflare-tunnel.json by `tunnel create` --
+    so "the two agree" is an inference, not an assertion. Merged, either
+    failure would hide behind the other, and all three roads end at 1033.
+    """
+    d = pathlib.Path(args.dir)
+    p = d / args.tunnel_credentials
+    if not p.is_file():
+        if not _is_cluster_repo(d):
+            return UNKNOWN, (f"{d} is not a cluster repo (no cluster.yaml), so "
+                             f"a missing {args.tunnel_credentials} says nothing "
+                             f"— run this in the cluster's directory"), NEED_PLACE
+        return FAIL, (f"{p} is not here, in a cluster repo that has a "
+                      f"cluster.yaml — `cloudflared tunnel create` never "
+                      f"produced a credential (sibling check: tunnel-cert)"), None
+    try:
+        tag = json.loads(p.read_text()).get("AccountTag") or ""
+    except json.JSONDecodeError as e:
+        return FAIL, f"{p} did not decode as JSON: {e}", None
+    if not tag:
+        return FAIL, f"{p} has no AccountTag — not a `tunnel create` credential", None
+    zone, err = _cf_zone(args.domain, args.token_env)
+    if zone is None:
+        return UNKNOWN, f"{err} (sibling check: tunnel-cert)", NEED_TOOL
+    want = (zone.get("account") or {}).get("id")
+    if tag == want:
+        return PASS, f"tunnel and {args.domain} are both in account {want}", None
+    return FAIL, (f"tunnel was created in account {tag}, but {args.domain} "
+                  f"belongs to {want} — `cloudflared tunnel create` ran while "
+                  f"logged into the wrong account (tunnel-cert checks the other "
+                  f"half, the login cert)"), None
+
+
+def cell_factory_auth0(args) -> tuple[int, str, str | None]:
+    """3. The factory Auth0 file is in the cluster directory and complete.
+
+    Key NAMES and lengths only. The file holds a client_secret and this output
+    gets pasted into handover notes.
+    """
+    d = pathlib.Path(args.dir)
+    p = d / args.auth0_json
+    if not p.is_file():
+        if not _is_cluster_repo(d):
+            return UNKNOWN, (f"{d} is not a cluster repo (no cluster.yaml), so "
+                             f"a missing {args.auth0_json} says nothing — run "
+                             f"this in the cluster's directory"), NEED_PLACE
+        return FAIL, (f"{p} is not here — the base im is Auth0-gated on every "
+                      f"cluster (jgct#84), so a missing factory file means no "
+                      f"rescue terminal at all"), None
+    try:
+        data = json.loads(p.read_text())
+    except json.JSONDecodeError as e:
+        return FAIL, f"{p} did not decode as JSON: {e}", None
+    missing = [k for k in ("domain", "client_id", "client_secret", "allowed_emails")
+               if not data.get(k)]
+    if missing:
+        return FAIL, (f"{p} is missing or has empty: {', '.join(missing)} — an "
+                      f"empty allowed_emails renders a gate that admits nobody, "
+                      f"which looks like a broken cluster"), None
+    emails = data["allowed_emails"]
+    n = len(emails) if isinstance(emails, (list, tuple)) else 1
+    return PASS, (f"{p.name}: domain={data['domain']}, client_id "
+                  f"({len(str(data['client_id']))} chars), client_secret "
+                  f"({len(str(data['client_secret']))} chars), allowed_emails "
+                  f"({n} entries)"), None
+
+
+def cell_im_front_door(args) -> tuple[int, str, str | None]:
+    """4. im's front door redirects to the factory tenant.
+
+    Returns UNKNOWN even when the redirect is right, on purpose. A correct 302
+    proves oauth2-proxy is up and pointed at the right tenant; it does NOT
+    prove the callback URL is registered in that Auth0 application, and that
+    failure appears only after a human logs in. Reporting 0 would answer a
+    question this cannot see (jgct#102, cell 4).
+    """
+    host = f"{args.instance}.{args.domain}"
+    status, hdrs, err = _curl_headers(f"https://{host}/")
+    if err:
+        return UNKNOWN, f"could not reach https://{host}/ — {err}", NEED_TOOL
+    if status == 503:
+        return FAIL, (f"https://{host}/ returns 503 — oauth2-proxy is not "
+                      f"running, and in OIDC mode ttyd binds to loopback, so "
+                      f"there is no way in at all"), None
+    if status not in (301, 302, 303, 307, 308):
+        return FAIL, f"https://{host}/ returned {status}, not a redirect to Auth0", None
+    loc = hdrs.get("location", "")
+    tenant = ""
+    ap = pathlib.Path(args.dir) / args.auth0_json
+    if ap.is_file():
+        try:
+            tenant = json.loads(ap.read_text()).get("domain") or ""
+        except json.JSONDecodeError:
+            tenant = ""
+    if "/authorize" not in loc:
+        return FAIL, f"https://{host}/ redirects to {loc[:80]}, not an /authorize", None
+    if tenant and tenant not in loc:
+        return FAIL, (f"https://{host}/ redirects to {loc[:80]} — a different "
+                      f"tenant from {args.auth0_json}'s {tenant}"), None
+    where = f"the tenant in {args.auth0_json}" if tenant else "an /authorize endpoint"
+    return UNKNOWN, (f"{host} redirects to {where}: the door is up and pointed "
+                     f"right. Unverifiable from here: whether "
+                     f"https://{host}/oauth2/callback is registered in that "
+                     f"Auth0 application — that failure appears after login"), NEED_HUMAN
+
+
+def cell_private_repo(args) -> tuple[int, str, str | None]:
+    """5. Three things about a private per-user repo, all of which must hold.
+
+    Phase 1 owns the two that need no cluster; the FluxInstance sync line is
+    phase 2 and says so rather than reporting a bare "unchecked" -- except
+    when a --kubeconfig is on hand, in which case not looking would be
+    throwing away a measurement to keep a tidy phase boundary.
+
+    The deploy-key third calls check_deploy_key rather than restating it: a
+    second implementation drifts, and the copy that drifts keeps passing.
+    """
+    parts, worst, kinds = [], PASS, set()
+
+    def worsen(rc, kind=None):
+        # Every reason, not the first one. This cell can be 2 for three
+        # different reasons at once, and keeping only the first hid it from the
+        # phase-2 list: whoever lands phase 2 would not know half of cell 5 was
+        # still missing (FO-runbook [5fe39a] on PR#103).
+        nonlocal worst
+        if rc == UNKNOWN and kind:
+            kinds.add(kind)
+        if rc == FAIL:
+            worst = FAIL
+        elif rc == UNKNOWN and worst != FAIL:
+            worst = UNKNOWN
+
+    if not args.repo:
+        parts.append("--repo not given: GitHub visibility unchecked")
+        worsen(UNKNOWN, NEED_TOOL)
+    elif not shutil.which("gh"):
+        parts.append("gh is not on PATH: visibility unchecked")
+        worsen(UNKNOWN, NEED_TOOL)
+    else:
+        r = run(["gh", "repo", "view", args.repo, "--json", "visibility"])
+        if r.returncode != 0:
+            parts.append(f"gh could not read {args.repo}: {r.stderr.strip()[:80]}")
+            worsen(UNKNOWN, NEED_TOOL)
+        else:
+            vis = (json.loads(r.stdout or "{}").get("visibility") or "").upper()
+            if vis == "PRIVATE":
+                parts.append(f"{args.repo} is PRIVATE")
+            else:
+                parts.append(f"{args.repo} is {vis or 'unknown'}, not PRIVATE")
+                worsen(FAIL)
+
+    if not args.kubeconfig:
+        parts.append("FluxInstance sync line: phase 2 (needs --kubeconfig)")
+        worsen(UNKNOWN, NOT_YET)
+    else:
+        r = run(["kubectl", "--kubeconfig", args.kubeconfig, "-n", "flux-system",
+                 "get", "fluxinstance", "flux", "-o", "json"])
+        if r.returncode != 0:
+            parts.append(f"FluxInstance unreadable: {r.stderr.strip()[:80]}")
+            worsen(UNKNOWN, NEED_PLACE)
+        else:
+            sync = (json.loads(r.stdout or "{}").get("spec") or {}).get("sync") or {}
+            url, secret = sync.get("url", ""), sync.get("pullSecret", "")
+            trouble = []
+            if not url.startswith("ssh://"):
+                trouble.append(f"sync url is {url[:40]!r}, not ssh://")
+            if secret != "github-deploy-key":
+                trouble.append(f"pullSecret is {secret!r}, not github-deploy-key")
+            if trouble:
+                parts.append("; ".join(trouble))
+                worsen(FAIL)
+            else:
+                parts.append("FluxInstance syncs over ssh:// with github-deploy-key")
+
+    if not args.repo:
+        parts.append("deploy-key: skipped, no --repo")
+        worsen(UNKNOWN, NEED_TOOL)
+    else:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = check_deploy_key(args)
+        first = re.sub(r"\s+", " ",
+                       (buf.getvalue().splitlines() or ["(no output)"])[0]).strip()
+        parts.append(f"deploy-key -> {first[:100]}")
+        worsen(rc, NEED_TOOL)
+
+    return worst, " | ".join(parts), (kinds if worst == UNKNOWN else None)
+
+
+def cell_echo_ext(args) -> tuple[int, str, str | None]:
+    """8. The external echo answers, and answers through Cloudflare.
+
+    200 alone is not the assertion: the same 200 comes back when the name
+    resolves to something on the LAN. `cf-ray` is what says the request
+    actually crossed Cloudflare, which is the path being handed over.
+    """
+    host = f"echo-ext.{args.domain}"
+    status, hdrs, err = _curl_headers(f"https://{host}/")
+    if err:
+        return UNKNOWN, f"could not reach https://{host}/ — {err}", NEED_TOOL
+    if status != 200:
+        return FAIL, f"https://{host}/ returned {status}, not 200", None
+    if "cf-ray" not in hdrs:
+        return FAIL, (f"https://{host}/ returned 200 with no cf-ray header — "
+                      f"answered by something other than Cloudflare, so this "
+                      f"measured a local shortcut, not the public path"), None
+    return PASS, f"{host} 200 with cf-ray {hdrs['cf-ray'][:20]}", None
+
+
+def _phase_two(cell: int, needs: str):
+    def f(args) -> tuple[int, str, str | None]:
+        return UNKNOWN, (f"needs {needs}. Reported as 2 rather than omitted: a "
+                         f"table missing rows reads like a table that passed"), NOT_YET
+    f.__name__ = f"cell_{cell}_phase_two"
+    return f
+
+
+# (cell number in Step 5's thirteen, one-line title, function)
+#
+# Cell 13 is phase 2 on FO-runbook's correction, and the reason is worth
+# keeping: its assertion is "read the endpoint back OFF THE CLUSTER, not off
+# the file you think you edited". Implemented against cluster.yaml it would
+# pass in exactly the situation it exists to catch -- edited locally, never
+# applied. The half that resolves the name from outside is vantage-independent
+# and comes with it.
+HANDOVER_CELLS = [
+    (1, "join token usecount unchanged; node token PERSISTENT", _phase_two(1, "omnictl")),
+    (2, "tunnel AccountTag == the zone's account", cell_tunnel_account),
+    (3, "factory auth0.json present and complete", cell_factory_auth0),
+    (4, "im redirects to the factory tenant's /authorize", cell_im_front_door),
+    (5, "private repo: visibility, FluxInstance sync, deploy key", cell_private_repo),
+    (6, "NODE_DNS_PATH=lan and the resolver answers both questions", _phase_two(6, "a kubeconfig and dig")),
+    (7, "daily-check has actually produced a row", _phase_two(7, "a kubeconfig")),
+    (8, "echo-ext answers 200 through Cloudflare (cf-ray)", cell_echo_ext),
+    (9, "echo-int answers from the LAN, with and without --resolve", _phase_two(9, "a LAN client")),
+    (10, "daily_check_* is configured", _phase_two(10, "a kubeconfig")),
+    (11, "the dead-man switch has a ping URL", _phase_two(11, "a kubeconfig")),
+    (12, "health-check recipients read back from a real run", _phase_two(12, "a kubeconfig")),
+    (13, "backup_r2_endpoint read back off the cluster", _phase_two(13, "the value read off the cluster, not cluster.yaml")),
+]
+
+
+def check_handover(args) -> int:
+    results = []
+    for num, title, fn in HANDOVER_CELLS:
+        try:
+            rc, note, why = fn(args)
+        except Exception as e:  # noqa: BLE001
+            rc, note, why = UNKNOWN, f"the check itself raised {type(e).__name__}: {e}", NEED_TOOL
+        results.append((num, title, rc, note, why))
+
+    order = (NEED_PLACE, NEED_TOOL, NEED_HUMAN, NOT_YET)
+
+    def kinds_of(why) -> list[str]:
+        """None / one kind / several. A cell blocked on more than one thing
+        belongs in every list, or the list it is missing from is the one
+        somebody is working through."""
+        if not why:
+            return []
+        one = {why} if isinstance(why, str) else set(why)
+        return [k for k in order if k in one]
+
+    mark = {PASS: "PASS ", FAIL: "FAIL ", UNKNOWN: "?    "}
+    for num, title, rc, note, why in results:
+        ks = kinds_of(why) if rc == UNKNOWN else []
+        suffix = f"   [{'+'.join(ks)}]" if ks else ""
+        print(f"{mark[rc]} {num:>2}. {title}{suffix}")
+        print(f"          {note}")
+
+    fails = [n for n, _, rc, _, _ in results if rc == FAIL]
+    unknown = [(n, kinds_of(why)) for n, _, rc, _, why in results if rc == UNKNOWN]
+    print()
+    print(f"{len(results) - len(fails) - len(unknown)}/{len(results)} cells pass.")
+
+    if unknown:
+        word = "cell" if len(unknown) == 1 else "cells"
+        print(f"{len(unknown)} {word} could not be answered here. That is not a pass,")
+        print("and the next action differs by kind:")
+        for kind in order:
+            cells = [str(n) for n, ks in unknown if kind in ks]
+            if cells:
+                print(f"      {WHY_TEXT[kind]}")
+                print(f"          cells {', '.join(cells)}")
+        print("      No single run of this is authoritative. What Step 5 needs is")
+        print("      one PASS per cell from somewhere that could measure it.")
+
+    if fails:
+        word = "cell" if len(fails) == 1 else "cells"
+        print(f"{len(fails)} {word} FAILED: {', '.join(str(n) for n in fails)}")
+        return FAIL
+    return UNKNOWN if unknown else PASS
 
 
 def main() -> None:
@@ -918,6 +1314,18 @@ def main() -> None:
     k.add_argument("--repo", required=True, help="OWNER/NAME on GitHub")
     k.add_argument("--pubkey", default="github-deploy.key.pub")
     k.set_defaults(func=check_deploy_key)
+
+    hv = sub.add_parser("handover")
+    hv.add_argument("--domain", required=True)
+    hv.add_argument("--dir", default=".", help="the cluster repo directory")
+    hv.add_argument("--instance", default="im", help="the base terminal's name")
+    hv.add_argument("--repo", help="OWNER/NAME of the per-user repo")
+    hv.add_argument("--pubkey", default="github-deploy.key.pub")
+    hv.add_argument("--kubeconfig", help="reaches cells that need the cluster")
+    hv.add_argument("--token-env", default="CLOUDFLARE_TOKEN")
+    hv.add_argument("--tunnel-credentials", default="cloudflare-tunnel.json")
+    hv.add_argument("--auth0-json", default="auth0.json")
+    hv.set_defaults(func=check_handover)
 
     t = sub.add_parser("tunnel-cert")
     t.add_argument("--domain", required=True)
