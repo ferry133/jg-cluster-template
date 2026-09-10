@@ -898,7 +898,7 @@ WHY_TEXT = {
     NEED_PLACE: "need a different vantage point — re-run from there",
     NEED_TOOL: "need a tool or credential here — install/set it, same place",
     NEED_HUMAN: "a person must answer this half; no run of this can",
-    NOT_YET: "not implemented yet (jgct#102 phase 2)",
+    NOT_YET: "not implemented yet (jgct#102, a later phase)",
 }
 
 
@@ -1131,8 +1131,11 @@ def cell_private_repo(args) -> tuple[int, str, str | None]:
                 worsen(FAIL)
 
     if not args.kubeconfig:
-        parts.append("FluxInstance sync line: phase 2 (needs --kubeconfig)")
-        worsen(UNKNOWN, NOT_YET)
+        # Implemented since phase 1 -- it runs the moment a kubeconfig is on
+        # hand. Absent one, this is a vantage problem, and calling it "not
+        # implemented" put it in the same list as the cells nobody has written.
+        parts.append("FluxInstance sync line: needs --kubeconfig to be read")
+        worsen(UNKNOWN, NEED_PLACE)
     else:
         r = run(["kubectl", "--kubeconfig", args.kubeconfig, "-n", "flux-system",
                  "get", "fluxinstance", "flux", "-o", "json"])
@@ -1509,11 +1512,16 @@ def cell_r2_endpoint(args) -> tuple[int, str, str | None]:
                       f"address, so the offsite copy never leaves the site"), None
     return PASS, f"{host} (read off the cluster) resolves publicly", None
 
-def _phase_two(cell: int, needs: str):
+def _not_implemented(cell: int, needs: str):
+    """A cell nobody has written yet, which is NOT the same as one that cannot
+    reach its subject from here. The phase number deliberately does not appear:
+    it was "phase 2" for both of these until the phases were re-cut, and a
+    label that was true when written is the exact shape this file keeps
+    finding elsewhere (FO-runbook [5fe39a], twice)."""
     def f(args) -> tuple[int, str, str | None]:
         return UNKNOWN, (f"needs {needs}. Reported as 2 rather than omitted: a "
                          f"table missing rows reads like a table that passed"), NOT_YET
-    f.__name__ = f"cell_{cell}_phase_two"
+    f.__name__ = f"cell_{cell}_not_implemented"
     return f
 
 
@@ -1526,7 +1534,7 @@ def _phase_two(cell: int, needs: str):
 # applied. The half that resolves the name from outside is vantage-independent
 # and comes with it.
 HANDOVER_CELLS = [
-    (1, "join token usecount unchanged; node token PERSISTENT", _phase_two(1, "omnictl")),
+    (1, "join token usecount unchanged; node token PERSISTENT", _not_implemented(1, "omnictl")),
     (2, "tunnel AccountTag == the zone's account", cell_tunnel_account),
     (3, "factory auth0.json present and complete", cell_factory_auth0),
     (4, "im redirects to the factory tenant's /authorize", cell_im_front_door),
@@ -1534,7 +1542,7 @@ HANDOVER_CELLS = [
     (6, "NODE_DNS_PATH=lan and the resolver answers both questions", cell_node_dns_path),
     (7, "daily-check printed check 18's row, and it measured something", cell_daily_check_ran),
     (8, "echo-ext answers 200 through Cloudflare (cf-ray)", cell_echo_ext),
-    (9, "echo-int answers from the LAN, with and without --resolve", _phase_two(9, "a LAN client")),
+    (9, "echo-int answers from the LAN, with and without --resolve", _not_implemented(9, "a LAN client")),
     (10, "daily_check_* is configured", cell_daily_check_configured),
     (11, "the dead-man switch has a ping URL", cell_dead_man_switch),
     (12, "health-check recipients read back from a real run", cell_recipients_readback),
