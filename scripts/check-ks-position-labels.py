@@ -52,13 +52,14 @@ def load_plugin():
 
     Bytecode is disabled deliberately. This guard exists to be run against a
     MUTATED plugin.py -- that is how anyone shows it can still tell right from
-    wrong -- and CPython decides a cached .pyc is fresh by comparing the source
-    mtime to one-second resolution. Restore a file inside the same second the
-    previous .pyc was written and the stale bytecode is served instead:
-    measured here on 2026-09-09, where a reverted mutation kept failing and a
-    subsequent one reported the PREVIOUS mutation's result. Both directions are
-    dangerous, and the quiet one is a negative control that passes for a reason
-    that no longer exists.
+    wrong -- and CPython accepts a cached .pyc when the source mtime (one-second
+    resolution) AND size still match. A minimal mutation is exactly the shape
+    that matches both: swap a word for one of equal length, restore within the
+    same second, and the stale bytecode is served. Measured here on 2026-09-09,
+    where a reverted mutation kept failing and a subsequent one reported the
+    PREVIOUS mutation's result; reproduced deterministically on 2026-09-10 by
+    aligning the two. Both directions are dangerous, and the quiet one is a
+    negative control that passes for a reason that no longer exists.
     """
     sys.dont_write_bytecode = True
     importlib.invalidate_caches()
