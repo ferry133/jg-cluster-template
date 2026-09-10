@@ -415,11 +415,16 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 
 # ── claudecode/claude-code (base app — deployed on every cluster) ─────────────
 # The default instance "im" (im.<cloudflare_domain>) ships from jg-base since
-# 2026-09-06: static HelmRelease, always running, `latest` image tag, Auth0
-# hardwired. It needs NOTHING in this file beyond the Auth0 values below —
-# re-rendering is what switches it on. This list is for EXTRA instances only
-# (jg-jiahd adds "cc", i.e. cc.jiahd.cc); "im" in it is a render error, since
-# the base HelmRelease already owns that name:
+# 2026-09-06: static HelmRelease, always running, Auth0 hardwired, and its
+# image PINNED BY DIGEST there (jg-base #66, ferry133's ruling of 2026-09-06
+# superseding his same-day `latest` directive -- `latest` was measured frozen
+# on spegel clusters, where the mirror answers a tag query from whichever node
+# still caches it: a restart "Pulled" in 200ms and ran a months-old image with
+# every signal green). Updating the fleet's terminals is therefore a commit in
+# jg-base, not a push to the registry. It needs NOTHING in this file beyond the
+# Auth0 values below — re-rendering is what switches it on. This list is for
+# EXTRA instances only (jg-jiahd adds "cc", i.e. cc.jiahd.cc); "im" in it is a
+# render error, since the base HelmRelease already owns that name:
 # claude_instances:
 #   - "trello"
 #
