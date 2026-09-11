@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any
 
 import base64
+import datetime
 import hashlib
 import hmac
 import ipaddress
@@ -291,6 +292,43 @@ class Plugin(makejinja.plugin.Plugin):
 
     def data(self) -> makejinja.plugin.Data:
         data = self._data
+
+        # Omni SA key expiries (ferry133/fleet-ops#11). jg-base's daily-check
+        # row 24 reads each key's expiry from an annotation on the workload that
+        # holds it, because that check reads no Secrets. The recorded date is
+        # therefore the only thing it can see: a key rendered without one would
+        # expire unwatched, and a date rendered without a key would report on a
+        # key this cluster does not hold. Both are refused here -- the one place
+        # that sees the key and the date together. The messages name fields,
+        # never values: these fields sit next to credentials.
+        for key_field in ('talos_mcp_sa_key', 'factory_omni_sa_key'):
+            exp_field = f'{key_field}_expires'
+            exp = data.get(exp_field)
+            # makejinja loads cluster.yaml with yaml.safe_load_all, which reads
+            # an unquoted 2027-07-30 as a datetime.date (measured). Normalise it
+            # here so every consumer gets the string the check parses.
+            if isinstance(exp, datetime.date) and not isinstance(exp, datetime.datetime):
+                exp = data[exp_field] = exp.isoformat()
+            has_key, has_exp = bool(data.get(key_field)), bool(exp)
+            if has_key and not has_exp:
+                raise KeyError(
+                    f"{key_field} is set but {exp_field} is not. Record the "
+                    "key's expiry next to it (YYYY-MM-DD: the expiry picked when "
+                    "the service account was created; fleet-ops "
+                    "docs/operations/handover-inventory.md records it). jg-base's "
+                    "daily-check row 24 reads that date and cannot see the key "
+                    "itself, so a key without one would expire unwatched "
+                    "(ferry133/fleet-ops#11).")
+            if has_exp and not has_key:
+                raise KeyError(
+                    f"{exp_field} is set but {key_field} is not. A date with no "
+                    "key would have daily-check report an expiry for a key this "
+                    "cluster does not hold. Drop the date, or set the key.")
+            if has_exp and not re.fullmatch(r'\d{4}-\d{2}-\d{2}', str(exp)):
+                raise ValueError(
+                    f"{exp_field} must be YYYY-MM-DD, got {str(exp)!r}. "
+                    "daily-check refuses any other shape and would report this "
+                    "key's expiry as unknown every day.")
 
         # Set default values for optional fields.
         # These must match the defaults documented in cluster.sample.yaml —
