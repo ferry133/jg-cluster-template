@@ -609,6 +609,10 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 #     ...
 # talos_mcp_sa_key: ""            # OMNI_SERVICE_ACCOUNT_KEY from step 1
 # talos_mcp_omni_endpoint: ""     # e.g. https://omni-grpc.<client-host>, from step 3
+# talos_mcp_sa_key_expires: ""    # YYYY-MM-DD, the expiry picked in step 1. REQUIRED
+#                                 # with talos_mcp_sa_key -- the render refuses one
+#                                 # without the other. jg-base daily-check warns 30
+#                                 # days before it (row 24, fleet-ops#11)
 
 
 # ── extras/factory/factory — provisioning credentials (one cluster only) ──────
@@ -629,8 +633,13 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # `extras/factory/factory/README.md` is the control, not a description of one:
 #
 #   omni_sa_key   `omnictl serviceaccount create --use-user-role=false
-#                  --role Operator --ttl 10m` — Operator, not Admin, and
-#                  short-lived, reissued before each run
+#                  --role Operator` — Operator, not Admin. What is
+#                  DEPLOYED is a one-year key: `factory-jcom`, issued
+#                  2026-09-11 on ferry133's ruling (fleet-ops
+#                  docs/operations/handover-inventory.md). This line used
+#                  to say `--ttl 10m`, reissued before each run -- the
+#                  design before that ruling, not what runs. Record the
+#                  expiry in factory_omni_sa_key_expires below
 #   omni_endpoint MUST be a *direct* gRPC path. Cloudflare Tunnel breaks the
 #                  gRPC trailers Omni's streaming calls need (measured
 #                  2026-07-30). Leave empty to take jg-base's in-cluster
@@ -647,6 +656,7 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 #
 # factory_omni_sa_key: ""          # OMNI_SERVICE_ACCOUNT_KEY, Operator role
 # factory_omni_endpoint: ""        # empty = jg-base's ClusterIP default
+# factory_omni_sa_key_expires: ""  # YYYY-MM-DD; REQUIRED with factory_omni_sa_key
 # factory_github_token: ""
 # factory_fleet_ops_deploy_key: |  # multi-line PEM; b64-wrapped at render
 #   -----BEGIN OPENSSH PRIVATE KEY-----
