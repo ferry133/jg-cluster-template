@@ -47,7 +47,7 @@ RUN = [
     "check-nas-backup.py",
     "check-private-repo-chain.py",
     "check-node-dns-path.py",
-    "check-omni-key-expiry-pairing.py",
+    "check-credential-expiry-pairing.py",
     "check-template-integrity.py",
 ]
 
