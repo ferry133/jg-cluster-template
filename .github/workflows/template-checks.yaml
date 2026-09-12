@@ -62,15 +62,28 @@ jobs:
       # the collected count for that reason; see its docstring.
       #
       # A step in THIS job on purpose, not a job of its own: `Template Checks
-      # Success` gates `checks`, so a test failure is already covered by the
-      # required check. A new job would need adding to that gate's `needs`, and
-      # a gate that silently does not cover something is the shape above.
+      # Success` inspects `checks`, so a test failure already turns that gate
+      # red. A new job would need adding to that gate's `needs`, and a gate that
+      # silently does not cover something is the shape above.
+      #
+      # What that gate is NOT is a merge blocker, and `#110` said it was
+      # ("already covered by the required check"). Measured 2026-09-12:
+      # `gh api repos/ferry133/jg-cluster-template/branches/main/protection`
+      # returns 404 `Branch not protected`. Positive control, so the 404 is not
+      # the query being wrong: the same call on `ferry133/jg-base` returns a
+      # required `Flux Local Success`. Red here is a signal, not a door.
       - name: Unit tests (fails if nothing was collected)
         run: python3 .github/workflows/run-tests.py
 
-  # A separate always-running job so the required check has a stable name and a
-  # skipped or cancelled `checks` cannot report green. `needs` alone is not
-  # enough: with `if: always()` the gate must inspect the result explicitly.
+  # A separate always-running job so the gate has a stable name and a skipped or
+  # cancelled `checks` cannot report green. `needs` alone is not enough: with
+  # `if: always()` the gate must inspect the result explicitly.
+  #
+  # "Required" is what this job was designed to be, not what it is: nothing
+  # references it, because `main` in this repo has no branch protection at all
+  # (measured 2026-09-12, see the step above). Whether it becomes required is a
+  # repo setting, invisible from a clone — so a comment here claiming the name is
+  # gated would be describing a door that was never hung.
   success:
     name: Template Checks Success
     if: always()
