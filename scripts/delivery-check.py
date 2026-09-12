@@ -82,7 +82,43 @@ def huh(msg: str) -> None:
     print(f"?     {msg}")
 
 
+# Nothing in this file may wait forever, and the reason is measured (#114):
+# an unbounded `omnictl` call against an unreachable endpoint blocked
+# `ci-checks.py --run` at check-handover-cells.py, and the wrapper's exit code
+# still read like a completed run. **A hang and a pass are the same colour from
+# outside**, and the one machine where it happens is the one that HAS the tool —
+# never CI, which has neither the tool nor the network path.
+#
+# #115 bounded that one path. #117 enumerated the rest. Of the 18 `run([` call
+# sites: 2 are already bounded by the tool itself (`curl -m` :962,
+# `dig +time=` :1265) and 16 had no bound at any layer. Seven of those sixteen
+# leave this machine — kubectl x3, nslookup x2, gh x2 — and the other nine do
+# not: git x7 (all `git -C <dir>`, object-store reads that never contact a
+# remote), plus yq and age-keygen.
+#
+# Do NOT re-derive 16 as "18 minus the two bounded omnictl calls". Those two are
+# `_run_bounded([`, and the substring `run([` does not match them, so they were
+# never in the 18. The correct subtraction is the two tool-bounded ones. That
+# wrong route lands on the right number, which is why it is written down here
+# (jgb-handler [20db54] and FO-openspec [8e8ef1] both walked it).
+RUN_TIMEOUT = 60      # backstop for the nine local commands
+REMOTE_TIMEOUT = 20   # the seven that talk to a cluster, a resolver or GitHub
+
+
 def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
+    """Capture a command's output, and never wait longer than RUN_TIMEOUT.
+
+    The timeout is a default, not a policy: an explicit `timeout=` still wins,
+    which is how `_run_bounded` and `--timeout` keep their own numbers.
+
+    **It is deliberately not swallowed into a return code.** Converting a hang
+    into `returncode != 0` would let each call site turn it into that site's
+    particular conclusion — `git rev-parse` would report "not a git repo",
+    `nslookup` would report "the name does not resolve". Those are findings, and
+    a hang is not a finding: it is the absence of a measurement. It propagates
+    to main(), which reports it as the third outcome.
+    """
+    kw.setdefault("timeout", RUN_TIMEOUT)
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
 
 
@@ -449,8 +485,12 @@ def check_flux(args) -> int:
     if not shutil.which("kubectl"):
         huh("kubectl not installed")
         return UNKNOWN
-    r = run(["kubectl", "--kubeconfig", args.kubeconfig, "get", "gitrepository",
-             "-A", "-o", "json"])
+    r, terr = _run_bounded(["kubectl", "--kubeconfig", args.kubeconfig, "get",
+                            "gitrepository", "-A", "-o", "json"],
+                           REMOTE_TIMEOUT, "kubectl get gitrepository")
+    if r is None:
+        huh(terr)
+        return UNKNOWN
     if r.returncode != 0:
         huh(f"could not query the cluster: {r.stderr.strip().splitlines()[:1]}")
         return UNKNOWN
@@ -495,7 +535,15 @@ def check_lan(args) -> int:
         return UNKNOWN
 
     internal = f"internal.{args.domain}"
-    r = run(["nslookup", internal])
+    # A resolver that never answers is not a name that does not resolve. The
+    # FAIL below tells the operator to reconnect the client; sending them to do
+    # that because the query hung would be a wrong instruction, confidently
+    # given.
+    r, terr = _run_bounded(["nslookup", internal], REMOTE_TIMEOUT,
+                           f"nslookup {internal}")
+    if r is None:
+        huh(terr)
+        return UNKNOWN
     got = re.findall(r"^Address:\s*([0-9.]+)", r.stdout, re.M)
     got = [a for a in got if not a.endswith("#53")]
 
@@ -507,7 +555,13 @@ def check_lan(args) -> int:
         return FAIL
     ok(f"{internal} -> {args.expect_addr}")
 
-    ctl = run(["nslookup", "github.com"])
+    ctl, cterr = _run_bounded(["nslookup", "github.com"], REMOTE_TIMEOUT,
+                              "nslookup github.com (positive control)")
+    if ctl is None:
+        # The control hanging proves nothing about forwarding, and the FAIL
+        # below is a strong claim ("everything else on the LAN is broken").
+        huh(cterr)
+        return UNKNOWN
     ctl_addrs = [a for a in re.findall(r"^Address:\s*([0-9.]+)", ctl.stdout, re.M)
                  if not a.endswith("#53")]
     if not ctl_addrs:
@@ -730,7 +784,13 @@ def check_deploy_key(args) -> int:
     # the first two fields only, so the comment must not take part.
     local = " ".join(pub.read_text().split()[:2])
 
-    r = run(["gh", "api", f"repos/{args.repo}/keys", "--jq", ".[].key"])
+    r, terr = _run_bounded(["gh", "api", f"repos/{args.repo}/keys", "--jq",
+                            ".[].key"], REMOTE_TIMEOUT, "gh api repos/…/keys")
+    if r is None:
+        huh(terr)
+        print("      Same reason as below: no answer and an empty answer are")
+        print("      different, and only one of them is a finding.")
+        return UNKNOWN
     if r.returncode != 0:
         huh(f"could not list deploy keys: {r.stderr.strip()[:160]}")
         print("      Not reporting a missing key: no answer and an empty answer")
@@ -1118,8 +1178,12 @@ def cell_private_repo(args) -> tuple[int, str, str | None]:
         parts.append("gh is not on PATH: visibility unchecked")
         worsen(UNKNOWN, NEED_TOOL)
     else:
-        r = run(["gh", "repo", "view", args.repo, "--json", "visibility"])
-        if r.returncode != 0:
+        r, terr = _run_bounded(["gh", "repo", "view", args.repo, "--json",
+                                "visibility"], REMOTE_TIMEOUT, "gh repo view")
+        if r is None:
+            parts.append(terr)
+            worsen(UNKNOWN, NEED_PLACE)
+        elif r.returncode != 0:
             parts.append(f"gh could not read {args.repo}: {r.stderr.strip()[:80]}")
             worsen(UNKNOWN, NEED_TOOL)
         else:
@@ -1137,9 +1201,14 @@ def cell_private_repo(args) -> tuple[int, str, str | None]:
         parts.append("FluxInstance sync line: needs --kubeconfig to be read")
         worsen(UNKNOWN, NEED_PLACE)
     else:
-        r = run(["kubectl", "--kubeconfig", args.kubeconfig, "-n", "flux-system",
-                 "get", "fluxinstance", "flux", "-o", "json"])
-        if r.returncode != 0:
+        r, terr = _run_bounded(["kubectl", "--kubeconfig", args.kubeconfig, "-n",
+                                "flux-system", "get", "fluxinstance", "flux",
+                                "-o", "json"],
+                               REMOTE_TIMEOUT, "kubectl get fluxinstance")
+        if r is None:
+            parts.append(terr)
+            worsen(UNKNOWN, NEED_PLACE)
+        elif r.returncode != 0:
             parts.append(f"FluxInstance unreadable: {r.stderr.strip()[:80]}")
             worsen(UNKNOWN, NEED_PLACE)
         else:
@@ -1230,7 +1299,10 @@ def _kubectl(args, *rest: str) -> tuple[bool, str, str]:
         return False, "", "no --kubeconfig: this run cannot see the cluster"
     if not shutil.which("kubectl"):
         return False, "", "kubectl is not on PATH"
-    r = run(["kubectl", "--kubeconfig", args.kubeconfig, *rest])
+    r, terr = _run_bounded(["kubectl", "--kubeconfig", args.kubeconfig, *rest],
+                           REMOTE_TIMEOUT, f"kubectl {' '.join(rest[:2])}")
+    if r is None:
+        return False, "", terr
     if r.returncode != 0:
         return False, "", r.stderr.strip()[:140] or f"kubectl exited {r.returncode}"
     return True, r.stdout, ""
@@ -1940,7 +2012,20 @@ def main() -> None:
     args = p.parse_args()
     if args.cmd == "gateway" and not args.node and not args.routes_json:
         p.error("gateway needs --node, or --routes-json to read a capture")
-    sys.exit(args.func(args))
+    # A command that never returned is the third outcome, not a failure of the
+    # thing being checked. Without this, RUN_TIMEOUT would turn "the API server
+    # never answered" into whichever finding that call site reports for a
+    # non-zero exit — and being told the wrong thing confidently costs more than
+    # being told nothing (#117, and #114 before it).
+    try:
+        sys.exit(args.func(args))
+    except subprocess.TimeoutExpired as e:
+        name = e.cmd[0] if isinstance(e.cmd, (list, tuple)) else e.cmd
+        huh(f"{name} did not finish within {e.timeout:g}s — this run could not "
+            f"measure that, which is not the same as a finding")
+        print("      Re-run from somewhere that can reach it, or pass a longer")
+        print("      --timeout where the command legitimately takes that long.")
+        sys.exit(UNKNOWN)
 
 
 if __name__ == "__main__":
