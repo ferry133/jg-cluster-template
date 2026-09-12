@@ -222,5 +222,93 @@ class TestZoneHoldsThisClustersRecords(unittest.TestCase):
         self.assertIn("no TunnelID", out)
 
 
+class TestDohParsing(unittest.TestCase):
+    """`_doh` itself — the step every test above replaces wholesale.
+
+    `[c8c318]` named this gap when accepting #122, and it is the right shape of
+    gap to name: the eleven cases above patch `_doh` out, so **if `_doh` returned
+    CNAMEs as nameservers, not one of them would go red**. `check_dns` compares
+    the two resolvers' lists as sets, so garbage on both sides "agrees" and the
+    delegation reads as confirmed.
+
+    Only `urlopen` is replaced here, so the JSON → NS-list step is the thing
+    under test rather than the thing assumed.
+    """
+
+    @contextlib.contextmanager
+    def _resolver(self, payload: dict):
+        """Answers with `payload`, and records what the request looked like."""
+        seen: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            seen["url"] = req.full_url
+            seen["headers"] = {k.lower(): v for k, v in req.header_items()}
+            seen["timeout"] = timeout
+            return FakeResponse(payload)
+
+        with mock.patch.object(dc.urllib.request, "urlopen", side_effect=fake_urlopen):
+            yield seen
+
+    def test_nameservers_are_normalised_deduped_and_sorted(self):
+        """Two resolvers are compared as sets, so a trailing dot or a capital
+        letter on one side would read as a delegation mismatch — which this check
+        reports as "the zone your token sees is NOT the zone this domain resolves
+        to", a strong and wrong claim."""
+        payload = {"Answer": [
+            {"type": 2, "data": "Beth.NS.Cloudflare.com."},
+            {"type": 2, "data": "amber.ns.cloudflare.com."},
+            {"type": 2, "data": "AMBER.ns.cloudflare.com"},
+        ]}
+        with self._resolver(payload):
+            got = dc._doh("https://cloudflare-dns.com/dns-query?name=x&type=NS")
+        self.assertEqual(got, ["amber.ns.cloudflare.com", "beth.ns.cloudflare.com"])
+        # The three properties, asserted one by one rather than left to the
+        # equality above — `[c8c318]` asked for this when accepting #122: a
+        # property that is only incidentally covered is not locked, and the next
+        # person to touch this line cannot tell which parts mattered.
+        self.assertEqual(len(got), 2, "three answers, two distinct: deduped")
+        self.assertEqual(got, sorted(got), "compared as sets upstream, but the "
+                                           "order is what a reader diffs by eye")
+        self.assertTrue(all(not n.endswith(".") and n == n.lower() for n in got))
+
+    def test_a_cname_only_answer_is_not_a_delegation(self):
+        """type 5 is CNAME. The hazard is not that it is wrong, it is that it is
+        wrong on BOTH resolvers identically — so the agreement check passes."""
+        payload = {"Answer": [{"type": 5, "data": "example.com.cdn.cloudflare.net."}]}
+        with self._resolver(payload):
+            self.assertEqual(dc._doh("https://dns.google/resolve?name=x&type=NS"), [])
+
+    def test_mixed_answers_keep_only_the_nameservers(self):
+        payload = {"Answer": [{"type": 5, "data": "cname.example."},
+                              {"type": 2, "data": "amber.ns.cloudflare.com."}]}
+        with self._resolver(payload):
+            self.assertEqual(dc._doh("https://dns.google/resolve?name=x&type=NS"),
+                             ["amber.ns.cloudflare.com"])
+
+    def test_no_answer_section_is_an_empty_list(self):
+        """A domain delegated nowhere answers HTTP 200 with no Answer key. That
+        empty list is what `check_dns` turns into its "not delegated anywhere"
+        finding, so it must come back empty rather than raising."""
+        with self._resolver({"Status": 3}):
+            self.assertEqual(dc._doh("https://dns.google/resolve?name=x&type=NS"), [])
+
+    def test_it_asks_for_dns_json(self):
+        """Without this header the resolver answers in wire format and
+        `json.load` raises — which `check_dns` reports as "could not reach a DoH
+        resolver". That is the wrong diagnosis for a header this code controls,
+        and it would send someone to look at the network."""
+        with self._resolver({"Answer": []}) as seen:
+            dc._doh("https://cloudflare-dns.com/dns-query?name=x&type=NS")
+        self.assertEqual(seen["headers"].get("accept"), "application/dns-json")
+
+    def test_the_request_is_bounded(self):
+        """#117's rule, at the one boundary in this file that is not `run()`:
+        nothing here may wait forever."""
+        with self._resolver({"Answer": []}) as seen:
+            dc._doh("https://dns.google/resolve?name=x&type=NS")
+        self.assertIsNotNone(seen["timeout"])
+        self.assertLessEqual(seen["timeout"], 30)
+
+
 if __name__ == "__main__":
     unittest.main()
