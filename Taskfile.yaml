@@ -45,6 +45,19 @@ tasks:
     preconditions:
       - test -f {{.SCRIPTS_DIR}}/build-zero-it-print.py
 
+  test:
+    desc: Run the scripts/ unit tests (stdlib unittest, no dependencies)
+    # Same entry point as CI, so a green `task test` and a green CI mean the
+    # same thing — including "zero tests collected is a failure". A local
+    # runner with its own invocation would drift from the one that gates merges,
+    # and the drift would show up as a disagreement nobody is watching for.
+    #
+    # Wording and intent adapted from the `task test` written on
+    # `feat/8-provisioning-flow` (df12239, 2026-08-26), which never reached main.
+    cmd: python3 .github/workflows/run-tests.py
+    preconditions:
+      - test -f .github/workflows/run-tests.py
+
   reconcile:
     desc: Force Flux to pull in changes from your Git repository
     cmd: flux --namespace flux-system reconcile kustomization flux-system --with-source

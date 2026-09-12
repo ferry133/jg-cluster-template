@@ -54,6 +54,20 @@ jobs:
       - name: Run the checks that do not need a cluster
         run: python3 .github/workflows/ci-checks.py --run
 
+      # The guards above protect the templates; nothing protected the guards'
+      # own tests. `scripts/tests/` was empty from 2026-08-27 to 2026-09-12
+      # (`#104`) and no view said so — `ci-checks.py` inventories `scripts/*`
+      # files, so an empty *directory* is not in its field of vision, and
+      # `unittest discover` exits 0 when it finds nothing. The runner asserts
+      # the collected count for that reason; see its docstring.
+      #
+      # A step in THIS job on purpose, not a job of its own: `Template Checks
+      # Success` gates `checks`, so a test failure is already covered by the
+      # required check. A new job would need adding to that gate's `needs`, and
+      # a gate that silently does not cover something is the shape above.
+      - name: Unit tests (fails if nothing was collected)
+        run: python3 .github/workflows/run-tests.py
+
   # A separate always-running job so the required check has a stable name and a
   # skipped or cancelled `checks` cannot report green. `needs` alone is not
   # enough: with `if: always()` the gate must inspect the result explicitly.
