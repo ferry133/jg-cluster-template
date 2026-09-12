@@ -50,6 +50,22 @@ What this file will not do
   account, which is the one thing D11's whole model exists to avoid.
 - **It mutates nothing without `--apply`.** The default prints the commands.
 
+A missing input, measured and written down rather than discovered at runtime
+---------------------------------------------------------------------------
+`build_ctx` expects an Omni cluster template at `<--dir>/omni-cluster.yaml`
+(4.3), and **no repo ships one**. Measured 2026-09-12 on `jg-cluster-template`
+`main`: zero tracked files match `omni-cluster.ya?ml` (positive control, same
+query shape: `cluster.sample.yaml` → 1). `fleet-ops
+openspec/changes/zero-it-onboarding/8.1-timing.md:315` recorded the same gap
+earlier and it is still open.
+
+So `run`/`plan` reach the cluster-creation step and stop there until someone
+supplies that file. It is written here because the alternative is finding out
+half-way through a delivery, in front of a customer — and because a script whose
+missing input is only known to the person who wrote it is the shape this repo
+keeps paying for. Related: §4.14 (nothing here has ever been executed against a
+real Omni) is open for the same reason.
+
 Usage
 -----
   provision.py names    --domain DOMAIN
