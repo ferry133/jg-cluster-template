@@ -328,5 +328,133 @@ class TestDohParsing(unittest.TestCase):
         self.assertLessEqual(seen["timeout"], 30)
 
 
+class TestDohARecords(unittest.TestCase):
+    """`_doh_a` — the other DoH helper, named as untested when #123 was accepted.
+
+    Cell 13 leans on it: `backup_r2_endpoint` must resolve **from outside the
+    building**, because the local resolver answers for the LAN and
+    `http://10.9.1.12:9000` returned 200 from the lab bench. So the value of this
+    helper is entirely in *which* resolver answers and *what* it reports back.
+
+    The distinction this locks, and it is the one that would silently hurt: a
+    failed query returns `([], error)` while a name with no A records returns
+    `([], None)`. **If a network failure came back as the second, cell 13 would
+    report "this name does not resolve" for a problem on the operator's own
+    laptop** — a finding pointing at the wrong party.
+    """
+
+    @contextlib.contextmanager
+    def _resolver(self, payload: dict | None = None, boom: Exception | None = None):
+        seen: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            seen["url"] = req.full_url
+            seen["headers"] = {k.lower(): v for k, v in req.header_items()}
+            seen["timeout"] = timeout
+            if boom is not None:
+                raise boom
+            return FakeResponse(payload or {})
+
+        with mock.patch.object(dc.urllib.request, "urlopen", side_effect=fake_urlopen):
+            yield seen
+
+    def test_only_a_records_come_back(self):
+        """CNAME-fronted names are the norm for anything behind a CDN, so a
+        resolver answering `type 5` alongside `type 1` is the normal case, not an
+        edge one."""
+        payload = {"Answer": [
+            {"type": 5, "data": "endpoint.example.com.cdn.cloudflare.net."},
+            {"type": 1, "data": "203.0.113.10"},
+        ]}
+        with self._resolver(payload):
+            addrs, err = dc._doh_a("endpoint.example.com")
+        self.assertEqual((addrs, err), (["203.0.113.10"], None))
+
+    def test_addresses_are_deduped_and_sorted(self):
+        """Five distinct values on purpose — #124 measured that a `sorted()`
+        mutant survives 43.3% of runs at k=2 and 0/60 at k=4+, because str hash
+        randomisation drives set order. A k=2 fixture would make this assertion a
+        coin flip."""
+        payload = {"Answer": [{"type": 1, "data": ip} for ip in
+                              ["203.0.113.50", "203.0.113.10", "203.0.113.40",
+                               "203.0.113.20", "203.0.113.30", "203.0.113.10"]]}
+        with self._resolver(payload):
+            addrs, err = dc._doh_a("endpoint.example.com")
+        self.assertIsNone(err)
+        self.assertEqual(addrs, ["203.0.113.10", "203.0.113.20", "203.0.113.30",
+                                 "203.0.113.40", "203.0.113.50"])
+        self.assertEqual(len(addrs), 5, "six answers, five distinct: deduped")
+        self.assertEqual(addrs, sorted(addrs))
+
+    def test_no_a_records_is_empty_and_NOT_an_error(self):
+        with self._resolver({"Status": 0}):
+            self.assertEqual(dc._doh_a("nothing.example.com"), ([], None))
+
+    def test_a_failed_query_is_an_error_and_not_merely_empty(self):
+        """The half that keeps cell 13 from blaming the customer's DNS for the
+        operator's missing network."""
+        with self._resolver(boom=OSError("Network is unreachable")):
+            addrs, err = dc._doh_a("endpoint.example.com")
+        self.assertEqual(addrs, [])
+        self.assertIsNotNone(err)
+        self.assertIn("DoH query failed", err)
+
+    def test_the_name_is_percent_encoded_into_the_query(self):
+        """An unencoded name with a space produces a malformed URL, and the
+        `except Exception` above would report it as "DoH query failed" — a
+        network-shaped message for a string-handling bug."""
+        with self._resolver({"Answer": []}) as seen:
+            dc._doh_a("a name.example.com")
+        self.assertIn("a%20name.example.com", seen["url"])
+        self.assertNotIn("a name", seen["url"])
+
+    def test_it_asks_for_dns_json(self):
+        with self._resolver({"Answer": []}) as seen:
+            dc._doh_a("endpoint.example.com")
+        self.assertEqual(seen["headers"].get("accept"), "application/dns-json")
+
+    def test_the_request_is_bounded(self):
+        with self._resolver({"Answer": []}) as seen:
+            dc._doh_a("endpoint.example.com")
+        self.assertIsNotNone(seen["timeout"])
+        self.assertLessEqual(seen["timeout"], 30)
+
+
+class TestIsPublicV4(unittest.TestCase):
+    """`_is_public_v4` — the judgement cell 13 turns a resolved address into.
+
+    A wrong `True` here is the shape cell 13 exists to catch: an endpoint that
+    answers 200 on the lab bench because it is a LAN address.
+    """
+
+    def test_private_and_special_ranges_are_not_public(self):
+        for addr in ["10.0.0.1", "10.255.255.254", "127.0.0.1",
+                     "192.168.1.10", "172.16.0.1", "172.31.255.254",
+                     "169.254.1.1"]:
+            with self.subTest(addr=addr):
+                self.assertFalse(dc._is_public_v4(addr))
+
+    def test_the_172_block_boundaries(self):
+        """`172.16/12` is the range, so `172.15` and `172.32` are public. This is
+        the off-by-one that a hand-written check gets wrong, and getting it wrong
+        in the lenient direction means calling a LAN address public."""
+        self.assertFalse(dc._is_public_v4("172.16.0.1"))
+        self.assertFalse(dc._is_public_v4("172.31.0.1"))
+        self.assertTrue(dc._is_public_v4("172.15.0.1"))
+        self.assertTrue(dc._is_public_v4("172.32.0.1"))
+
+    def test_public_addresses_are_public(self):
+        for addr in ["8.8.8.8", "203.0.113.10", "1.1.1.1", "172.217.14.206"]:
+            with self.subTest(addr=addr):
+                self.assertTrue(dc._is_public_v4(addr))
+
+    def test_things_that_are_not_dotted_quads_are_not_public(self):
+        """Refusing to answer `True` for a non-address is the safe direction: the
+        caller treats `True` as "this is reachable from outside"."""
+        for addr in ["", "abc", "1.2.3", "1.2.3.4.5", "10.0.0", "::1"]:
+            with self.subTest(addr=addr):
+                self.assertFalse(dc._is_public_v4(addr))
+
+
 if __name__ == "__main__":
     unittest.main()
