@@ -53,7 +53,13 @@ tasks:
     # and the drift would show up as a disagreement nobody is watching for.
     #
     # Wording and intent adapted from the `task test` written on
-    # `feat/8-provisioning-flow` (df12239, 2026-08-26), which never reached main.
+    # `feat/8-provisioning-flow` (df12239, 2026-08-26), which reached main only
+    # when that branch was merged.
+    #
+    # PROVISION_LIVE_TESTS=1 additionally runs the observers in
+    # test_provision.py that talk to GitHub. They are skipped by default so the
+    # suite runs offline — and `skipped` is not `passed`: they are the ones that
+    # caught the `deleted_at` regression, and nothing here exercises them.
     cmd: python3 .github/workflows/run-tests.py
     preconditions:
       - test -f .github/workflows/run-tests.py
