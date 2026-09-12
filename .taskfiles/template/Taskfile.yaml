@@ -73,6 +73,7 @@ tasks:
       - task: check-node-dns-path
       - task: check-nas-backup
       - task: check-private-repo-chain
+      - task: check-credential-expiry-pairing
       - task: generate-node-config
       - task: validate-schemas
       - task: render-configs
@@ -204,6 +205,22 @@ tasks:
     cmd: python3 {{.SCRIPTS_DIR}}/check-private-repo-chain.py
     preconditions:
       - test -f {{.SCRIPTS_DIR}}/check-private-repo-chain.py
+
+  # ferry133/jg-cluster-template#112. The pairing between a credential and its
+  # expiry is enforced at render time by plugin.py, which every user repo
+  # carries its own copy of — and that copy is the thing this guards. A repo
+  # whose plugin.py has drifted back to a version without the pairing renders
+  # happily, and nothing says so: template copies are independent and do not
+  # follow upstream on their own. Running it here means it runs in each user
+  # repo at `task configure`, against that repo's own copy, rather than only in
+  # this repo's CI where no cluster.yaml is ever visible (FO-openspec [8e8ef1]
+  # measured that gap: zero hits here, nine other checks wired, so the zero was
+  # about pairing and not about asking the wrong file).
+  check-credential-expiry-pairing:
+    internal: true
+    cmd: python3 {{.SCRIPTS_DIR}}/check-credential-expiry-pairing.py
+    preconditions:
+      - test -f {{.SCRIPTS_DIR}}/check-credential-expiry-pairing.py
 
   validate-schemas:
     internal: true
