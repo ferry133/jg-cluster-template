@@ -28,6 +28,24 @@ the PR that turns exactly one of these tests red:
 
 from __future__ import annotations
 
+# Loading the subject with `spec_from_file_location` writes
+# `scripts/__pycache__/delivery-check.*.pyc` unless this is set first. That
+# cached bytecode is not a tidiness question: CPython reuses a `.pyc` when the
+# source mtime (to the second) AND size both match, which is exactly what a
+# minimal mutation looks like — so a negative control can report the PREVIOUS
+# mutation's result (jgct#96, and #102 was bitten by it).
+#
+# `.github/workflows/run-tests.py` sets this too, so the sanctioned entry point
+# is already clean (measured: 0 `.pyc` after a full run). This line covers the
+# other way in, `python3 -m unittest scripts/tests/<file>`, which no runner
+# guards. **It cannot prevent this test module's OWN `.pyc`** — that is written
+# while unittest imports it, before this line executes. Only `python3 -B` or
+# `PYTHONDONTWRITEBYTECODE=1` covers that, and every test file in this directory
+# shares the gap, so it is written here rather than fixed silently in one of them.
+import sys
+
+sys.dont_write_bytecode = True
+
 import contextlib
 import importlib.util
 import io
@@ -49,9 +67,21 @@ FAKE_TOKEN = "0123456789abcdef0123456789abcdef01234567"
 def git(d: pathlib.Path, *args: str) -> subprocess.CompletedProcess:
     """Real git, with identity forced so the test does not depend on ~/.gitconfig.
 
-    `-c core.excludesFile=/dev/null` matters: the operator's global ignore list
-    is exactly what hid jg-jiahd's missing .gitignore, and a test that inherits
-    it would be measuring this workstation.
+    `-c core.excludesFile=/dev/null` is **redundant defence, not what makes
+    these tests hermetic** — measured 2026-09-13 after `[c8c318]` asked for the
+    control. What makes them immune is that every `add` below passes `-f`:
+
+        hostile global excludesFile listing `.gitignore`:
+          plain `git add .gitignore`  -> stages 0 files   (the config does bite)
+          `git add -f .gitignore`     -> stages 1 file    (-f overrides it)
+          the 18 tests, override present -> 18 pass
+          the 18 tests, override removed -> 18 pass       (so it is not load-bearing)
+
+    An earlier version of this docstring claimed the override was the thing
+    keeping the operator's global ignore list out. That was reasoning, written in
+    the voice of a measurement. The list is still worth neutralising — a future
+    case that drops `-f` would depend on it — but the claim had to match what was
+    measured.
     """
     return subprocess.run(
         ["git", "-C", str(d), "-c", "user.name=t", "-c", "user.email=t@t",
