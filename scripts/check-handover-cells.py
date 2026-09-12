@@ -29,7 +29,9 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import subprocess
 import sys
+import tempfile
 import types
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -190,10 +192,39 @@ def main() -> int:
     check("9 兩邊都不是 200", m.cell_echo_int_from_lan(A(expect_addr="10.9.1.30")), 1)
 
     # ---- cell 1 (phase 3): PERSISTENT is checkable, usecount has no recorded command
+    #
+    # Stub the Omni readers. This file's whole premise is "no cluster, no
+    # network", and ONE leak makes that claim false: until jgct#114
+    # `_join_token_usecounts` fell through to the real `omnictl` whenever the
+    # tool was installed, so this guard hung against an unreachable endpoint --
+    # green on CI (no omnictl there) and stuck on exactly the machines someone
+    # runs it on. A stand-in suite that reaches the network is worse than none:
+    # it is trusted precisely because it claims not to.
+    _real_usecounts = m._join_token_usecounts
+
+    def _usecounts_stub(a):
+        """Stand in ONLY when there is no capture to read.
+
+        Narrow on purpose. The first version of this stub was unconditional and
+        silently disabled the one case that feeds a real `--join-token-list`
+        file -- a file read, no network -- so a stub meant to keep the network
+        out also switched off something that was being measured. A stand-in
+        wider than the thing it stands in for removes coverage without removing
+        a line from the table.
+        """
+        if getattr(a, "join_token_list", None):
+            return _real_usecounts(a)
+        return None, "stubbed: no capture given, and omnictl must not be reached here"
+
+    m._join_token_usecounts = _usecounts_stub
     check("1 沒有 uuid 也沒有 capture", m.cell_arrived_on_own_identity(A()), 2, m.NEED_TOOL)
     check("1 capture 檔不存在",
           m.cell_arrived_on_own_identity(A(node_token_json="/nonexistent.json")), 2, m.NEED_TOOL)
-    cap = pathlib.Path(__file__).resolve().parent.parent / ".handover-cell1-fixture.json"
+    # A temp dir, not a dotfile in the repo: a hard kill (a timeout, a Ctrl-C)
+    # skips `finally`, and jgct#114 left `.handover-cell1-fixture.json` behind
+    # that way -- which read like the script forgetting to clean up.
+    _tmp = tempfile.mkdtemp(prefix="handover-cells-")
+    cap = pathlib.Path(_tmp) / "cell1-fixture.json"
     try:
         cap.write_text('{"spec": {"state": 1}}')
         n = check("1 state 1 = PERSISTENT（但 usecount 仍未查）",

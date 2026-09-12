@@ -1605,7 +1605,9 @@ def _omni_json(args, kind: str, capture: str | None,
     if not shutil.which("omnictl"):
         return None, (f"no --{kind} capture and omnictl is not on PATH — this "
                       f"box cannot ask Omni"), NEED_TOOL
-    r = run(["omnictl", *cmd])
+    r, terr = _run_bounded(["omnictl", *cmd], OMNI_TIMEOUT, "omnictl " + cmd[0])
+    if r is None:
+        return None, terr, NEED_PLACE
     if r.returncode != 0:
         return None, (f"omnictl could not read it: "
                       f"{r.stderr.strip()[:140]}"), NEED_PLACE
@@ -1613,6 +1615,32 @@ def _omni_json(args, kind: str, capture: str | None,
         return json.loads(r.stdout or "null"), None, None
     except json.JSONDecodeError as e:
         return None, f"omnictl output did not decode as JSON: {e}", None
+
+
+# How long an Omni call may block before this reports "could not measure".
+#
+# There was no bound at all until jgct#114: `omnictl jointoken list` against an
+# unreachable endpoint blocked forever, so `ci-checks.py --run` stopped at
+# check-handover-cells.py and the wrapper's exit code still looked like a
+# completed run. CI never saw it because the runner has no omnictl, and a
+# machine that HAS the tool is exactly the machine someone runs this on.
+OMNI_TIMEOUT = 20
+
+
+def _run_bounded(cmd: list[str], timeout: int, what: str):
+    """(CompletedProcess, None) or (None, reason). Never blocks past `timeout`.
+
+    A delivery check that waits forever is not a slow check, it is a check
+    nobody can finish -- and the suite it sits in stops with it.
+    """
+    try:
+        return run(cmd, timeout=timeout), None
+    except subprocess.TimeoutExpired:
+        return None, (f"{what} did not answer within {timeout}s — the endpoint "
+                      f"is unreachable from here, which is a vantage problem "
+                      f"and not an answer about this cluster")
+    except FileNotFoundError:
+        return None, f"{cmd[0]} is not on PATH"
 
 
 def _join_token_usecounts(args) -> tuple[dict | None, str | None]:
@@ -1632,7 +1660,10 @@ def _join_token_usecounts(args) -> tuple[dict | None, str | None]:
             return None, f"{args.join_token_list} is not here"
         text = p.read_text()
     elif shutil.which("omnictl"):
-        r = run(["omnictl", "jointoken", "list"])
+        r, terr = _run_bounded(["omnictl", "jointoken", "list"], OMNI_TIMEOUT,
+                               "omnictl jointoken list")
+        if r is None:
+            return None, terr
         if r.returncode != 0:
             return None, f"omnictl jointoken list failed: {r.stderr.strip()[:120]}"
         text = r.stdout
