@@ -523,6 +523,36 @@ def check_flux(args) -> int:
 
 # ------------------------------------------------------------------- lan (4)
 
+def _nslookup_answers(text: str) -> list[str]:
+    """The addresses nslookup ANSWERED with — never the resolver's own.
+
+    nslookup prints its server twice before any answer:
+
+        Server:         10.9.1.53
+        Address:        10.9.1.53#53      <- the resolver, not a result
+
+    The previous form of this filter could not drop that line: it captured with
+    `([0-9.]+)`, which stops before `#`, and then tested
+    `a.endswith("#53")` — on a string from which `#53` had already been removed.
+    **Dead code that read as a guard**, found 2026-09-13 by the first test ever
+    written for this subcommand (#104).
+
+    Both consequences were live, and the second is worse:
+
+    1. A resolver whose own address happens to equal `--expect-addr` passed this
+       check while resolving nothing.
+    2. **The positive control could never fail.** `ctl_addrs` was non-empty for
+       any resolver that replied at all, because the server line was always
+       counted — so "github.com resolves, so forwarding works" was printed
+       without being measured. That is this file's own doctrine breaking inside
+       this file: a check that cannot fail reads exactly like one that passes.
+
+    Capturing the whole token and rejecting anything containing `#` keeps the
+    filter honest for `#53` and for a non-default port alike.
+    """
+    return [a for a in re.findall(r"^Address:\s*(\S+)", text, re.M) if "#" not in a]
+
+
 def check_lan(args) -> int:
     """Internal names resolve, AND forwarding still works.
 
@@ -544,8 +574,7 @@ def check_lan(args) -> int:
     if r is None:
         huh(terr)
         return UNKNOWN
-    got = re.findall(r"^Address:\s*([0-9.]+)", r.stdout, re.M)
-    got = [a for a in got if not a.endswith("#53")]
+    got = _nslookup_answers(r.stdout)
 
     if args.expect_addr not in got:
         bad(f"{internal} did not resolve to {args.expect_addr} (got: "
@@ -562,8 +591,7 @@ def check_lan(args) -> int:
         # below is a strong claim ("everything else on the LAN is broken").
         huh(cterr)
         return UNKNOWN
-    ctl_addrs = [a for a in re.findall(r"^Address:\s*([0-9.]+)", ctl.stdout, re.M)
-                 if not a.endswith("#53")]
+    ctl_addrs = _nslookup_answers(ctl.stdout)
     if not ctl_addrs:
         bad("positive control failed: github.com does not resolve through this "
             "resolver")
