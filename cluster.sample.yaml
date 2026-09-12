@@ -658,6 +658,12 @@ nas_path: "/volume/path"              # NFS export for storage provisioner (sc-n
 # factory_omni_endpoint: ""        # empty = jg-base's ClusterIP default
 # factory_omni_sa_key_expires: ""  # YYYY-MM-DD; REQUIRED with factory_omni_sa_key
 # factory_github_token: ""
+# factory_github_token_expires: ""  # YYYY-MM-DD; REQUIRED with factory_github_token.
+#                                   # GitHub shows it at issue time and returns it in
+#                                   # a response header. ⚠️ A fine-grained PAT has NO
+#                                   # KEY ID: revoking one means matching it by name
+#                                   # and expiry in the web UI, so this date is also
+#                                   # how you find the right token later
 # factory_fleet_ops_deploy_key: |  # multi-line PEM; b64-wrapped at render
 #   -----BEGIN OPENSSH PRIVATE KEY-----
 #   ...

@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
-"""Assert the Omni SA key <-> expiry pairing (ferry133/fleet-ops#11).
+"""Assert the credential <-> expiry pairing (fleet-ops#11, ferry133/jg-base#99).
 
-jg-base's daily-check row 24 warns before an Omni service-account key expires.
+Renamed from check-omni-key-expiry-pairing.py when factory's GitHub PAT
+joined the two Omni keys: the old name would have been a file that lies
+about its own subject, which is the defect class this repo spent 2026-09-12
+fixing in three other places.
+
+jg-base's daily-check rows 24 and 25 warn before a credential expires: the two
+Omni service-account keys, and factory's fine-grained GitHub PAT.
 It cannot read the key -- daily-check reads no Secrets, by design -- so it reads
 a date recorded at issuance, carried as an annotation on every workload that
 holds the key. That makes the date load-bearing in two directions:
@@ -156,7 +162,8 @@ def check_templates() -> int:
         failed += 1
     cs = (tdir / "config/kubernetes/components/sops/cluster-secrets.sops.yaml.j2").read_text()
     for var, field in (("TALOS_MCP_SA_KEY_EXPIRES", "talos_mcp_sa_key_expires"),
-                       ("FACTORY_OMNI_SA_KEY_EXPIRES", "factory_omni_sa_key_expires")):
+                       ("FACTORY_OMNI_SA_KEY_EXPIRES", "factory_omni_sa_key_expires"),
+                       ("FACTORY_GITHUB_TOKEN_EXPIRES", "factory_github_token_expires")):
         line = f'  {var}: "#{{ {field} | default(\'\') }}#"'
         if line not in cs.splitlines():
             print(f"FAIL  cluster-secrets does not emit {var} from {field}")
@@ -164,7 +171,8 @@ def check_templates() -> int:
         else:
             print(f"PASS  cluster-secrets emits {var}")
     schema = (ROOT / ".taskfiles/template/resources/cluster.schema.cue").read_text()
-    for field in ("talos_mcp_sa_key_expires", "factory_omni_sa_key_expires"):
+    for field in ("talos_mcp_sa_key_expires", "factory_omni_sa_key_expires",
+                  "factory_github_token_expires"):
         if not re.search(rf"^\s*{field}\?:\s*=~", schema, re.M):
             print(f"FAIL  cluster.schema.cue does not declare {field} with a format")
             failed += 1
@@ -176,6 +184,7 @@ def main() -> int:
     failed = 0
     key = {"talos_mcp_sa_key": SENTINEL}
     fkey = {"factory_omni_sa_key": SENTINEL}
+    tok = {"factory_github_token": SENTINEL}
 
     failed += expect_ok(plugin, "neither key nor date -> renders, no date",
                         lambda d: None if not d.get("talos_mcp_sa_key_expires")
@@ -199,6 +208,17 @@ def main() -> int:
                            KeyError, "talos_mcp_sa_key is set but talos_mcp_sa_key_expires is not", **key)
     failed += expect_error(plugin, "factory key WITHOUT date -> refused",
                            KeyError, "factory_omni_sa_key is set but factory_omni_sa_key_expires is not", **fkey)
+    failed += expect_ok(plugin, "github token + date -> renders the date",
+                        lambda d: None if d.get("factory_github_token_expires") == "2027-09-11"
+                        else f"got {d.get('factory_github_token_expires')!r}",
+                        factory_github_token_expires="2027-09-11", **tok)
+    # The PAT is the one credential with no key id to revoke by, so a date
+    # rendered without it, or it without a date, is worse here than elsewhere.
+    failed += expect_error(plugin, "github token WITHOUT date -> refused",
+                           KeyError, "factory_github_token is set but factory_github_token_expires is not", **tok)
+    failed += expect_error(plugin, "github date WITHOUT token -> refused",
+                           KeyError, "factory_github_token_expires is set but factory_github_token is not",
+                           factory_github_token_expires="2027-09-11")
     failed += expect_error(plugin, "date WITHOUT key -> refused",
                            KeyError, "talos_mcp_sa_key_expires is set but talos_mcp_sa_key is not",
                            talos_mcp_sa_key_expires="2027-07-30")
