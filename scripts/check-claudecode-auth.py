@@ -10,11 +10,30 @@ that scales it up removes it.
 
 Two modes, so two checks:
 
-  Auth0 (the default)   auth0.json must supply the shared application's domain,
-                        client_id and client_secret. Absent, the render dies
-                        partway through with a traceback; empty, it deploys an
-                        oauth2-proxy that cannot start — and OIDC mode gives
-                        ttyd no fallback, so that is a terminal nobody reaches.
+  Auth0 (the default)   TWO tenants since 2026-09-06 (jgct#84). auth0.json —
+                        gitignored, factory-supplied — is the FACTORY tenant and
+                        gates the base `im`, so it is REQUIRED on every cluster,
+                        all four keys including allowed_emails. cluster.yaml's
+                        claudecode_auth0_* are the CUSTOMER tenant and are
+                        required only when claude_instances names an instance.
+                        Absent, the render dies partway through with a
+                        traceback; empty, it deploys an oauth2-proxy that
+                        cannot start — and OIDC mode gives ttyd no fallback, so
+                        that is a terminal nobody reaches.
+
+                        Until `#64` this said "the shared application's", and
+                        told operators to copy auth0.json from another cluster.
+                        The 2026-08-25 ruling gives every cluster its own
+                        tenant; a cluster that deliberately shares one says so
+                        with `claudecode_auth0_shared: true`. This check runs
+                        SECOND in `:configure:` and the render is tenth, so
+                        whatever this file says is what an operator acts on —
+                        the message in plugin.py is never reached.
+
+                        An operator-declared cookie secret is checked here too.
+                        It is optional and derived correctly when absent, so the
+                        only way to get it wrong is to write one — which one
+                        cluster did, and paid the full price for (#17).
 
   claudecode_auth0:     ttyd basic auth is the whole gate, so the credential
   false                 must exist and must not be guessable. Before this
@@ -33,6 +52,8 @@ Exit 0 if acceptable, 1 otherwise.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import re
 import subprocess
@@ -78,53 +99,122 @@ def auth0_enabled(path: Path) -> bool:
     return yq('.claudecode_auth0', path) != "false"
 
 
-def check_auth0(config: Path) -> list[str]:
-    """Whatever cluster.yaml does not override has to come from auth0.json.
+def instances(config: Path) -> list[str]:
+    """The cluster's OWN extra instances. Empty is the norm since jgct#81."""
+    raw = yq('.claude_instances // [] | .[]', config)
+    return raw.split()
 
-    allowed_emails counts among those: OIDC mode renders the allowlist into a
-    ConfigMap, and an absent one fails the render rather than defaulting open.
+
+def check_auth0(config: Path) -> list[str]:
+    """Two tenants since 2026-09-06 (jgct#84): factory gates im, customer gates
+    the rest.
+
+    auth0.json is the FACTORY tenant's file — required, not opt-in, because
+    jg-base ships the factory's support agent (`im`) on every cluster and that
+    file is its gate. cluster.yaml's claudecode_auth0_* are the CUSTOMER tenant
+    and are required only when the cluster names extra instances.
+
+    Both directions of jgct#64's rule are enforced here, and they are mirror
+    images: auth0.json must not silently become a customer's values (the
+    original defect), and a customer's values must not silently become the
+    factory agent's gate (what #84 adds). Neither is allowed to be inferred.
+
+    allowed_emails is checked as hard as the OIDC triple: it IS the door. An
+    empty list renders a gate that admits nobody, and an unreachable rescue
+    terminal reads from outside exactly like a broken cluster — measured
+    2026-09-06, a 403 that cost an hour before anyone suspected the allowlist.
     """
-    from_config = {
-        field: yq(f'.claudecode_auth0_{field} // ""', config)
-        for field in AUTH0_FIELDS
-    }
-    emails = yq('.claudecode_allowed_emails // ""', config)
-    if all(from_config.values()) and emails:
-        return []
+    found: list[str] = []
+
+    if yq('.claudecode_auth0_shared // ""', config) in ("true", "True"):
+        found.append(
+            "claudecode_auth0_shared is set, and it is REFUSED since "
+            "2026-09-06: it meant 'take my customer Auth0 values out of "
+            "auth0.json', and auth0.json is now the factory tenant that gates "
+            "the base im — obeying it would put a customer instance behind the "
+            "factory gate (jgct#84). Delete the flag.")
 
     auth0 = config.parent / "auth0.json"
     if not auth0.is_file():
-        return [
-            "auth0.json not found — claude-code defaults to Auth0 login",
-            "copy it from another cluster directory (it is the same shared "
-            "Auth0 application everywhere, and gitignored in all of them)",
-            "or set `claudecode_auth0: false` in cluster.yaml for ttyd basic auth",
-        ]
-    try:
-        data = json.loads(auth0.read_text())
-    except json.JSONDecodeError as e:
-        return [f"auth0.json is not valid JSON: {e}"]
+        found.append(
+            "auth0.json is not in this cluster's directory. Since 2026-09-06 it "
+            "holds the FACTORY Auth0 tenant and gates the base im — the "
+            "factory's support agent that jg-base deploys on every cluster — so "
+            "it is required whenever claudecode_auth0 is not false. The factory "
+            "supplies it at provisioning; it stays gitignored. A cluster that "
+            "will not have an Auth0-gated terminal sets claudecode_auth0: false "
+            "and supplies ttyd_credential.")
+    else:
+        try:
+            data = json.loads(auth0.read_text())
+        except json.JSONDecodeError as e:
+            found.append(f"auth0.json is not valid JSON: {e}")
+            data = {}
+        absent = [f for f in AUTH0_FIELDS if not data.get(f)]
+        if not data.get("allowed_emails"):
+            absent.append("allowed_emails")
+        if absent:
+            found.append(
+                "auth0.json is missing or empty: " + ", ".join(absent)
+                + " — this is the factory tenant that gates the base im, and "
+                "allowed_emails is its login allowlist; an empty one locks "
+                "everyone out of the cluster's rescue terminal")
 
-    missing = [f for f in AUTH0_FIELDS if not (data.get(f) or from_config[f])]
-    if not (data.get("allowed_emails") or emails):
-        missing.append("allowed_emails")
-    if missing:
-        return [f"auth0.json is missing or empty: {', '.join(missing)}"]
-    return []
+    # The customer tenant is only required when there is a customer instance to
+    # gate. Demanding it on a cluster with `claude_instances: []` would be
+    # asking for a tenant nothing uses — all live clusters are in that state.
+    own = instances(config)
+    if own:
+        from_config = {
+            field: yq(f'.claudecode_auth0_{field} // ""', config)
+            for field in AUTH0_FIELDS
+        }
+        emails = yq('.claudecode_allowed_emails // ""', config)
+        absent = [f"claudecode_auth0_{f}" for f in AUTH0_FIELDS
+                  if not from_config[f]]
+        if not emails:
+            absent.append("claudecode_allowed_emails")
+        if absent:
+            found.append(
+                f"claude_instances names {', '.join(own)} — those are CUSTOMER "
+                "instances behind the customer's own Auth0 tenant, and "
+                "cluster.yaml is missing: " + ", ".join(absent)
+                + ". They are NOT inherited from auth0.json (that is the "
+                "factory tenant, for the base im only). Set them from this "
+                "cluster's tenant, or drop the extra instances.")
+    return found
 
 
-def callback_urls(config: Path) -> list[str]:
-    """The Auth0 registrations a render cannot perform on the operator's behalf.
+
+def callback_urls(config: Path) -> list[tuple[str, str]]:
+    """(application, host) the operator must register — a render cannot.
 
     Rendering succeeds without them and the terminal still fails to open, with
     an Auth0 error page rather than anything pointing back here — so print them
     every time instead of waiting for someone to hit it.
+
+    TWO applications since jgct#84, and putting a host in the wrong one is not
+    a typo but a hole: the FACTORY app gates `im` on every cluster, so a
+    customer host registered there would accept the factory's tenant. Which is
+    also why ferry133 ruled out a wildcard (2026-09-07): `https://*.<domain>`
+    in the factory app would let ANY subdomain of a customer's domain use the
+    factory application as its callback, while only `im.` is meant to.
+
+    The base im is always here, even when claude_instances is empty. It used to
+    be derived from that list with a `// ["im"]` default, and since jgct#81 made
+    im a base app the live clusters all declare `[]` — so this printed NOTHING
+    for jcom and jg-jiahd (measured 2026-09-07), silently dropping the one
+    registration whose absence shows up as a login failure nobody can attribute.
     """
     domain = yq('.cloudflare_domain // ""', config)
-    instances = yq('.claude_instances // ["im"] | .[]', config).split()
     if not domain:
         return []
-    return [f"https://{i}.{domain}/oauth2/callback" for i in instances]
+    # jg-base hardwires the base im at im.${SECRET_DOMAIN}; not derived from
+    # claude_instances, which since jgct#81 holds the EXTRA instances only.
+    out = [("factory", f"im.{domain}")]
+    out += [("customer", f"{i}.{domain}") for i in instances(config)]
+    return out
+
 
 
 def credential_problems(credential: str) -> list[str]:
@@ -148,6 +238,88 @@ def credential_problems(credential: str) -> list[str]:
     return found
 
 
+# oauth2-proxy's cookie secret becomes an AES key, so it must end up 16, 24 or
+# 32 bytes. Two things get conflated in its error message and the difference is
+# the whole defect: it reports the *length* it ended up with, never the reason
+# it ended up with that length.
+#
+# The rule below is transcribed from two measured cases plus that error text,
+# not from reading oauth2-proxy's source:
+#
+#   jg-jiahd       44 chars, URL-safe alphabet   → decodes to 32B → accepted,
+#                                                  4d11h / 0 restarts
+#   jg-janncotcc   44 chars, STANDARD alphabet   → does not decode → falls back
+#                                                  to the raw 44 → refused, 23×
+#                                                  CrashLoopBackOff
+#
+# Same image, same length, opposite outcomes. So length is not the thing to
+# check; "does it decode, and to what" is.
+#
+# The fallback branch is kept deliberately permissive: a value that is not
+# base64 at all but is itself exactly 16/24/32 bytes is what oauth2-proxy's own
+# error text implies it would accept, so this does not reject it. Being
+# narrower than the thing you are guarding turns a good value into a failed
+# render, and that failure looks identical to a real one.
+COOKIE_SECRET_BYTES = (16, 24, 32)
+
+
+def cookie_secret_problems(secret: str) -> list[str]:
+    """Never prints the value — only what is wrong with it. See module docstring."""
+    padded = secret + "=" * (-len(secret) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(padded)
+    except (binascii.Error, ValueError):
+        decoded = None
+    else:
+        # Python's decoder ignores what it cannot use rather than refusing, so a
+        # standard-alphabet value can "decode" to the wrong number of bytes
+        # instead of raising. Re-encoding is the discriminating test: only a
+        # genuinely URL-safe value round-trips.
+        if base64.urlsafe_b64encode(decoded).decode().rstrip("=") != padded.rstrip("="):
+            decoded = None
+
+    if decoded is not None:
+        if len(decoded) in COOKIE_SECRET_BYTES:
+            return []
+        return [
+            f"decodes to {len(decoded)} bytes; oauth2-proxy needs "
+            f"{', '.join(map(str, COOKIE_SECRET_BYTES))}",
+        ]
+
+    if len(secret.encode("utf-8")) in COOKIE_SECRET_BYTES:
+        return []
+
+    problems = [
+        f"is {len(secret)} characters and is not URL-safe base64, so "
+        f"oauth2-proxy will measure it raw and refuse it",
+    ]
+    if set("+/") & set(secret):
+        problems.append(
+            "it contains '+' or '/' — that is STANDARD base64, and oauth2-proxy "
+            "only decodes the URL-safe alphabet ('-' and '_')",
+        )
+    return problems
+
+
+def check_cookie_secret(config: Path) -> list[str]:
+    """Only reachable in Auth0 mode; unset is the good case, not a gap.
+
+    plugin.py derives it from age.key + cluster_name when absent, and that
+    derivation has always emitted URL-safe base64. So this checks the one input
+    a human can supply, and says nothing when nobody supplied one.
+    """
+    secret = yq('.claudecode_oauth2_cookie_secret // ""', config)
+    if not secret:
+        return []
+    problems = cookie_secret_problems(secret)
+    if not problems:
+        return []
+    return [f"claudecode_oauth2_cookie_secret {p}" for p in problems] + [
+        "remove the line from cluster.yaml to fall back to the derived value — "
+        "but note that changes the secret, which signs out every open session",
+    ]
+
+
 def check_basic_auth(config: Path) -> list[str]:
     credential = yq('.ttyd_credential // ""', config)
     if not credential:
@@ -166,7 +338,11 @@ def main() -> int:
 
     auth0 = auth0_enabled(config)
     if auth0:
-        label, problems = "claudecode auth (Auth0)", check_auth0(config)
+        label = "claudecode auth (Auth0)"
+        # Both, not the first that fails: a cluster with a broken auth0.json and
+        # a broken cookie secret should learn about both in one run rather than
+        # discover the second only after fixing the first.
+        problems = check_auth0(config) + check_cookie_secret(config)
         remedy = []
     else:
         label, problems = "claudecode auth (ttyd basic)", check_basic_auth(config)
@@ -190,8 +366,14 @@ def main() -> int:
 
     print(f"ok    {label}")
     if auth0:
-        for url in callback_urls(config):
-            print(f"        Auth0 app must allow callback: {url}")
+        for app, host in callback_urls(config):
+            which = ("FACTORY Auth0 app (auth0.json — gates the base im)"
+                     if app == "factory"
+                     else "CUSTOMER Auth0 app (claudecode_auth0_* in cluster.yaml)")
+            print(f"        {which}, register exactly (no wildcard):")
+            print(f"          Callback URL:  https://{host}/oauth2/callback")
+            print(f"          Logout URL:    https://{host}")
+            print(f"          Web Origin:    https://{host}")
     return 0
 
 

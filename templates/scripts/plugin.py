@@ -2,11 +2,13 @@ from pathlib import Path
 from typing import Any
 
 import base64
+import datetime
 import hashlib
 import hmac
 import ipaddress
 import makejinja
 import re
+import sys
 import json
 
 
@@ -18,6 +20,64 @@ def basename(value: str) -> str:
 # Base64-encode a string
 def b64encode(value: str) -> str:
     return base64.b64encode(value.encode('utf-8')).decode('utf-8')
+
+
+# The `# enabled: …` / `# disabled: …` line rendered above each Kustomization
+# patch in kubernetes/flux/cluster/ks.yaml. That comment is the only place a
+# per-user repo says what this cluster turned on and why, and the people who
+# read it are usually asking why something is missing -- so a label that says
+# the opposite of the truth reads exactly like a measured fact.
+#
+# jgct#94: the template asked `position == 'enabled'` and let every other name
+# fall through to "disabled (…pruned)", which announced claudecode-db -- the
+# always-on explicit-memory database, position `app` -- as disabled and about
+# to be pruned, three lines above its own `suspend: false`.
+#
+# Positions are a vocabulary, not a two-state switch. One of them names a
+# directory that renders nothing, which is what makes Flux prune whatever the
+# patch previously applied; the rest name a directory with resources in it.
+# The distinction the comment is trying to state is EMPTY vs NOT, so classify
+# on that and nothing else.
+#
+# 'nfs' and 'none' lived here until 2026-09-10, classifying the NFS pg_dump
+# CronJob that ferry133/jg-base#82 (B) retired. They left with the directories
+# they described (jg-base PR#88), in this same commit as their rows in the
+# CASES table of scripts/check-ks-position-labels.py -- directories first,
+# names after. Recorded in one line rather than deleted silently, because the
+# next person adding a position will look for precedent on how one leaves.
+EMPTY_POSITIONS = frozenset({'disabled'})
+LIVE_POSITIONS = frozenset({'enabled', 'app'})
+
+DISABLED_LABEL = 'disabled (empty path, so anything previously applied is pruned)'
+
+
+# Label one position for that comment. Unknown positions ABORT the render.
+def ks_position_label(position: str) -> str:
+    if position in EMPTY_POSITIONS:
+        return DISABLED_LABEL
+    if position in LIVE_POSITIONS:
+        return 'enabled'
+    # Deliberately fatal rather than a guess. makejinja runs with
+    # `undefined = "chainable"`, so anything the template cannot resolve
+    # renders as an empty string without a word of warning -- a lookup table
+    # living in the .j2 would meet a newly added position by labelling it
+    # silently, which is this very bug with a different trigger. Raising here
+    # stops `task configure` (measured: plugin.py's auth0_config() raises the
+    # same way and makejinja exits 1), so whoever adds a position is told to
+    # say which kind it is instead of finding out from a wrong comment later.
+    raise KeyError(
+        f"Unknown Kustomization position {position!r}: it is in neither "
+        f"EMPTY_POSITIONS {sorted(EMPTY_POSITIONS)} nor LIVE_POSITIONS "
+        f"{sorted(LIVE_POSITIONS)} in templates/scripts/plugin.py. The caller "
+        f"is either ks.yaml.j2 or the CASES table in "
+        f"scripts/check-ks-position-labels.py, and which one it is decides "
+        f"the fix -- so read this in both directions before editing. ADDING a "
+        f"position: classify it here, EMPTY if ./<basepath>/{position}/ "
+        f"renders no resources (the comment then says Flux prunes what was "
+        f"applied), LIVE if it renders any. RETIRING one: you have removed it "
+        f"here and its CASES row is still asking for it -- delete that row "
+        f"too. Do not put the name back to make this stop. Guessing either "
+        f"way is what jgct#94 was.")
 
 
 # Return the nth host in a CIDR range
@@ -119,13 +179,23 @@ def github_push_token(file_path: str = 'github-push-token.txt') -> str:
         raise RuntimeError(f"Unexpected error while reading {file_path}: {e}")
 
 
-# Return the shared claude-code Auth0 application's fields from auth0.json
+# Return a claude-code Auth0 application's fields from auth0.json
+#
+# ⚠️ This is the SHARED-tenant path and it is now opt-in. Reading it is gated on
+# `claudecode_auth0_shared` in cluster.yaml; see the caller.
+#
+# The paragraph that used to be here said "every cluster fronts claude-code with
+# the same Auth0 application". That was true when it was written and was
+# overturned on 2026-08-25 — `fleet-ops docs/operations/provision-customer-cluster.md`
+# Step 2: *this cluster gets its own Auth0 tenant*. The code kept implementing
+# the old design for eight days, and `#64` is what that cost: three clusters
+# shared one tenant, the runbook's own assertion passed over it, and it took
+# ferry133 asking "are these the customer's values?" to find out.
 #
 # A local file rather than cluster.yaml fields because this template repo is
-# public and every cluster fronts claude-code with the same Auth0 application:
-# one copied file per cluster directory beats pasting the same client secret
-# into twenty configs. Same idiom as cloudflare-tunnel.json — gitignored, read
-# at render time, never committed.
+# public: a client secret does not belong in a public repo even per-cluster.
+# Same idiom as cloudflare-tunnel.json — gitignored, read at render time, never
+# committed.
 #
 # Missing here is a hard stop, not an empty default: OIDC mode gives ttyd no
 # fallback (it binds loopback), so a cluster rendered with a blank client
@@ -136,16 +206,29 @@ def auth0_config(file_path: str = 'auth0.json') -> dict[str, str]:
             data = json.load(file)
     except FileNotFoundError:
         raise FileNotFoundError(
-            f"File not found: {file_path} — claude-code defaults to Auth0 login. "
-            f"Copy auth0.json from another cluster directory, or set "
-            f"`claudecode_auth0: false` in cluster.yaml to use ttyd basic auth.")
+            f"File not found: {file_path} — since 2026-09-06 (jgct#84) this is "
+            f"the FACTORY Auth0 tenant's file and it gates the base im, the "
+            f"factory's support agent that jg-base ships on every cluster. It "
+            f"is required whenever claudecode_auth0 is on (the factory supplies "
+            f"it at provisioning; it stays gitignored). A cluster that will not "
+            f"have an Auth0-gated terminal sets `claudecode_auth0: false` and "
+            f"supplies ttyd_credential instead.")
     except json.JSONDecodeError:
         raise ValueError(f"Could not decode JSON file: {file_path}")
 
-    missing = [k for k in ('domain', 'client_id', 'client_secret')
+    # allowed_emails counts among the required keys since jgct#84: it IS the
+    # base im's door. A file with the three OIDC values and no list renders a
+    # gate that admits nobody, and an unreachable rescue terminal is
+    # indistinguishable from a broken cluster.
+    missing = [k for k in ('domain', 'client_id', 'client_secret',
+                           'allowed_emails')
                if not data.get(k)]
     if missing:
-        raise KeyError(f"Missing or empty in {file_path}: {', '.join(missing)}")
+        raise KeyError(
+            f"Missing or empty in {file_path}: {', '.join(missing)}. This file "
+            f"is the factory Auth0 tenant that gates the base im (jgct#84); "
+            f"allowed_emails is the login allowlist and an empty one locks "
+            f"everyone out of the cluster's rescue terminal.")
     return data
 
 
@@ -166,6 +249,21 @@ def oauth2_cookie_secret(cluster_name: str, file_path: str = 'age.key') -> str:
     return base64.urlsafe_b64encode(digest).decode('utf-8')
 
 
+def claudecode_postgres_password(cluster_name: str,
+                                 file_path: str = 'age.key') -> str:
+    """Derive the explicit-memory PostgreSQL password, like the oauth2 cookie
+    secret: HMAC of age.key over a labelled cluster name (jgct#85).
+
+    Hex output, NOT base64url: this value is interpolated into a DATABASE_URL,
+    and hex (0-9a-f) has no character that would need percent-encoding there.
+    base64url's `-`/`_`/`=` are a trap waiting for a URL parser."""
+    key = age_key('private', file_path)
+    digest = hmac.new(key.encode('utf-8'),
+                      f"claudecode-postgres:{cluster_name}".encode('utf-8'),
+                      hashlib.sha256).digest()
+    return digest.hex()
+
+
 # Return a list of files in the talos patches directory
 def talos_patches(value: str) -> list[str]:
     path = Path(f'templates/config/talos/patches/{value}')
@@ -173,6 +271,19 @@ def talos_patches(value: str) -> list[str]:
         return []
     return [str(f) for f in sorted(path.glob('*.yaml.j2')) if f.is_file()]
 
+
+
+# The one place the default instance list is written. `claude_instances` and
+# `claude_code_always_on` both default to it, and the Jinja template no longer
+# carries a `default(...)` of its own -- three copies of ['im'] is how they
+# drifted apart (jg-cluster-template#57).
+#
+# [] since 2026-09-06: the default `im` instance ships from jg-base
+# (kubernetes/apps/base/claudecode/claude-code/im/), switched on per cluster
+# by the claude-code-im patch in flux/cluster/ks.yaml.j2. This template now
+# renders EXTRA instances only, and "im" in claude_instances is refused below
+# -- it would fight the base HelmRelease over the same object name.
+DEFAULT_CLAUDE_INSTANCES = []
 
 class Plugin(makejinja.plugin.Plugin):
     def __init__(self, data: dict[str, Any]):
@@ -182,11 +293,113 @@ class Plugin(makejinja.plugin.Plugin):
     def data(self) -> makejinja.plugin.Data:
         data = self._data
 
+        # Omni SA key expiries (ferry133/fleet-ops#11). jg-base's daily-check
+        # row 24 reads each key's expiry from an annotation on the workload that
+        # holds it, because that check reads no Secrets. The recorded date is
+        # therefore the only thing it can see: a key rendered without one would
+        # expire unwatched, and a date rendered without a key would report on a
+        # key this cluster does not hold. Both are refused here -- the one place
+        # that sees the key and the date together. The messages name fields,
+        # never values: these fields sit next to credentials.
+        # factory_github_token joined them for ferry133/jg-base#99: same
+        # shape, worse timing. An expired Omni key breaks a diagnostic tool;
+        # an expired PAT breaks provisioning halfway through creating a
+        # customer's repo. It is also the weakest of the three to revoke —
+        # a fine-grained PAT has no key id — which is why daily-check row 25
+        # says that in its own output.
+        for key_field in ('talos_mcp_sa_key', 'factory_omni_sa_key',
+                          'factory_github_token'):
+            exp_field = f'{key_field}_expires'
+            exp = data.get(exp_field)
+            # makejinja loads cluster.yaml with yaml.safe_load_all, which reads
+            # an unquoted 2027-07-30 as a datetime.date (measured). Normalise it
+            # here so every consumer gets the string the check parses.
+            if isinstance(exp, datetime.date) and not isinstance(exp, datetime.datetime):
+                exp = data[exp_field] = exp.isoformat()
+            has_key, has_exp = bool(data.get(key_field)), bool(exp)
+            if has_key and not has_exp:
+                raise KeyError(
+                    f"{key_field} is set but {exp_field} is not. Record the "
+                    "key's expiry next to it (YYYY-MM-DD: the expiry picked when "
+                    "the service account was created; fleet-ops "
+                    "docs/operations/handover-inventory.md records it). jg-base's "
+                    "daily-check row 24 reads that date and cannot see the key "
+                    "itself, so a key without one would expire unwatched "
+                    "(ferry133/fleet-ops#11).")
+            if has_exp and not has_key:
+                raise KeyError(
+                    f"{exp_field} is set but {key_field} is not. A date with no "
+                    "key would have daily-check report an expiry for a key this "
+                    "cluster does not hold. Drop the date, or set the key.")
+            if has_exp and not re.fullmatch(r'\d{4}-\d{2}-\d{2}', str(exp)):
+                raise ValueError(
+                    f"{exp_field} must be YYYY-MM-DD, got {str(exp)!r}. "
+                    "daily-check refuses any other shape and would report this "
+                    "key's expiry as unknown every day.")
+
         # Set default values for optional fields.
         # These must match the defaults documented in cluster.sample.yaml —
         # a documented default the code does not apply is a defect.
+        # `.1` of node_cidr is an ASSUMPTION about someone else's LAN, not a
+        # measurement, and `#49` measured every one of the twelve cluster.yaml
+        # on the operator's machine relying on it. It is right here because
+        # ferry133's LANs are `.1` — which is also why nothing has caught it:
+        # the assumed value and the true one are the same string, so every test
+        # this lab can run passes either way. A customer on `.254` (common)
+        # gets `task configure` success, `cue vet` pass, a cluster that boots,
+        # and no route off the LAN.
+        #
+        # It stays a default rather than becoming required: making it required
+        # would stop `task configure` in all twelve repos to catch a value that
+        # is, on this fleet, correct — and a guard that fires on correct input
+        # gets switched off. What changes is that the assumption stops being
+        # silent. `scripts/delivery-check.py gateway` measures the real default
+        # route and compares; the notice below marks the render log on the one
+        # path where this value reaches a machine.
+        assumed_gateway = 'node_default_gateway' not in data
         data.setdefault('node_default_gateway', nthhost(data.get('node_cidr'), 1))
-        data.setdefault('node_dns_servers', ['1.1.1.1', '1.0.0.1'])
+        if assumed_gateway and data.get('provisioning_path') == 'talos':
+            # Only this path. On the Omni path `nodes` is empty, so the routes
+            # block in talconfig.yaml.j2 never renders, the global Talos
+            # patches are not applied, and NODE_DEFAULT_GATEWAY has no reader
+            # in jg-base at all (measured 2026-08-30: 0 files, against 17 for
+            # NAS_SERVER as a positive control). Announcing there would be a
+            # warning about a value nothing consumes.
+            print(
+                f"NOTE: node_default_gateway is assumed, not measured — "
+                f"{data['node_default_gateway']} is .1 of {data.get('node_cidr')}. "
+                f"It becomes every node's default route and nameserver. "
+                f"Verify with: scripts/delivery-check.py gateway --node <addr>",
+                file=sys.stderr,
+            )
+        # 2026-08-27: the LAN's router, not Cloudflare. Measured on jg-jiahd
+        # (Omni path, no Talos patches applied) that the nodes were already on
+        # `10.9.9.1` via DHCP while this file rendered `1.1.1.1` -- so the old
+        # default was, on half the fleet, a statement about a file nobody
+        # applies. On the other half (patches applied, e.g. jcom) it was real,
+        # and it is what stopped those nodes from resolving internal names at
+        # all: a node on `1.1.1.1` asks Cloudflare, which does not serve the
+        # RFC1918 answer (deployment-profiles D29), so `internal.<domain>`
+        # is NXDOMAIN from anything running on that node -- including the `im`
+        # rescue terminal.
+        #
+        # Single entry, deliberately. A public fallback was considered and
+        # rejected by ferry133 the same day: `all(is_private)` below would then
+        # derive `public` and switch check 18 back off, and CoreDNS's forward
+        # plugin selects among multiple upstreams at random by default
+        # (coredns.io/plugins/forward: "The default is `random`."), so internal
+        # names would resolve on roughly half of all queries with the failures
+        # cached. Intermittent is worse than absent. The cost of one entry is
+        # stated plainly: if the router's resolver dies the nodes lose name
+        # resolution -- but so does every other client on that LAN, and the
+        # cluster's upstream is gone with it.
+        #
+        # The address must do BOTH jobs, ordinary recursion and forwarding the
+        # cluster domain -- which is why it is the router and not the shared LAN
+        # address (`docs/operations/router-dns.md` in fleet-ops). Pointing this
+        # at k8s-gateway makes node name resolution depend on the cluster it is
+        # meant to bring up.
+        data.setdefault('node_dns_servers', [data['node_default_gateway']])
         # Whether the nodes resolve names the way a LAN client does — read
         # AFTER the default above, because the default is what the nodes get.
         #
@@ -218,18 +431,48 @@ class Plugin(makejinja.plugin.Plugin):
         # Reading the effective value is also the only spelling that cannot go
         # stale: whatever the default becomes, this says what the nodes got.
         #
-        # Consequence, stated plainly: with the shipping default every cluster
-        # derives `public`, so daily-check's check 18 reports "not measured"
-        # rather than probing. That is the honest answer -- a node on 1.1.1.1
-        # cannot stand in for a LAN client -- and the way to turn the check on
-        # is to point node_dns_servers at the LAN resolver, which is the same
-        # change that makes the probe mean anything. The Omni path applies no
-        # Talos patches, so its nodes really do take DHCP DNS and `public`
-        # understates them; erring toward "not measured" is deliberate, because
-        # the other error is a red row every morning on a healthy LAN.
+        # Consequence, restated 2026-08-27 when the default above changed.
+        # It used to read: with the shipping default every cluster derives
+        # `public`, so check 18 reports "not measured" rather than probing.
+        # That was true and it was the honest answer, but it made "nothing
+        # watches the router" the fleet-wide default.
+        #
+        # With the default now the LAN router, a cluster that declares nothing
+        # derives `lan` and check 18 probes. Two things follow, and neither is
+        # automatic:
+        #
+        #   - Re-rendering is what moves a cluster, not this commit. A cluster
+        #     that has not run `task configure` since keeps whatever its
+        #     `cluster-secrets` already holds.
+        #   - On the Omni path no Talos patch is applied, so the nodes take DHCP
+        #     DNS regardless of what this file says. There the change corrects
+        #     the *declaration* to match what the nodes were already doing; it
+        #     does not change resolution. On a patched path (talhelper) it does
+        #     change resolution, and the node must be re-applied for it to take
+        #     effect.
+        #
+        # Deriving from the effective value is still the only spelling that
+        # cannot go stale, and it is now right for both paths rather than
+        # understating one of them.
         data['node_dns_path'] = 'lan' if all(
             ipaddress.ip_address(s).is_private
             for s in data['node_dns_servers']) else 'public'
+        # Where the shared base manifests come from. Defaulted HERE and not only
+        # in cluster.schema.cue: CUE's `*default` never reaches this file —
+        # plugin.py reads cluster.yaml, not CUE's unified value (the same trap
+        # the longhorn selector documents in .taskfiles/template/Taskfile.yaml).
+        # Without these three lines every existing cluster.yaml, none of which
+        # names them, renders a GitRepository with an empty url.
+        data.setdefault('base_repo_url', 'https://github.com/ferry133/jg-base')
+        data.setdefault('base_repo_ref', 'main')
+        data.setdefault('base_repo_ref_kind', 'branch')
+        # The same repo as a directory next to this one, for bootstrap's helmfile
+        # — it reads HelmRelease values off disk before the cluster can fetch
+        # anything. Derived from the URL rather than declared: two fields for one
+        # fact diverge, and this one only shows up at a re-bootstrap.
+        data.setdefault(
+            'base_repo_dir',
+            data['base_repo_url'].rstrip('/').rsplit('/', 1)[-1].removesuffix('.git'))
         data.setdefault('node_ntp_servers', ['162.159.200.1', '162.159.200.123'])
         data.setdefault('cluster_pod_cidr', '10.42.0.0/16')
         # cluster_svc_cidr is required (no default) — see cluster.schema.cue.
@@ -245,6 +488,11 @@ class Plugin(makejinja.plugin.Plugin):
             'nfs': 'sc-nas',
             'replicated': 'longhorn',
         }.get(_backend, 'local-path'))
+        # Whether the workspace PVC is rendered at all. True, and the sample
+        # says in words that false deletes data: on the NFS class the
+        # provisioner's archiveOnDelete catches it, on local-path and
+        # longhorn-static nothing does.
+        data.setdefault('claudecode_workspace', True)
         # The block tier, for anything that needs fsync durability and file
         # locking. Not derived from storage_backend: NFS is never a valid answer
         # here, whatever the cluster uses for bulk data. An existing cluster
@@ -252,6 +500,46 @@ class Plugin(makejinja.plugin.Plugin):
         # and restored — a PVC's storageClassName is immutable, so the move is
         # not something a re-render can perform.
         data.setdefault('db_storage_class', 'local-path')
+        # claude-code's config PVC (~/.claude plus the keyring on a subPath).
+        # Defaults to db_storage_class — the block tier — since 2026-09-05
+        # (#76): ferry133 ruled claude's auto & explicit memory never live on
+        # NFS. Changing this default was gated on every pre-ruling cluster
+        # migrating first and RECORDING its class in cluster.yaml, because
+        # `storageClassName` is immutable: on an unmigrated cluster the new
+        # default moves nothing — it renders a PVC the cluster cannot accept,
+        # and the only symptom is a pod that never starts while every
+        # Kustomization reads Ready. The previous default (default_storage_class,
+        # "whatever it renders TODAY") existed for exactly that reason; the
+        # gate was jg-jiahd#4 and jcom#5 both closing.
+        #
+        # Must sit AFTER the db_storage_class setdefault above — it reads the
+        # resolved value.
+        data.setdefault('claudecode_config_storage_class',
+                        data['db_storage_class'])
+        # explicit-memory PostgreSQL moved into jg-base as a base app (jgct#85).
+        # UNCONDITIONAL -- every default im has memory regardless of auth0, so
+        # this is here and NOT inside `if claudecode_auth0_enabled` (where a
+        # first draft wrongly put it: auth0:false clusters would then ship no
+        # password and memory would silently not connect).
+        if 'claudecode/postgres' in (data.get('extras') or []):
+            raise KeyError(
+                "extras contains 'claudecode/postgres', but since 2026-09-06 "
+                "the explicit-memory PostgreSQL ships from jg-base as a base "
+                "app (jgct#85). Drop it from extras -- the base app replaces it "
+                "and its Kustomization/PVCs are adopted by name.")
+        # Password derived like the cookie secret; cluster.yaml may override to
+        # rotate. The DATABASE_URL is DERIVED from it, never a field -- a
+        # hand-written URL would drift from the password it carries. Form (no
+        # port, .svc short name) matches jcom's hand-set value, measured working
+        # with memory MCP. Composed here, not in jg-base from the password,
+        # because the conditional envsubst that would need parses wrong on both
+        # branches in flux v2.7.4 (jg-base#73).
+        if not data.get('claudecode_postgres_password'):
+            data['claudecode_postgres_password'] = \
+                claudecode_postgres_password(data['cluster_name'])
+        data['claude_code_database_url'] = (
+            f"postgresql://claudecode:{data['claudecode_postgres_password']}"
+            f"@postgres.claudecode.svc/claudecode")
         # Whether the database extras render their NAS backup CronJob:
         # 'nfs' or 'none'. Derived, never declared — it is a restatement of
         # "is there a NAS", and a second copy of that fact would eventually
@@ -279,7 +567,86 @@ class Plugin(makejinja.plugin.Plugin):
         # Which claude-code instances stay up. Empty by default: each is a root
         # shell with cluster-admin that the tunnel makes reachable. Named here
         # rather than scaled by hand, which works until the next reconcile.
-        data.setdefault('claude_code_always_on', [])
+        # list() because the constant is module-level and mutable: without the
+        # copy every cluster rendered in one process shares one list, and an
+        # append anywhere edits the default for all of them. Do not "tidy" it.
+        data.setdefault('claude_instances', list(DEFAULT_CLAUDE_INSTANCES))
+        # "im" is the base instance's name and the base HelmRelease is also
+        # named `im` in the same namespace -- a rendered twin would have two
+        # Flux Kustomizations fighting over one object, each apply flipping
+        # ownership labels, and which one wins depends on reconcile timing.
+        # Refused at data() time, before any file is written. A cluster that
+        # wants a differently-configured default terminal renames its
+        # instance; a cluster that cannot accept the base im's hardwired
+        # Auth0 sets claudecode_auth0: false (which parks the base im on the
+        # empty im/disabled path) and names a basic-auth instance here.
+        if 'im' in data['claude_instances']:
+            raise KeyError(
+                "claude_instances contains 'im', but since 2026-09-06 the "
+                "default im instance ships from jg-base and this template no "
+                "longer renders it. Drop 'im' from claude_instances (and from "
+                "claude_code_always_on) -- the base instance replaces it, "
+                "PVCs are adopted by name -- or rename this instance.")
+        # Exactly one instance -> that one. More than one -> do not guess.
+        #
+        # `[:1]` was the first attempt and it is wrong, with the only two real
+        # examples against it: jg-jiahd and jcom both declare ["cc","im"] and
+        # both run **im**, the second one -- and the schema says why, four lines
+        # above this field: "jcom keeps `im` up for support and leaves `cc` at
+        # zero until it is needed." Picking first encodes the opposite rule, and
+        # the stray check below cannot catch it because `cc` IS in the list.
+        #
+        # Refusing to pick is this repo's existing answer to the same shape --
+        # provision.py `derive` refuses when more than one subnet is a candidate.
+        # It costs a cluster that declares two instances a `[]` default, which
+        # Step 5's "the instance actually answers" assertion then catches. That
+        # is the loud failure; a silently-wrong root shell is the quiet one.
+        if 'claude_code_always_on' not in data:
+            _inst = data['claude_instances']
+            data['claude_code_always_on'] = list(_inst) if len(_inst) == 1 else []
+            # `> 1`, deliberately not `!= 1`. Zero instances is a legal and
+            # deliberate configuration -- claude_instances: [] means this cluster
+            # does not want a web terminal, the schema puts no non-empty
+            # constraint on the field, and the template renders zero
+            # HelmReleases for it. Flagging it would fire on every render of a
+            # cluster that did nothing wrong, and the advice ("Name one") cannot
+            # be followed: there is nothing to name, and naming anything trips
+            # the stray-name KeyError below. That is jg-base#18's shape exactly
+            # -- a guard that flags correct input got silenced, and a silenced
+            # guard reads like coverage. Do not merge these two branches.
+            if len(_inst) > 1:
+                print(
+                    f"NOTE: claude_code_always_on is unset and claude_instances "
+                    f"names {len(_inst)} ({', '.join(_inst)}), so no EXTRA "
+                    f"instance is kept running (the base im from jg-base still "
+                    f"is, when claudecode_auth0 is on). Name one to keep: "
+                    f"claude_code_always_on: [\"<instance>\"]",
+                    file=sys.stderr,
+                )
+        # ⚠️ This default moved on 2026-08-31 (#57): it used to be []. An already
+        # delivered cluster that re-renders for an unrelated reason therefore
+        # gains a standing root shell it never asked for -- the same "a default
+        # only moves on re-render" note NAS_BACKUP, LONGHORN_BACKUP and #29's
+        # node_dns_servers each carry. Measured 2026-08-31: all five existing
+        # clusters already declare claude_code_always_on explicitly, so none of
+        # them moves today. That is true until one of them drops the line.
+        #
+        # And it moved AGAIN on 2026-09-06, with claude_instances itself: both
+        # default to [] now that the standing terminal is jg-base's im. The
+        # ratchet still holds -- nothing changes anywhere until a cluster
+        # re-renders, and the re-render that picks this up is the same one
+        # that flips claude-code-im on, so the swap is one commit per cluster.
+        # An always-on name that is not an instance renders nothing and says
+        # nothing -- the same shape as the allowlist override check further down,
+        # and the same fix: refuse at data() time, before any file is written.
+        stray = [n for n in data['claude_code_always_on']
+                 if n not in data['claude_instances']]
+        if stray:
+            raise KeyError(
+                f"claude_code_always_on names {', '.join(sorted(stray))}, which "
+                f"is not in claude_instances ({', '.join(data['claude_instances'])}). "
+                "That instance would render no replicas and no error, which is "
+                "indistinguishable from a cluster that was never given a way in.")
         # Auth0 OIDC in front of every claude-code instance, on by default.
         #
         # The alternative is ttyd basic auth, a single shared password in front
@@ -299,25 +666,121 @@ class Plugin(makejinja.plugin.Plugin):
             bool(data['claudecode_auth0']) if 'claudecode_auth0' in data
             else True)
         if data['claudecode_auth0_enabled']:
-            # Read auth0.json only for what cluster.yaml has not already
-            # answered. The clusters that configured Auth0 before the file
-            # existed spell all of it out inline, and requiring the file from
-            # them anyway would break their next `task configure` over a value
-            # they already have.
-            fields = ('domain', 'client_id', 'client_secret')
-            if not all(data.get(f'claudecode_auth0_{f}') for f in fields) \
-                    or not data.get('claudecode_allowed_emails'):
-                auth0 = auth0_config()
-                for field in fields:
-                    data.setdefault(f'claudecode_auth0_{field}', auth0[field])
-                # cluster.yaml wins where a cluster needs someone auth0.json
-                # does not list — the client's own address, say.
-                if auth0.get('allowed_emails'):
-                    data.setdefault('claudecode_allowed_emails',
-                                    auth0['allowed_emails'])
+            # The paragraph that stood here justified reading auth0.json for
+            # whatever cluster.yaml left out, on the grounds that requiring the
+            # file would break `task configure` for clusters that already spell
+            # everything out inline. Those clusters are unaffected — they set
+            # all four. What it also protected was the cluster that set none,
+            # and breaking THAT one is the point of `#64`. Removed rather than
+            # left to contradict the paragraph below it.
+            #
+            # 2026-08-25 ruling: each cluster gets its OWN Auth0 tenant. Until
+            # `#64` this block read auth0.json for whatever cluster.yaml had
+            # left out, which made "forgot to set it" and "deliberately shares
+            # a tenant" produce identical output — and the identical output was
+            # the shared one. Three clusters ended up on one tenant that way,
+            # past a runbook assertion whose prose said "registered under the
+            # same Google account" while nothing checked it.
+            #
+            # Sharing is still allowed, because a cluster may genuinely want it
+            # — it just has to say so. The flag is the whole difference between
+            # a decision and an accident.
+            # TWO TENANTS since 2026-09-06 (jgct#84, ferry133): auth0.json is
+            # the FACTORY tenant's file, and the base im -- the factory's own
+            # support agent, shipped by jg-base on every cluster -- is gated by
+            # it. cluster.yaml's claudecode_auth0_* are the CUSTOMER tenant, for
+            # the extra instances a cluster names in claude_instances.
+            #
+            # Reading auth0.json is therefore no longer opt-in and no longer a
+            # fallback for the customer fields: it is required whenever OIDC is
+            # on, because every cluster ships the base im. `#64`'s rule is not
+            # weakened, it is pointed the other way -- it stopped auth0.json
+            # silently becoming the customer's values; this stops the customer's
+            # values silently becoming the factory agent's gate.
+            factory = auth0_config()
+            for field in ('domain', 'client_id', 'client_secret'):
+                data[f'factory_auth0_{field}'] = factory[field]
+            # The allowlist is the door itself. Absent it, oauth2-proxy admits
+            # nobody and the base im -- the rescue path for a cluster whose
+            # Omni/SideroLink is down -- is unreachable, which reads from
+            # outside exactly like a broken cluster (measured 2026-09-06: an
+            # empty list gave a 403 that looked like a deployment fault). Fail
+            # loud at render instead of fail-closed at the door.
+            data['factory_allowed_emails'] = factory['allowed_emails']
+
+            # claudecode_auth0_shared meant "read the customer fields out of
+            # auth0.json". That is now precisely the thing that must not happen,
+            # so the flag is refused rather than ignored: ignoring it would
+            # leave a cluster believing it had opted into something.
+            if data.get('claudecode_auth0_shared'):
+                raise KeyError(
+                    "claudecode_auth0_shared is set, but since 2026-09-06 "
+                    "(jgct#84) auth0.json is the FACTORY tenant's file and the "
+                    "base im is gated by it on every cluster. The flag used to "
+                    "mean 'take my customer values from that file', which would "
+                    "now put a customer's extra instance behind the factory "
+                    "tenant. Drop the flag; set claudecode_auth0_* only if this "
+                    "cluster names extra instances in claude_instances.")
+
+            # The customer tenant is required only when there is a customer
+            # instance to gate. Every cluster used to need these four because
+            # every cluster rendered its own im; since #81 the im is a base app
+            # and a cluster with `claude_instances: []` has nothing of its own
+            # to put behind Auth0 -- demanding them there is asking for a tenant
+            # that nothing would use (all three live clusters are in that state
+            # today). `#64` still applies to instances that DO exist: declared,
+            # never inherited.
+            if data['claude_instances']:
+                fields = ('domain', 'client_id', 'client_secret')
+                missing = [f'claudecode_auth0_{f}' for f in fields
+                           if not data.get(f'claudecode_auth0_{f}')]
+                if not data.get('claudecode_allowed_emails'):
+                    missing.append('claudecode_allowed_emails')
+                if missing:
+                    raise KeyError(
+                        "claude_instances names "
+                        f"{', '.join(data['claude_instances'])}, and those are "
+                        "CUSTOMER instances behind the customer's own Auth0 "
+                        "tenant, but cluster.yaml is missing: "
+                        + ", ".join(missing)
+                        + ". They are not inherited from auth0.json -- that "
+                        "file is the factory tenant, which gates the base im "
+                        "only (jgct#84). Set them from this cluster's own "
+                        "tenant, or drop the extra instances.")
             if not data.get('claudecode_oauth2_cookie_secret'):
                 data['claudecode_oauth2_cookie_secret'] = oauth2_cookie_secret(
                     data['cluster_name'])
+            # Resolve the allowlist ONCE PER INSTANCE, here, so the template
+            # cannot silently fall back.
+            #
+            # The allowlist is the whole door: every other layer of separation
+            # between two instances on one cluster is already real (each has its
+            # own claude-config and claude-workspace PVC, so its own ~/.claude,
+            # keyring, login and history), and none of it means anything if both
+            # doors admit the same people. An address on the support instance
+            # that also opens the owner's instance drops the operator into the
+            # owner's signed-in session, on the owner's account and billing.
+            #
+            # An unknown key is a hard error, not a no-op. A misspelt instance
+            # name renders, deploys, and admits the global list — indis-
+            # tinguishable from working right up until someone tries the wrong
+            # door, and by then the wrong person is already inside. Raised from
+            # data(), which runs before any file is written, so a bad override
+            # costs a message rather than a half-written kubernetes/ tree.
+            instances = data['claude_instances']
+            by_instance = data.get('claudecode_allowed_emails_by_instance') or {}
+            unknown = [k for k in by_instance if k not in instances]
+            if unknown:
+                raise KeyError(
+                    "claudecode_allowed_emails_by_instance names "
+                    f"{', '.join(sorted(unknown))}, which is not in "
+                    f"claude_instances ({', '.join(instances)}). An override "
+                    "for an instance that does not exist would leave that "
+                    "instance on the global allowlist and say nothing.")
+            data['claudecode_allowed_emails_by_instance'] = {
+                name: by_instance.get(name, data.get('claudecode_allowed_emails', ''))
+                for name in instances
+            }
         # Backups are encrypted to the cluster's own age public key, taken from
         # .sops.yaml rather than added as another field to fill in. The key is
         # already there, it is already the thing that travels with the cluster
@@ -501,6 +964,23 @@ class Plugin(makejinja.plugin.Plugin):
             data.setdefault('is_single_node', len(data.get('nodes') or []) <= 1)
         else:
             data.setdefault('is_single_node', False)
+        # Down here because is_single_node is only known now. The base im and
+        # every claude instance are hostNetwork on :7681 with a REQUIRED pod
+        # anti-affinity (hostnetwork-group: claude-code), so on one node a
+        # second running instance never schedules -- it sits Pending, forever,
+        # and Pending is quiet. Extras kept at replicas 0 never schedule and
+        # are fine to declare; only an always-on extra collides with the base
+        # im. A note, not an error: the operator may be about to disable one.
+        if (data['is_single_node'] and data.get('claudecode_auth0_enabled')
+                and data.get('claude_code_always_on')):
+            print(
+                f"NOTE: single-node cluster with the base im enabled and "
+                f"claude_code_always_on="
+                f"{data['claude_code_always_on']}: both are hostNetwork on "
+                f":7681 with a required anti-affinity, so the always-on extra "
+                f"will sit Pending forever on this cluster.",
+                file=sys.stderr,
+            )
         data.setdefault('repository_branch', 'main')
         data.setdefault('repository_visibility', 'public')
 
@@ -512,6 +992,7 @@ class Plugin(makejinja.plugin.Plugin):
             basename,
             nthhost,
             b64encode,
+            ks_position_label,
         ]
 
 

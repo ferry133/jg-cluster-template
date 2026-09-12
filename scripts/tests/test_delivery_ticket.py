@@ -13,6 +13,15 @@ person could not reproduce.
 Nothing here calls `gh`. The paths that do are still unexercised — that is 3.9,
 and it is still open. A green run of this file is not evidence that the ticket
 commands work against GitHub, and it must not be read as such.
+
+Committed to `main` on 2026-09-12 by `#104`. Written 2026-08-26 on the branch
+`feat/8-provisioning-flow` (tip `df12239`), which has no PR; a `checkout` away
+from that branch on 2026-08-27 13:57 emptied `scripts/tests/`, and nothing said
+so for two weeks. Everything below this docstring is byte-identical to the copy
+on that branch — only this paragraph was added. Its two siblings,
+`test_provision.py` and `test_credential_inventory.py`, are still only there:
+their subjects (`provision.py`, `credential-inventory.py`) are not on `main`,
+and whether that branch merges is ferry133's undecided call.
 """
 
 from __future__ import annotations

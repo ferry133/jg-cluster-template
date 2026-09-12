@@ -31,11 +31,20 @@ Usage
   delivery-check.py dns          --domain DOMAIN [--token-env VAR]
   delivery-check.py flux         --kubeconfig PATH --expect-sha SHA
   delivery-check.py lan          --domain DOMAIN --expect-addr ADDR
+  delivery-check.py gateway      --node ADDR [--talosconfig PATH] [--routes-json PATH]
+  delivery-check.py deploy-key   --repo OWNER/NAME [--pubkey PATH]
+  delivery-check.py tunnel-cert  --domain DOMAIN [--cert PATH] [--token-env VAR]
+  delivery-check.py handover     --domain DOMAIN [--dir PATH] [--repo OWNER/NAME]
+                                 [--kubeconfig PATH] [--instance NAME]
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
+import contextlib
+import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -43,6 +52,7 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 
 PASS, FAIL, UNKNOWN = 0, 1, 2
@@ -511,6 +521,1346 @@ def check_lan(args) -> int:
     return PASS
 
 
+# --------------------------------------------------- default gateway (5)
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+
+def _merged_config(root: pathlib.Path):
+    """cluster.yaml unified with nodes.yaml, the way `task configure` does it."""
+    if not shutil.which("yq"):
+        return None, "yq is not on PATH — run this under `mise exec`"
+    files = [root / "cluster.yaml"]
+    if (root / "nodes.yaml").is_file():
+        files.append(root / "nodes.yaml")
+    if not files[0].is_file():
+        return None, f"{files[0]} not here — run this inside a cluster repo"
+    r = run(["yq", "eval-all", "-o=json", ". as $i ireduce ({}; . * $i)",
+             *[str(f) for f in files]])
+    if r.returncode != 0:
+        return None, f"yq could not read the config: {r.stderr.strip()[:140]}"
+    try:
+        return json.loads(r.stdout), None
+    except json.JSONDecodeError as e:
+        return None, f"the merged config did not decode as JSON: {e}"
+
+
+def _shipped_gateway(root: pathlib.Path):
+    """(address, provenance, error). provenance is "declared" or "assumed".
+
+    The address comes from the real `Plugin.data()`, never from a second copy
+    of the `.1` rule. `#32` cost the whole fleet its ability to render because
+    this file's neighbour held a copy of one value plugin.py owns, and the copy
+    stayed behind when the original changed.
+    """
+    raw, err = _merged_config(root)
+    if err:
+        return None, None, err
+    provenance = "declared" if "node_default_gateway" in raw else "assumed"
+    loader = root / "scripts" / "check-node-dns-path.py"
+    if not loader.is_file():
+        return None, None, f"{loader} not here — it owns the makejinja stub"
+    try:
+        spec = importlib.util.spec_from_file_location("_cndp", loader)
+        cndp = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cndp)
+        data = cndp.load_plugin().Plugin(dict(raw)).data()
+    except Exception as e:  # a real repo has auth0.json; a bare one does not
+        return None, provenance, f"could not render the config: {type(e).__name__}: {str(e)[:140]}"
+    return data.get("node_default_gateway"), provenance, None
+
+
+def _route_docs(args):
+    """Whatever talosctl says, as a list of decoded JSON documents."""
+    if args.routes_json:
+        f = pathlib.Path(args.routes_json)
+        if not f.is_file():
+            return None, f"{f} not here"
+        text = f.read_text()
+    else:
+        if not shutil.which("talosctl"):
+            return None, "talosctl is not on PATH"
+        cmd = ["talosctl"]
+        if args.talosconfig:
+            cmd += ["--talosconfig", args.talosconfig]
+        cmd += ["-n", args.node, "get", "routes", "-o", "json"]
+        r = run(cmd, timeout=args.timeout)
+        if r.returncode != 0:
+            return None, f"talosctl failed: {(r.stderr or r.stdout).strip()[:200]}"
+        text = r.stdout
+    docs, dec, i = [], json.JSONDecoder(), 0
+    while i < len(text):
+        if text[i].isspace():
+            i += 1
+            continue
+        try:
+            doc, end = dec.raw_decode(text, i)
+        except json.JSONDecodeError as e:
+            return None, f"talosctl output did not decode as JSON at offset {i}: {e}"
+        docs.append(doc)
+        i = end
+    return docs, None
+
+
+def check_gateway(args) -> int:
+    """The nodes' real default route, against the one this repo ships.
+
+    `#49`: `node_default_gateway` defaults to `.1` of `node_cidr`, which is an
+    assumption about someone else's LAN. It is invisible when wrong — configure
+    succeeds, `cue vet` passes, the cluster boots, and nothing leaves the LAN —
+    and it is invisible when right for the wrong reason, because the operator's
+    own LANs are all `.1`, so the assumed string and the measured one match on
+    every cluster this lab can test.
+
+    Positive control, per this file's rule: a node always has routes. Zero
+    routes back is what asking the wrong question looks like, not a node
+    without a gateway, so it reports UNKNOWN rather than a missing default.
+
+    Two default routes are not resolved by picking one — same rule as multiple
+    candidate subnets for `node_cidr`.
+    """
+    shipped, provenance, err = _shipped_gateway(REPO_ROOT)
+    if err:
+        huh(f"cannot tell what this repo ships: {err}")
+        return UNKNOWN
+
+    docs, err = _route_docs(args)
+    if err:
+        huh(f"cannot measure the node's routes: {err}")
+        print(f"      This repo would ship {shipped} ({provenance}). Unverified.")
+        return UNKNOWN
+
+    if not docs:
+        huh("talosctl returned no routes at all")
+        print("      Every node has routes, so this is the wrong question being")
+        print("      asked — wrong node, wrong resource name, or no permission —")
+        print("      not a node without a default gateway.")
+        return UNKNOWN
+
+    specs = [d.get("spec", d) for d in docs]
+    if not any("gateway" in sp for sp in specs):
+        keys = sorted({k for sp in specs if isinstance(sp, dict) for k in sp})
+        huh(f"no route carries a `gateway` key across {len(docs)} routes")
+        print(f"      Keys seen: {', '.join(keys) or 'none'}")
+        print("      The selector below expects `gateway` and `dst`. If talosctl")
+        print("      names them differently, fix the two names here — do not")
+        print("      loosen this into picking whatever is first.")
+        return UNKNOWN
+
+    defaults = [
+        sp for sp in specs
+        if isinstance(sp, dict) and sp.get("gateway") and not sp.get("dst")
+    ]
+    # node_default_gateway is `net.IPv4` in cluster.schema.cue, so an IPv6
+    # default route is not a second candidate for it — it is a different
+    # question. Measured 2026-08-30 on a real 145-route capture from a jg-jiahd
+    # node: 110 of them inet6, one of those with an empty dst (no gateway, so
+    # it never reached this line). A node that does have an IPv6 default
+    # gateway would have made the count two and this check would have refused
+    # to choose — a false alarm on a healthy dual-stack node, which is the
+    # failure mode that gets guards switched off.
+    #
+    # `family` absent is kept rather than dropped: an unknown shape should
+    # widen the answer into "cannot tell", never narrow it into a confident one.
+    other = sorted({sp["gateway"] for sp in defaults
+                    if sp.get("family") not in (None, "", "inet4")})
+    found = sorted({sp["gateway"] for sp in defaults
+                    if sp.get("family") in (None, "", "inet4")})
+    if other:
+        print(f"      ({len(other)} non-IPv4 default route(s) not compared: "
+              f"{', '.join(other)} — node_default_gateway is IPv4)")
+
+    if not found:
+        huh(f"{len(docs)} routes, none of them a default route")
+        print("      A default route is one with a gateway and no destination.")
+        return UNKNOWN
+    if len(found) > 1:
+        huh(f"{len(found)} default routes: {', '.join(found)}")
+        print("      Refusing to pick. Which one the node uses depends on metric")
+        print("      and interface, and guessing here would ship a number that")
+        print("      looks measured. Decide on the node, then declare it.")
+        return UNKNOWN
+
+    measured = found[0]
+    if measured != shipped:
+        bad(f"this repo ships {shipped} ({provenance}); the node routes via {measured}")
+        print("      Set node_default_gateway in cluster.yaml to the measured")
+        print("      value and re-run `task configure`. Left alone, the cluster")
+        print("      comes up and nothing reaches the internet.")
+        return FAIL
+
+    if provenance == "assumed":
+        ok(f"default route {measured} — matches, but cluster.yaml does not say so")
+        print("      Declare it anyway: it is right by coincidence today, and")
+        print("      the next node_cidr change silently moves it.")
+        return PASS
+    ok(f"default route {measured} — declared in cluster.yaml and measured on the node")
+    return PASS
+
+
+# ------------------------------------------------- deploy key (6)
+
+def check_deploy_key(args) -> int:
+    """The deploy key exists locally AND GitHub has it.
+
+    `#56`: `task init` runs `ssh-keygen` and the template renders the private
+    half into a Secret, so every artefact a person would look at is present —
+    and `gh api repos/<repo>/keys` was empty on jg-janncotcc. Nothing in either
+    repo registers the public half, and on a PUBLIC repo nothing ever notices,
+    because Flux clones anonymously. It surfaces only when the repo goes
+    private, as `GitRepository READY=False` during a provisioning run.
+
+    Registering is a runbook step (fleet-ops), not something this repo should
+    do behind an operator's back — a write to someone's GitHub account is not a
+    side effect of a check. Detecting it is this repo's half.
+
+    Positive control: the local public key is compared to what GitHub returns,
+    so a repo carrying somebody else's key is a finding rather than a pass.
+    "The list is not empty" would accept exactly that.
+    """
+    pub = pathlib.Path(args.pubkey)
+    if not pub.is_file():
+        huh(f"{pub} is not here — run `task init` in the cluster repo first")
+        return UNKNOWN
+    if not shutil.which("gh"):
+        huh("gh is not on PATH")
+        return UNKNOWN
+
+    # ssh-keygen writes "<type> <base64> <comment>"; GitHub returns and compares
+    # the first two fields only, so the comment must not take part.
+    local = " ".join(pub.read_text().split()[:2])
+
+    r = run(["gh", "api", f"repos/{args.repo}/keys", "--jq", ".[].key"])
+    if r.returncode != 0:
+        huh(f"could not list deploy keys: {r.stderr.strip()[:160]}")
+        print("      Not reporting a missing key: no answer and an empty answer")
+        print("      are different, and only one of them is a finding.")
+        return UNKNOWN
+
+    remote = [" ".join(k.split()[:2]) for k in r.stdout.splitlines() if k.strip()]
+    if local in remote:
+        ok(f"{args.repo} carries this repo's deploy key ({len(remote)} key(s) registered)")
+        return PASS
+
+    if not remote:
+        bad(f"{args.repo} has no deploy keys at all")
+    else:
+        bad(f"{args.repo} has {len(remote)} deploy key(s), none of them this one")
+    print("      Register it:")
+    print(f"        gh api -X POST repos/{args.repo}/keys \\")
+    print(f"          -f title='flux' -f key=\"$(cat {pub})\" -F read_only=true")
+    print("      Until then a private repo cannot be synced: Flux authenticates")
+    print("      with the matching private half and GitHub will refuse it.")
+    return FAIL
+
+
+# ------------------------------------------------ tunnel cert (7)
+
+CERT_BLOCK = re.compile(
+    r"-----BEGIN ARGO TUNNEL TOKEN-----(.*?)-----END ARGO TUNNEL TOKEN-----", re.S
+)
+
+
+def _cert_binding(cert: pathlib.Path) -> tuple[dict, str | None]:
+    """The accountID/zoneID a cloudflared cert is bound to.
+
+    The file is a base64 JSON blob with exactly three keys: `accountID`,
+    `zoneID` and `apiToken`. **The third is a credential.** Only the first two
+    are ever returned, and nothing here formats the parsed object as a whole —
+    a check that leaks the secret it is validating is a worse trade than the
+    check is worth.
+    """
+    try:
+        text = cert.read_text()
+    except OSError as e:
+        return {}, f"could not read it: {e}"
+    m = CERT_BLOCK.search(text)
+    if not m:
+        return {}, "no ARGO TUNNEL TOKEN block in it — is this a cloudflared cert?"
+    try:
+        payload = json.loads(base64.b64decode("".join(m.group(1).split())))
+    except Exception as e:  # noqa: BLE001 — malformed is "cannot tell", not a finding
+        return {}, f"the token block did not decode: {type(e).__name__}"
+    if not isinstance(payload, dict):
+        return {}, "the token block is not an object"
+    return (
+        {k: payload.get(k) for k in ("accountID", "zoneID") if payload.get(k)},
+        None,
+    )
+
+
+def check_tunnel_cert(args) -> int:
+    """Which Cloudflare account `cloudflared tunnel login` actually bound to.
+
+    Nothing checks this today, and every downstream step passes when it is
+    wrong: `cloudflared tunnel create` succeeds, `cloudflare-tunnel.json` is
+    written, `task configure` renders. The cluster comes up and the tunnel
+    answers **1033**.
+
+    Measured 2026-09-02 (`#63`): re-running the runbook's Step 2 opened a
+    browser already signed in as the operator, while the account being
+    authorised had to be the customer's. The authorisation page even lists a
+    `Moved` remnant of the old account with the right name and an `Active`
+    plan. What stopped it was a person reading the screen.
+
+    So this is the after-the-fact half. It cannot prevent clicking Authorize in
+    the wrong window — nothing measured that day could — it catches it before
+    the cert is used for anything.
+
+    The filename is never evidence. `fleet-ops docs/deploy/manual.md` Stage 4
+    says so, and the fixture that proves it is called `cert.pem.for.janncot`
+    while being bound to the operator's own account.
+    """
+    cert = pathlib.Path(args.cert).expanduser()
+    if not cert.is_file():
+        huh(f"{cert} is not here")
+        print("      That is also the state right before `cloudflared tunnel")
+        print("      login` — absent and wrong are different answers, so this")
+        print("      reports neither pass nor fail.")
+        return UNKNOWN
+
+    binding, err = _cert_binding(cert)
+    if err:
+        huh(f"{cert}: {err}")
+        return UNKNOWN
+    if "accountID" not in binding or "zoneID" not in binding:
+        huh(f"{cert} carries {sorted(binding) or 'nothing'} — expected accountID and zoneID")
+        return UNKNOWN
+
+    token = os.environ.get(args.token_env or "CLOUDFLARE_TOKEN", "")
+    if not token:
+        huh(_no_token(args.token_env, args.domain))
+        print(f"      The cert is bound to account {binding['accountID']},")
+        print(f"      zone {binding['zoneID']}. Compare by hand, or set the token.")
+        return UNKNOWN
+
+    zone, err = _cf_zone(args.domain, args.token_env)
+    if zone is None:
+        huh(err)
+        print("      (the same query backs handover cell 2, which compares the")
+        print("      tunnel credential's AccountTag against this zone)")
+        return UNKNOWN
+
+    want_zone = zone.get("id")
+    want_account = (zone.get("account") or {}).get("id")
+    got_zone, got_account = binding["zoneID"], binding["accountID"]
+
+    wrong = []
+    if got_account != want_account:
+        wrong.append(("account", got_account, want_account))
+    if got_zone != want_zone:
+        wrong.append(("zone", got_zone, want_zone))
+
+    if not wrong:
+        ok(f"{cert.name} is bound to the account and zone that own {args.domain}")
+        print(f"      account {got_account}  zone {got_zone}")
+        return PASS
+
+    bad(f"{cert.name} is bound to the wrong Cloudflare account for {args.domain}")
+    for what, got, want in wrong:
+        print(f"      {what}: cert says {got}")
+        print(f"      {' ' * len(what)}  {args.domain} belongs to {want}")
+    print("      Re-run `cloudflared tunnel login` in a browser signed in as the")
+    print("      account that owns this domain, and check the window before")
+    print("      authorising. A tunnel built on this cert answers 1033 and")
+    print("      nothing before that point complains.")
+    return FAIL
+
+
+# ------------------------------------------------- handover (§7.1a, jgct#102)
+#
+# Step 5 of the provisioning runbook is the last gate before a cluster is
+# handed over, and it is 22 cells long. Five already had subcommands here, four
+# can only be answered by a person, and the thirteen in between were executable
+# with nothing behind them (jgct#102).
+#
+# One subcommand rather than thirteen, decided in that issue: eight subcommands
+# means the person on site runs seven of them on a bad day, and **the one not
+# run reads exactly like the one that passed**. A table loses a row visibly; a
+# missing invocation loses nothing visibly.
+#
+# No run of this is authoritative. Cells need different vantage points and
+# different tools, so what Step 5 needs is one PASS per cell from somewhere
+# that could measure it. That is why every 2 below carries a KIND: "go stand
+# somewhere else" and "install something here" are both 2, and their next
+# actions are opposite -- collapsing them into one count is the same mistake
+# as collapsing "cannot measure" into "passed" (FO-runbook [5fe39a],
+# jgct#102).
+
+# Why a cell could not answer. The point of separating these is the next
+# action, which differs for each.
+NEED_PLACE = "vantage"    # re-run from a place that can see it
+NEED_TOOL = "tool"        # install or configure something here
+NEED_HUMAN = "person"     # no machine can answer this half
+NOT_YET = "phase2"        # jgct#102 phase 2
+
+WHY_TEXT = {
+    NEED_PLACE: "need a different vantage point — re-run from there",
+    NEED_TOOL: "need a tool or credential here — install/set it, same place",
+    NEED_HUMAN: "a person must answer this half; no run of this can",
+    NOT_YET: "not implemented yet (jgct#102, a later phase)",
+}
+
+
+def _no_token(token_env: str, domain: str) -> str:
+    """One wording for one condition. Two wordings for the same state read as
+    two different states to whoever greps the output."""
+    return (f"${token_env or 'CLOUDFLARE_TOKEN'} not set — cannot ask Cloudflare "
+            f"which account owns {domain}")
+
+
+def _is_cluster_repo(d: pathlib.Path) -> bool:
+    """Is this a cluster's own directory, or somewhere else entirely?
+
+    Same marker _merged_config already uses ("run this inside a cluster repo"),
+    and it decides the meaning of a missing file: inside a cluster repo, absent
+    means the thing was never created (FAIL); outside one, absent means this
+    check is looking in the wrong place (UNKNOWN). Cells 2 and 3 gave opposite
+    answers to that same question until FO-runbook [5fe39a] put them side by
+    side on one empty directory -- and both answers were wrong, in opposite
+    directions.
+    """
+    return (d / "cluster.yaml").is_file()
+
+
+def _cf_zone(domain: str, token_env: str) -> tuple[dict | None, str | None]:
+    """The one Cloudflare zone named `domain`, or a reason there is no answer.
+
+    Shared with check_tunnel_cert rather than copied: two copies of a
+    Cloudflare query would drift, and the copy that drifts is the one that
+    keeps returning a comfortable answer.
+    """
+    token = os.environ.get(token_env or "CLOUDFLARE_TOKEN", "")
+    if not token:
+        return None, _no_token(token_env, domain)
+    req = urllib.request.Request(
+        f"https://api.cloudflare.com/client/v4/zones?name={domain}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            body = json.load(r)
+    except Exception as e:  # noqa: BLE001
+        return None, f"could not query Cloudflare: {e}"
+    zones = body.get("result") or []
+    if len(zones) != 1:
+        return None, (f"Cloudflare returned {len(zones)} zones named {domain} — "
+                      f"zero means this token cannot see it (a finding, but not "
+                      f"this one); more than one would mean picking, which "
+                      f"invents an answer")
+    return zones[0], None
+
+
+def _curl_headers(url: str, timeout: int = 15) -> tuple[int | None, dict, str | None]:
+    """(status, headers, error) for one request, WITHOUT following redirects.
+
+    The redirect is the assertion in cell 4, so following it would throw away
+    the thing being measured.
+    """
+    if not shutil.which("curl"):
+        return None, {}, "curl is not on PATH"
+    r = run(["curl", "-sS", "-o", os.devnull, "-D", "-", "-m", str(timeout),
+             "--max-redirs", "0", url])
+    if r.returncode != 0:
+        return None, {}, (r.stderr.strip()[:160] or f"curl exited {r.returncode}")
+    status, hdrs = None, {}
+    for line in r.stdout.splitlines():
+        if line.startswith("HTTP/"):
+            parts = line.split()
+            status = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+            hdrs = {}
+        elif ":" in line:
+            k, v = line.split(":", 1)
+            hdrs[k.strip().lower()] = v.strip()
+    return status, hdrs, None
+
+
+def cell_tunnel_account(args) -> tuple[int, str, str | None]:
+    """2. The tunnel was created in the account that owns the zone.
+
+    Not merged with `tunnel-cert`, deliberately, and each names the other in
+    its output. They read files produced by different commands -- cert.pem by
+    `cloudflared tunnel login`, cloudflare-tunnel.json by `tunnel create` --
+    so "the two agree" is an inference, not an assertion. Merged, either
+    failure would hide behind the other, and all three roads end at 1033.
+    """
+    d = pathlib.Path(args.dir)
+    p = d / args.tunnel_credentials
+    if not p.is_file():
+        if not _is_cluster_repo(d):
+            return UNKNOWN, (f"{d} is not a cluster repo (no cluster.yaml), so "
+                             f"a missing {args.tunnel_credentials} says nothing "
+                             f"— run this in the cluster's directory"), NEED_PLACE
+        return FAIL, (f"{p} is not here, in a cluster repo that has a "
+                      f"cluster.yaml — `cloudflared tunnel create` never "
+                      f"produced a credential (sibling check: tunnel-cert)"), None
+    try:
+        tag = json.loads(p.read_text()).get("AccountTag") or ""
+    except json.JSONDecodeError as e:
+        return FAIL, f"{p} did not decode as JSON: {e}", None
+    if not tag:
+        return FAIL, f"{p} has no AccountTag — not a `tunnel create` credential", None
+    zone, err = _cf_zone(args.domain, args.token_env)
+    if zone is None:
+        return UNKNOWN, f"{err} (sibling check: tunnel-cert)", NEED_TOOL
+    want = (zone.get("account") or {}).get("id")
+    if tag == want:
+        return PASS, f"tunnel and {args.domain} are both in account {want}", None
+    return FAIL, (f"tunnel was created in account {tag}, but {args.domain} "
+                  f"belongs to {want} — `cloudflared tunnel create` ran while "
+                  f"logged into the wrong account (tunnel-cert checks the other "
+                  f"half, the login cert)"), None
+
+
+def cell_factory_auth0(args) -> tuple[int, str, str | None]:
+    """3. The factory Auth0 file is in the cluster directory and complete.
+
+    Key NAMES and lengths only. The file holds a client_secret and this output
+    gets pasted into handover notes.
+    """
+    d = pathlib.Path(args.dir)
+    p = d / args.auth0_json
+    if not p.is_file():
+        if not _is_cluster_repo(d):
+            return UNKNOWN, (f"{d} is not a cluster repo (no cluster.yaml), so "
+                             f"a missing {args.auth0_json} says nothing — run "
+                             f"this in the cluster's directory"), NEED_PLACE
+        return FAIL, (f"{p} is not here — the base im is Auth0-gated on every "
+                      f"cluster (jgct#84), so a missing factory file means no "
+                      f"rescue terminal at all"), None
+    try:
+        data = json.loads(p.read_text())
+    except json.JSONDecodeError as e:
+        return FAIL, f"{p} did not decode as JSON: {e}", None
+    missing = [k for k in ("domain", "client_id", "client_secret", "allowed_emails")
+               if not data.get(k)]
+    if missing:
+        return FAIL, (f"{p} is missing or has empty: {', '.join(missing)} — an "
+                      f"empty allowed_emails renders a gate that admits nobody, "
+                      f"which looks like a broken cluster"), None
+    emails = data["allowed_emails"]
+    n = len(emails) if isinstance(emails, (list, tuple)) else 1
+    return PASS, (f"{p.name}: domain={data['domain']}, client_id "
+                  f"({len(str(data['client_id']))} chars), client_secret "
+                  f"({len(str(data['client_secret']))} chars), allowed_emails "
+                  f"({n} entries)"), None
+
+
+def cell_im_front_door(args) -> tuple[int, str, str | None]:
+    """4. im's front door redirects to the factory tenant.
+
+    Returns UNKNOWN even when the redirect is right, on purpose. A correct 302
+    proves oauth2-proxy is up and pointed at the right tenant; it does NOT
+    prove the callback URL is registered in that Auth0 application, and that
+    failure appears only after a human logs in. Reporting 0 would answer a
+    question this cannot see (jgct#102, cell 4).
+    """
+    host = f"{args.instance}.{args.domain}"
+    status, hdrs, err = _curl_headers(f"https://{host}/")
+    if err:
+        return UNKNOWN, f"could not reach https://{host}/ — {err}", NEED_TOOL
+    if status == 503:
+        return FAIL, (f"https://{host}/ returns 503 — oauth2-proxy is not "
+                      f"running, and in OIDC mode ttyd binds to loopback, so "
+                      f"there is no way in at all"), None
+    if status not in (301, 302, 303, 307, 308):
+        return FAIL, f"https://{host}/ returned {status}, not a redirect to Auth0", None
+    loc = hdrs.get("location", "")
+    tenant = ""
+    ap = pathlib.Path(args.dir) / args.auth0_json
+    if ap.is_file():
+        try:
+            tenant = json.loads(ap.read_text()).get("domain") or ""
+        except json.JSONDecodeError:
+            tenant = ""
+    if "/authorize" not in loc:
+        return FAIL, f"https://{host}/ redirects to {loc[:80]}, not an /authorize", None
+    if tenant and tenant not in loc:
+        return FAIL, (f"https://{host}/ redirects to {loc[:80]} — a different "
+                      f"tenant from {args.auth0_json}'s {tenant}"), None
+    where = f"the tenant in {args.auth0_json}" if tenant else "an /authorize endpoint"
+    return UNKNOWN, (f"{host} redirects to {where}: the door is up and pointed "
+                     f"right. Unverifiable from here: whether "
+                     f"https://{host}/oauth2/callback is registered in that "
+                     f"Auth0 application — that failure appears after login"), NEED_HUMAN
+
+
+def cell_private_repo(args) -> tuple[int, str, str | None]:
+    """5. Three things about a private per-user repo, all of which must hold.
+
+    Phase 1 owns the two that need no cluster; the FluxInstance sync line is
+    phase 2 and says so rather than reporting a bare "unchecked" -- except
+    when a --kubeconfig is on hand, in which case not looking would be
+    throwing away a measurement to keep a tidy phase boundary.
+
+    The deploy-key third calls check_deploy_key rather than restating it: a
+    second implementation drifts, and the copy that drifts keeps passing.
+    """
+    parts, worst, kinds = [], PASS, set()
+
+    def worsen(rc, kind=None):
+        # Every reason, not the first one. This cell can be 2 for three
+        # different reasons at once, and keeping only the first hid it from the
+        # phase-2 list: whoever lands phase 2 would not know half of cell 5 was
+        # still missing (FO-runbook [5fe39a] on PR#103).
+        nonlocal worst
+        if rc == UNKNOWN and kind:
+            kinds.add(kind)
+        if rc == FAIL:
+            worst = FAIL
+        elif rc == UNKNOWN and worst != FAIL:
+            worst = UNKNOWN
+
+    if not args.repo:
+        parts.append("--repo not given: GitHub visibility unchecked")
+        worsen(UNKNOWN, NEED_TOOL)
+    elif not shutil.which("gh"):
+        parts.append("gh is not on PATH: visibility unchecked")
+        worsen(UNKNOWN, NEED_TOOL)
+    else:
+        r = run(["gh", "repo", "view", args.repo, "--json", "visibility"])
+        if r.returncode != 0:
+            parts.append(f"gh could not read {args.repo}: {r.stderr.strip()[:80]}")
+            worsen(UNKNOWN, NEED_TOOL)
+        else:
+            vis = (json.loads(r.stdout or "{}").get("visibility") or "").upper()
+            if vis == "PRIVATE":
+                parts.append(f"{args.repo} is PRIVATE")
+            else:
+                parts.append(f"{args.repo} is {vis or 'unknown'}, not PRIVATE")
+                worsen(FAIL)
+
+    if not args.kubeconfig:
+        # Implemented since phase 1 -- it runs the moment a kubeconfig is on
+        # hand. Absent one, this is a vantage problem, and calling it "not
+        # implemented" put it in the same list as the cells nobody has written.
+        parts.append("FluxInstance sync line: needs --kubeconfig to be read")
+        worsen(UNKNOWN, NEED_PLACE)
+    else:
+        r = run(["kubectl", "--kubeconfig", args.kubeconfig, "-n", "flux-system",
+                 "get", "fluxinstance", "flux", "-o", "json"])
+        if r.returncode != 0:
+            parts.append(f"FluxInstance unreadable: {r.stderr.strip()[:80]}")
+            worsen(UNKNOWN, NEED_PLACE)
+        else:
+            sync = (json.loads(r.stdout or "{}").get("spec") or {}).get("sync") or {}
+            url, secret = sync.get("url", ""), sync.get("pullSecret", "")
+            trouble = []
+            if not url.startswith("ssh://"):
+                trouble.append(f"sync url is {url[:40]!r}, not ssh://")
+            if secret != "github-deploy-key":
+                trouble.append(f"pullSecret is {secret!r}, not github-deploy-key")
+            if trouble:
+                parts.append("; ".join(trouble))
+                worsen(FAIL)
+            else:
+                parts.append("FluxInstance syncs over ssh:// with github-deploy-key")
+
+    if not args.repo:
+        parts.append("deploy-key: skipped, no --repo")
+        worsen(UNKNOWN, NEED_TOOL)
+    else:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = check_deploy_key(args)
+        first = re.sub(r"\s+", " ",
+                       (buf.getvalue().splitlines() or ["(no output)"])[0]).strip()
+        parts.append(f"deploy-key -> {first[:100]}")
+        worsen(rc, NEED_TOOL)
+
+    return worst, " | ".join(parts), (kinds if worst == UNKNOWN else None)
+
+
+def cell_echo_ext(args) -> tuple[int, str, str | None]:
+    """8. The external echo answers, and answers through Cloudflare.
+
+    200 alone is not the assertion: the same 200 comes back when the name
+    resolves to something on the LAN. `cf-ray` is what says the request
+    actually crossed Cloudflare, which is the path being handed over.
+    """
+    host = f"echo-ext.{args.domain}"
+    status, hdrs, err = _curl_headers(f"https://{host}/")
+    if err:
+        return UNKNOWN, f"could not reach https://{host}/ — {err}", NEED_TOOL
+    if status != 200:
+        return FAIL, f"https://{host}/ returned {status}, not 200", None
+    if "cf-ray" not in hdrs:
+        return FAIL, (f"https://{host}/ returned 200 with no cf-ray header — "
+                      f"answered by something other than Cloudflare, so this "
+                      f"measured a local shortcut, not the public path"), None
+    return PASS, f"{host} 200 with cf-ray {hdrs['cf-ray'][:20]}", None
+
+
+def _doh_a(name: str) -> tuple[list[str], str | None]:
+    """A records for `name` from a public resolver, never the local one.
+
+    Cell 13 exists because the local resolver answers for the LAN: an endpoint
+    of `http://10.9.1.12:9000` returned 200 from the lab bench. Asking a
+    resolver outside the building is the whole point.
+    """
+    url = ("https://cloudflare-dns.com/dns-query?name="
+           + urllib.parse.quote(name) + "&type=A")
+    req = urllib.request.Request(url, headers={"accept": "application/dns-json"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.load(r)
+    except Exception as e:  # noqa: BLE001
+        return [], f"DoH query failed: {e}"
+    return sorted({a["data"] for a in data.get("Answer", []) if a.get("type") == 1}), None
+
+
+def _is_public_v4(addr: str) -> bool:
+    try:
+        parts = [int(x) for x in addr.split(".")]
+    except ValueError:
+        return False
+    if len(parts) != 4:
+        return False
+    a, b = parts[0], parts[1]
+    if a in (10, 127) or (a == 192 and b == 168) or (a == 172 and 16 <= b <= 31):
+        return False
+    if a == 169 and b == 254:
+        return False
+    return True
+
+
+def _kubectl(args, *rest: str) -> tuple[bool, str, str]:
+    """(ok, stdout, reason). No --kubeconfig is a vantage problem, not a fail."""
+    if not args.kubeconfig:
+        return False, "", "no --kubeconfig: this run cannot see the cluster"
+    if not shutil.which("kubectl"):
+        return False, "", "kubectl is not on PATH"
+    r = run(["kubectl", "--kubeconfig", args.kubeconfig, *rest])
+    if r.returncode != 0:
+        return False, "", r.stderr.strip()[:140] or f"kubectl exited {r.returncode}"
+    return True, r.stdout, ""
+
+
+def _secret_values(args, ns: str, name: str) -> tuple[dict | None, str | None]:
+    """Decoded keys of one Secret.
+
+    The values come back so a check can assert their shape; NOTHING here may
+    print one. Cells 11 and 13 read a capability URL and an endpoint out of
+    these, and this output gets pasted into handover notes.
+    """
+    okc, out, err = _kubectl(args, "-n", ns, "get", "secret", name, "-o", "json")
+    if not okc:
+        return None, err
+    try:
+        raw = (json.loads(out).get("data") or {})
+    except json.JSONDecodeError as e:
+        return None, f"secret {ns}/{name} did not decode as JSON: {e}"
+    vals = {}
+    for k, v in raw.items():
+        try:
+            vals[k] = base64.b64decode(v).decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            vals[k] = ""
+    return vals, None
+
+
+def _dig(resolver: str, name: str, timeout: int = 5) -> tuple[list[str], str | None]:
+    if not shutil.which("dig"):
+        return [], "dig is not on PATH"
+    r = run(["dig", f"@{resolver}", "+short", f"+time={timeout}", "+tries=1", "A", name])
+    if r.returncode != 0:
+        return [], r.stderr.strip()[:120] or f"dig exited {r.returncode}"
+    return [ln.strip() for ln in r.stdout.splitlines()
+            if ln.strip() and not ln.strip().endswith(".")], None
+
+
+def _newest_completed_job_log(args) -> tuple[str | None, str, str | None, str | None]:
+    """(job name, its log, reason there is none).
+
+    One reader for cells 7 and 12: they are asking different questions of the
+    same run, and two readers would drift into asking them of two different
+    runs.
+
+    "It ran" and "you can still see what it printed" are separate facts. A
+    Job object outlives its pod, so a scheduled run whose pod has been
+    reclaimed leaves the first true and the second false -- and only the second
+    can answer these cells. That case is UNKNOWN, never a pass.
+    """
+    okj, jout, jerr = _kubectl(args, "-n", "monitoring", "get", "jobs",
+                              "-l", "app=daily-check", "-o", "json")
+    if not okj:
+        # Cannot reach the cluster at all: a vantage problem, not a "wait for
+        # the schedule" problem. The two 2s have opposite next actions.
+        return None, "", jerr, NEED_PLACE
+    jobs = [j for j in json.loads(jout or "{}").get("items", [])
+            if (j.get("status") or {}).get("succeeded", 0)]
+    if not jobs:
+        return None, "", "no completed daily-check Job", NEED_TOOL
+    jobs.sort(key=lambda j: (j.get("status") or {}).get("completionTime") or "")
+    name = jobs[-1]["metadata"]["name"]
+    okl, logs, lerr = _kubectl(args, "-n", "monitoring", "logs", f"job/{name}",
+                              "--tail", "400")
+    if not okl or not logs.strip():
+        return name, "", (f"job/{name} completed but its log is gone "
+                          f"({lerr or 'empty output'}) — the pod was reclaimed. "
+                          f"That it ran and what it printed are different "
+                          f"facts"), NEED_TOOL
+    return name, logs, None, None
+
+
+def cell_node_dns_path(args) -> tuple[int, str, str | None]:
+    """6. NODE_DNS_PATH is `lan`, and the resolver answers BOTH questions.
+
+    Unset derives to `public` in silence and turns daily-check's check 18 into
+    a `➖`, which travels in the same email as a pass. And a resolver is only
+    the right one if it answers a public name AND a split-horizon one: the
+    cluster's own k8s-gateway address fails the first, which is why one dig is
+    not enough (jgct#102, cell 6).
+    """
+    vals, err = _secret_values(args, "monitoring", "daily-check-config")
+    if vals is None:
+        return UNKNOWN, err, NEED_PLACE
+    got = (vals.get("NODE_DNS_PATH") or "").strip()
+    if got != "lan":
+        return FAIL, (f"NODE_DNS_PATH is {got or '(empty)'!r}, not 'lan' — unset "
+                      f"derives to public in silence and check 18 becomes a ➖, "
+                      f"which reads like a pass in the same email"), None
+    if not args.resolver:
+        return UNKNOWN, ("NODE_DNS_PATH is 'lan'. The resolver itself is "
+                         "unchecked: pass --resolver ADDR (the candidate from "
+                         "Step 5) so both questions get asked"), NEED_TOOL
+    pub, perr = _dig(args.resolver, "ghcr.io")
+    if perr:
+        return UNKNOWN, f"dig unavailable: {perr}", NEED_TOOL
+    internal = f"internal.{args.domain}"
+    priv, _ = _dig(args.resolver, internal)
+    if pub and priv:
+        return PASS, (f"NODE_DNS_PATH=lan and {args.resolver} answers both "
+                      f"ghcr.io and {internal}"), None
+    missing = []
+    if not pub:
+        missing.append("ghcr.io (a public name — the cluster's own k8s-gateway "
+                       "address fails exactly here)")
+    if not priv:
+        missing.append(f"{internal} (the split-horizon name)")
+    return FAIL, (f"{args.resolver} did not answer: {'; '.join(missing)}. A "
+                  f"resolver that answers one of the two is the wrong one"), None
+
+
+def cell_daily_check_ran(args) -> tuple[int, str, str | None]:
+    """7. daily-check has actually produced THE ROW, not merely run.
+
+    Two corrections live in this function, both from FO-runbook [5fe39a]:
+
+    The runbook said `kubectl create job --from=cronjob/daily-check`. A gate
+    that changes what it is checking is a gate nobody runs on a customer
+    cluster, and a check nobody runs equals no check.
+
+    My first read-only version then asserted `lastScheduleTime != <none>` plus
+    a completed Job -- and that proves only that it RAN. A completed Job whose
+    check 18 printed `➖ not measured` satisfies it exactly, which is
+    jg-janncotcc's shape and the thing this cell exists to catch. The Job's
+    success and what check 18 printed are independent: `lastScheduleTime` means
+    the controller created a Job, `lastSuccessfulTime` means exit 0, and both
+    stop short of the row.
+
+    So the evidence is the row itself, read out of the run's log: still
+    read-only, and the assertion rather than a proxy for it.
+    """
+    name, logs, why, kind = _newest_completed_job_log(args)
+    if logs == "":
+        if kind == NEED_PLACE:
+            return UNKNOWN, why, NEED_PLACE
+        hint = (". Wait for the schedule, or re-run with --trigger (which "
+                "WRITES a Job)") if not args.trigger else ""
+        if args.trigger and name is None:
+            okt, _, terr = _kubectl(args, "-n", "monitoring", "create", "job",
+                                   f"handover-check-{os.getpid()}",
+                                   "--from=cronjob/daily-check")
+            if not okt:
+                return FAIL, f"{why}; --trigger could not create a Job: {terr}", None
+            return UNKNOWN, (f"{why}. --trigger created a Job (this run WROTE to "
+                             f"the cluster) — read this cell again once it "
+                             f"finishes"), NEED_TOOL
+        return UNKNOWN, f"{why}{hint}", kind or NEED_TOOL
+    row = None
+    for line in logs.splitlines():
+        if "LAN resolves internal names" in line:
+            row = line.strip()
+    if row is None:
+        return UNKNOWN, (f"job/{name} left a log with no 'LAN resolves internal "
+                         f"names' line at all — it may have exited at the 'not "
+                         f"configured' guard (cell 10), or the summary was "
+                         f"truncated"), NEED_TOOL
+    if row.startswith("➖"):
+        return FAIL, (f"job/{name} printed: {row[:150]} — the row exists and "
+                      f"measures nothing, and a ➖ travels in the same mail as "
+                      f"the passes"), None
+    if row.startswith("❌") or row.startswith("⚠️"):
+        return FAIL, f"job/{name} printed: {row[:150]}", None
+    return PASS, f"job/{name} printed: {row[:150]}", None
+
+
+def cell_daily_check_configured(args) -> tuple[int, str, str | None]:
+    """10. daily_check_* is configured.
+
+    With them unset the CronJob prints "not configured" and exits 0, so
+    nothing anywhere goes red -- the deliberate design (jg-base's guard), and
+    the reason this cell exists at all.
+    """
+    vals, err = _secret_values(args, "monitoring", "daily-check-config")
+    if vals is None:
+        return UNKNOWN, err, NEED_PLACE
+    need = ("SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM",
+            "NOTIFY_EMAIL_TO")
+    empty = [k for k in need if not (vals.get(k) or "").strip()]
+    if empty:
+        return FAIL, (f"empty in daily-check-config: {', '.join(empty)} — the "
+                      f"Job prints 'not configured' and exits 0, so no cluster "
+                      f"and no inbox will ever say so"), None
+    shown = {k: ("set" if "PASSWORD" in k else vals[k]) for k in need}
+    return PASS, ("daily-check-config: "
+                  + ", ".join(f"{k}={shown[k]}" for k in need)), None
+
+
+def cell_dead_man_switch(args) -> tuple[int, str, str | None]:
+    """11. The dead-man switch actually has somewhere to ping.
+
+    Measured on jg-janncotcc 2026-08-23: FAIL_COUNT=2 and the ping went to an
+    empty string. A failing check that pings nowhere holds nothing up.
+
+    The URL is a capability -- anyone holding it can silence the alarm -- so
+    this reports set/length, never the value.
+    """
+    vals, err = _secret_values(args, "monitoring", "daily-check-config")
+    if vals is None:
+        return UNKNOWN, err, NEED_PLACE
+    url = (vals.get("HEALTHCHECKS_PING_URL") or "").strip()
+    if not url:
+        return FAIL, ("HEALTHCHECKS_PING_URL is empty — the dead-man switch "
+                      "pings nowhere, so a cluster that stops reporting looks "
+                      "exactly like a cluster that is fine"), None
+    if not url.startswith("https://"):
+        return FAIL, (f"HEALTHCHECKS_PING_URL does not start with https:// "
+                      f"({len(url)} chars, value not printed)"), None
+    return PASS, f"dead-man switch URL is set ({len(url)} chars, not printed)", None
+
+
+def cell_recipients_readback(args) -> tuple[int, str, str | None]:
+    """12. Who the last real run actually mailed, read off that run.
+
+    Off the run, not off the Secret: the Secret is what you think you set. This
+    half is the machine's; whether those are the right people, and whether they
+    would act, is a person's and is not attempted here.
+    """
+    name, logs, why, kind = _newest_completed_job_log(args)
+    if logs == "":
+        if kind == NEED_PLACE:
+            return UNKNOWN, why, NEED_PLACE
+        return UNKNOWN, (f"{why} — the same evidence cell 7 is missing, and for "
+                         f"the same reason"), NEED_TOOL
+    to = re.search(r"==> Sending email to (.+)", logs)
+    sent = "Email sent successfully." in logs
+    if to and sent:
+        return PASS, (f"job/{name} mailed {to.group(1).strip()} and msmtp "
+                      f"accepted it. Whether those are the people who would "
+                      f"act is a person's question, not this one's"), NEED_HUMAN
+    if to and not sent:
+        return FAIL, (f"job/{name} addressed {to.group(1).strip()} but msmtp "
+                      f"returned non-zero — the report was composed and not "
+                      f"delivered"), None
+    return UNKNOWN, (f"job/{name} logs have no 'Sending email to' line — it may "
+                     f"have exited at the 'not configured' guard (cell 10)"), NEED_TOOL
+
+
+def cell_r2_endpoint(args) -> tuple[int, str, str | None]:
+    """13. The offsite endpoint, read OFF THE CLUSTER, is a shipping value.
+
+    Off the cluster on purpose: read from cluster.yaml it would pass in exactly
+    the situation it exists to catch -- edited locally, never applied. My first
+    implementation did that, and FO-runbook [5fe39a] caught it before it
+    shipped.
+
+    Then resolved through a public resolver, never the local one, with a
+    positive control in the same shape: jg-janncotcc shipped
+    `http://10.9.1.12:9000`, which answered 200 from the lab bench.
+    """
+    vals, err = _secret_values(args, "monitoring", "offsite-backup-config")
+    if vals is None:
+        return UNKNOWN, err, NEED_PLACE
+    ep = (vals.get("BACKUP_R2_ENDPOINT") or "").strip()
+    if not ep:
+        return UNKNOWN, ("BACKUP_R2_ENDPOINT is empty on the cluster — offsite "
+                         "backup is not configured here, which is a decision, "
+                         "not a defect this cell can judge"), NEED_HUMAN
+    if not ep.startswith("https://"):
+        return FAIL, (f"BACKUP_R2_ENDPOINT on the cluster is {ep[:60]!r} — not "
+                      f"https://. A LAN address answers 200 from inside the "
+                      f"building and nothing from anywhere else"), None
+    host = ep.split("://", 1)[1].split("/", 1)[0].split(":", 1)[0]
+    control, cerr = _doh_a("cloudflare.com")
+    if cerr or not control:
+        return UNKNOWN, (f"the positive control (cloudflare.com) did not resolve "
+                         f"over DoH{': ' + cerr if cerr else ''} — this box "
+                         f"cannot ask a public resolver, so a non-answer for "
+                         f"{host} would mean nothing"), NEED_TOOL
+    addrs, aerr = _doh_a(host)
+    if aerr:
+        return UNKNOWN, f"DoH query for {host} failed: {aerr}", NEED_TOOL
+    if not addrs:
+        return FAIL, (f"{host} does not resolve from a public resolver, while "
+                      f"the control does — this endpoint only exists inside "
+                      f"the building"), None
+    private = [a for a in addrs if not _is_public_v4(a)]
+    if private:
+        return FAIL, (f"{host} resolves to {', '.join(private)} — a private "
+                      f"address, so the offsite copy never leaves the site"), None
+    return PASS, f"{host} (read off the cluster) resolves publicly", None
+
+def _curl_status(url: str, resolve: str | None = None,
+                 timeout: int = 15) -> tuple[int | None, str | None]:
+    """(status, error) for one GET, optionally pinning the address.
+
+    Separate from _curl_headers because cell 9 needs --resolve and cell 9 only;
+    same subprocess shape, so the two agree about what "reachable" means.
+    """
+    if not shutil.which("curl"):
+        return None, "curl is not on PATH"
+    cmd = ["curl", "-sS", "-o", os.devnull, "-w", "%{http_code}",
+           "-m", str(timeout)]
+    if resolve:
+        cmd += ["--resolve", resolve]
+    cmd.append(url)
+    r = run(cmd)
+    if r.returncode != 0:
+        return None, (r.stderr.strip()[:140] or f"curl exited {r.returncode}")
+    try:
+        return int(r.stdout.strip()[-3:]), None
+    except ValueError:
+        return None, f"curl printed {r.stdout.strip()[:40]!r}, not a status"
+
+
+def cell_echo_int_from_lan(args) -> tuple[int, str, str | None]:
+    """9. echo-int answers from a LAN client, by name AND by pinned address.
+
+    Two requests, because they fail for different reasons and only both
+    together say the handover path works:
+
+      by name        exercises the LAN's resolver -> internal gateway
+      with --resolve skips the resolver entirely and speaks to the gateway
+
+    Same 200 from both: DNS and ingress are each fine. Only the pinned one
+    works: the gateway is fine and the name does not reach it. Only the named
+    one works: the name resolves to something that is NOT the address handed
+    over -- which looks healthiest of all and is the one worth catching.
+
+    This is the only cell that must run from the customer's LAN. Off it, the
+    honest answer is 2 with a vantage note; a run from the office that reports
+    anything else about this cell is reporting about the office.
+    """
+    host = f"echo-int.{args.domain}"
+    if not args.expect_addr:
+        return UNKNOWN, (f"--expect-addr not given: without the address this "
+                         f"cluster hands over, the second request has nothing "
+                         f"to pin to and the first cannot be judged"), NEED_TOOL
+
+    by_name, e1 = _curl_status(f"https://{host}/")
+    pinned, e2 = _curl_status(f"https://{host}/",
+                              resolve=f"{host}:443:{args.expect_addr}")
+
+    if e1 and e2:
+        return UNKNOWN, (f"neither request reached {host} ({e1}) — if this is "
+                         f"not the customer's LAN, that is the expected answer "
+                         f"and not a finding"), NEED_PLACE
+    if by_name == 200 and pinned == 200:
+        return PASS, (f"{host} answers 200 by name and pinned to "
+                      f"{args.expect_addr}: the LAN's resolver and the internal "
+                      f"gateway are both on the handover path"), None
+    if pinned == 200 and by_name != 200:
+        return FAIL, (f"{host} answers 200 pinned to {args.expect_addr} but "
+                      f"{by_name or e1} by name — the internal gateway is fine "
+                      f"and the LAN does not resolve the name to it"), None
+    if by_name == 200 and pinned != 200:
+        return FAIL, (f"{host} answers 200 by name but {pinned or e2} when "
+                      f"pinned to {args.expect_addr} — the name resolves to "
+                      f"something that is NOT the address being handed over. "
+                      f"This is the shape that looks healthiest from a browser "
+                      f"and is wrong at handover"), None
+    return FAIL, (f"{host} answered {by_name or e1} by name and "
+                  f"{pinned or e2} pinned — neither path serves it"), None
+
+
+def _omni_json(args, kind: str, capture: str | None,
+               *cmd: str) -> tuple[object | None, str | None, str | None]:
+    """Read one Omni resource, from a capture if one is given.
+
+    A capture is a first-class input here, the way `gateway --routes-json`
+    already treats one: the person who can reach Omni is often not the person
+    reviewing the check, and requiring both in one place means the check is
+    never run at all.
+    """
+    if capture:
+        p = pathlib.Path(capture)
+        if not p.is_file():
+            return None, f"{capture} is not here", NEED_TOOL
+        try:
+            return json.loads(p.read_text()), None, None
+        except json.JSONDecodeError as e:
+            return None, f"{capture} did not decode as JSON: {e}", None
+    if not shutil.which("omnictl"):
+        return None, (f"no --{kind} capture and omnictl is not on PATH — this "
+                      f"box cannot ask Omni"), NEED_TOOL
+    r, terr = _run_bounded(["omnictl", *cmd], OMNI_TIMEOUT, "omnictl " + cmd[0])
+    if r is None:
+        return None, terr, NEED_PLACE
+    if r.returncode != 0:
+        return None, (f"omnictl could not read it: "
+                      f"{r.stderr.strip()[:140]}"), NEED_PLACE
+    try:
+        return json.loads(r.stdout or "null"), None, None
+    except json.JSONDecodeError as e:
+        return None, f"omnictl output did not decode as JSON: {e}", None
+
+
+# How long an Omni call may block before this reports "could not measure".
+#
+# There was no bound at all until jgct#114: `omnictl jointoken list` against an
+# unreachable endpoint blocked forever, so `ci-checks.py --run` stopped at
+# check-handover-cells.py and the wrapper's exit code still looked like a
+# completed run. CI never saw it because the runner has no omnictl, and a
+# machine that HAS the tool is exactly the machine someone runs this on.
+OMNI_TIMEOUT = 20
+
+
+def _run_bounded(cmd: list[str], timeout: int, what: str):
+    """(CompletedProcess, None) or (None, reason). Never blocks past `timeout`.
+
+    A delivery check that waits forever is not a slow check, it is a check
+    nobody can finish -- and the suite it sits in stops with it.
+    """
+    try:
+        return run(cmd, timeout=timeout), None
+    except subprocess.TimeoutExpired:
+        return None, (f"{what} did not answer within {timeout}s — the endpoint "
+                      f"is unreachable from here, which is a vantage problem "
+                      f"and not an answer about this cluster")
+    except FileNotFoundError:
+        return None, f"{cmd[0]} is not on PATH"
+
+
+def _join_token_usecounts(args) -> tuple[dict | None, str | None]:
+    """{token name: usecount} from `omnictl jointoken list`, or a capture.
+
+    Read for context only. NEVER a pass condition -- see
+    cell_arrived_on_own_identity for why the runbook's original assertion about
+    this number does not hold.
+
+    `jointoken` is not a COSI resource, which is why `omnictl get <kind>` has
+    no name for it and why grepping the runbook for one found nothing.
+    """
+    text = None
+    if args.join_token_list:
+        p = pathlib.Path(args.join_token_list)
+        if not p.is_file():
+            return None, f"{args.join_token_list} is not here"
+        text = p.read_text()
+    elif shutil.which("omnictl"):
+        r, terr = _run_bounded(["omnictl", "jointoken", "list"], OMNI_TIMEOUT,
+                               "omnictl jointoken list")
+        if r is None:
+            return None, terr
+        if r.returncode != 0:
+            return None, f"omnictl jointoken list failed: {r.stderr.strip()[:120]}"
+        text = r.stdout
+    else:
+        return None, "no --join-token-list capture and omnictl is not on PATH"
+
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return None, "the join token listing was empty"
+    header = lines[0].split()
+    try:
+        col = next(i for i, h in enumerate(header) if "USE" in h.upper())
+    except StopIteration:
+        return None, (f"no USE* column in the listing header ({' '.join(header)[:60]}) "
+                      f"— the output shape changed")
+    # Key on the NAME column, not on field 0. Field 0 is the ID in
+    # omnictl v1.8.1's listing, and keying on it made every count look like it
+    # belonged to a token nobody names in Step -1 -- caught by this file's own
+    # "usecount must not change the verdict" case, which compares names.
+    name_col = next((i for i, h in enumerate(header) if h.upper() == "NAME"), 0)
+    out = {}
+    for ln in lines[1:]:
+        f = ln.split()
+        if len(f) > max(col, name_col) and f[col].isdigit():
+            out[f[name_col]] = int(f[col])
+    return (out, None) if out else (None, "no rows parsed out of the listing")
+
+
+def cell_arrived_on_own_identity(args) -> tuple[int, str, str | None]:
+    """1. The machine came back as itself, not as a new registration.
+
+    The runbook called an unchanged join-token `usecount` "the row that
+    matters". **It does not carry that weight**, and the measurement that
+    refutes it was already in fleet-ops
+    (`openspec/changes/zero-it-onboarding/5.2-shipping-shape-run.md`,
+    2026-09-03): a real maintenance-mode re-registration, a machine returning
+    on a different token, and all three tokens' usecounts unmoved (0/2/2). So
+    "unchanged" looks the same whether the disk came back carrying what was
+    shipped or came back as somebody else -- the two things this cell exists to
+    tell apart. In the same run a REVOKED token's usecount stayed 1 and the
+    machine still came back: what authorised it was the unique token.
+
+    So the assertion is the node unique token being PERSISTENT, and usecount is
+    read for context and printed. A jump is worth chasing; unchanged proves
+    nothing and must not be able to turn this cell green -- gating on it would
+    make this cell pass in exactly the situation it is meant to catch.
+
+    PERSISTENT is what makes a shipped machine independent of the join token;
+    it is granted because Talos is installed, not because it is in a cluster.
+    (Command, verified offline against omnictl v1.8.1: `omnictl jointoken list`
+    -- `jointoken` is not a COSI resource, which is why `omnictl get <kind>`
+    has no name for it. Found by FO-runbook [5fe39a]; the refutation is theirs
+    too.)
+    """
+    if not args.machine_uuid and not args.node_token_json:
+        return UNKNOWN, ("--machine-uuid (or --node-token-json capture) not "
+                         "given: nothing to ask about"), NEED_TOOL
+    data, err, kind = _omni_json(
+        args, "node-token-json", args.node_token_json,
+        "get", "nodeuniquetokenstatus", args.machine_uuid or "", "-o", "json")
+    if data is None:
+        return UNKNOWN, err, kind or NEED_TOOL
+
+    spec = data.get("spec") if isinstance(data, dict) else None
+    state = (spec or {}).get("state") if isinstance(spec, dict) else None
+    if state is None and isinstance(data, dict):
+        state = data.get("state")
+    if state is None:
+        return UNKNOWN, ("could not find a `state` in the nodeuniquetokenstatus "
+                         "output — the shape changed, and a missing field is "
+                         "not the same as a non-PERSISTENT token"), NEED_TOOL
+    if state != 1:
+        return FAIL, (f"node unique token state is {state!r}, not 1 "
+                      f"(PERSISTENT) — this machine still depends on the join "
+                      f"token, so it did not arrive on its own identity"), None
+    counts, cerr = _join_token_usecounts(args)
+    if counts is None:
+        ctx = f"join token usecounts not read here ({cerr})"
+    else:
+        ctx = "join token usecounts: " + ", ".join(
+            f"{k}={v}" for k, v in sorted(counts.items()))
+        if args.expect_usecounts:
+            want = dict(kv.split("=", 1) for kv in args.expect_usecounts.split(",")
+                        if "=" in kv)
+            moved = [f"{k} {want[k]}->{counts[k]}" for k in want
+                     if k in counts and str(counts[k]) != want[k]]
+            ctx += ("; MOVED since Step -1: " + ", ".join(moved) + " — chase it"
+                    if moved else "; unchanged since Step -1")
+    return UNKNOWN, (
+        f"node unique token is PERSISTENT (state 1) — that is the assertion, "
+        f"and it holds. {ctx}. Context only: an unchanged usecount does NOT "
+        f"prove the machine arrived on its own identity (measured 2026-09-03, "
+        f"fleet-ops zero-it-onboarding 5.2), so nothing here gates on it. "
+        f"Whether this machine is the one that was shipped is still a person's "
+        f"call"), NEED_HUMAN
+
+
+def _not_implemented(cell: int, needs: str):
+    """A cell nobody has written yet, which is NOT the same as one that cannot
+    reach its subject from here. The phase number deliberately does not appear:
+    it was "phase 2" for both of these until the phases were re-cut, and a
+    label that was true when written is the exact shape this file keeps
+    finding elsewhere (FO-runbook [5fe39a], twice)."""
+    def f(args) -> tuple[int, str, str | None]:
+        return UNKNOWN, (f"needs {needs}. Reported as 2 rather than omitted: a "
+                         f"table missing rows reads like a table that passed"), NOT_YET
+    f.__name__ = f"cell_{cell}_not_implemented"
+    return f
+
+
+# (cell number in Step 5's thirteen, one-line title, function)
+#
+# Cell 13 is phase 2 on FO-runbook's correction, and the reason is worth
+# keeping: its assertion is "read the endpoint back OFF THE CLUSTER, not off
+# the file you think you edited". Implemented against cluster.yaml it would
+# pass in exactly the situation it exists to catch -- edited locally, never
+# applied. The half that resolves the name from outside is vantage-independent
+# and comes with it.
+HANDOVER_CELLS = [
+    (1, "arrived on its own identity: node token PERSISTENT", cell_arrived_on_own_identity),
+    (2, "tunnel AccountTag == the zone's account", cell_tunnel_account),
+    (3, "factory auth0.json present and complete", cell_factory_auth0),
+    (4, "im redirects to the factory tenant's /authorize", cell_im_front_door),
+    (5, "private repo: visibility, FluxInstance sync, deploy key", cell_private_repo),
+    (6, "NODE_DNS_PATH=lan and the resolver answers both questions", cell_node_dns_path),
+    (7, "daily-check printed check 18's row, and it measured something", cell_daily_check_ran),
+    (8, "echo-ext answers 200 through Cloudflare (cf-ray)", cell_echo_ext),
+    (9, "echo-int answers from the LAN, by name and pinned", cell_echo_int_from_lan),
+    (10, "daily_check_* is configured", cell_daily_check_configured),
+    (11, "the dead-man switch has a ping URL", cell_dead_man_switch),
+    (12, "health-check recipients read back from a real run", cell_recipients_readback),
+    (13, "backup_r2_endpoint read back off the cluster", cell_r2_endpoint),
+]
+
+
+def check_handover(args) -> int:
+    results = []
+    for num, title, fn in HANDOVER_CELLS:
+        try:
+            rc, note, why = fn(args)
+        except Exception as e:  # noqa: BLE001
+            rc, note, why = UNKNOWN, f"the check itself raised {type(e).__name__}: {e}", NEED_TOOL
+        results.append((num, title, rc, note, why))
+
+    order = (NEED_PLACE, NEED_TOOL, NEED_HUMAN, NOT_YET)
+
+    def kinds_of(why) -> list[str]:
+        """None / one kind / several. A cell blocked on more than one thing
+        belongs in every list, or the list it is missing from is the one
+        somebody is working through."""
+        if not why:
+            return []
+        one = {why} if isinstance(why, str) else set(why)
+        return [k for k in order if k in one]
+
+    mark = {PASS: "PASS ", FAIL: "FAIL ", UNKNOWN: "?    "}
+    for num, title, rc, note, why in results:
+        # A kind on a PASS is shown too. Cell 12 passes its machine half and
+        # still leaves a person's half open ("are these the people who would
+        # act"), and hiding that behind a bare PASS is the same move as folding
+        # "cannot measure" into "passed" -- one row later. It stays PASS,
+        # because the half a machine can do was done.
+        ks = kinds_of(why) if rc in (UNKNOWN, PASS) else []
+        suffix = f"   [{'+'.join(ks)}]" if ks else ""
+        print(f"{mark[rc]} {num:>2}. {title}{suffix}")
+        print(f"          {note}")
+
+    fails = [n for n, _, rc, _, _ in results if rc == FAIL]
+    unknown = [(n, kinds_of(why)) for n, _, rc, _, why in results if rc == UNKNOWN]
+    passed_human = [n for n, _, rc, _, why in results
+                    if rc == PASS and NEED_HUMAN in kinds_of(why)]
+    print()
+    print(f"{len(results) - len(fails) - len(unknown)}/{len(results)} cells pass.")
+
+    if unknown:
+        word = "cell" if len(unknown) == 1 else "cells"
+        print(f"{len(unknown)} {word} could not be answered here. That is not a pass,")
+        print("and the next action differs by kind:")
+        for kind in order:
+            cells = [str(n) for n, ks in unknown if kind in ks]
+            if cells:
+                print(f"      {WHY_TEXT[kind]}")
+                print(f"          cells {', '.join(cells)}")
+        print("      No single run of this is authoritative. What Step 5 needs is")
+        print("      one PASS per cell from somewhere that could measure it.")
+
+    if passed_human:
+        print(f"{', '.join(str(n) for n in passed_human)}: passed the half a "
+              f"machine can do, and still needs a person for the other half.")
+
+    if fails:
+        word = "cell" if len(fails) == 1 else "cells"
+        print(f"{len(fails)} {word} FAILED: {', '.join(str(n) for n in fails)}")
+        return FAIL
+    return UNKNOWN if unknown else PASS
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -542,7 +1892,54 @@ def main() -> None:
     l.add_argument("--expect-addr", required=True)
     l.set_defaults(func=check_lan)
 
+    g = sub.add_parser("gateway")
+    g.add_argument("--node", help="node address talosctl should ask")
+    g.add_argument("--talosconfig")
+    g.add_argument("--routes-json",
+                   help="a captured `talosctl get routes -o json`, instead of asking a node")
+    g.add_argument("--timeout", type=int, default=30)
+    g.set_defaults(func=check_gateway)
+
+    k = sub.add_parser("deploy-key")
+    k.add_argument("--repo", required=True, help="OWNER/NAME on GitHub")
+    k.add_argument("--pubkey", default="github-deploy.key.pub")
+    k.set_defaults(func=check_deploy_key)
+
+    hv = sub.add_parser("handover")
+    hv.add_argument("--domain", required=True)
+    hv.add_argument("--dir", default=".", help="the cluster repo directory")
+    hv.add_argument("--instance", default="im", help="the base terminal's name")
+    hv.add_argument("--repo", help="OWNER/NAME of the per-user repo")
+    hv.add_argument("--pubkey", default="github-deploy.key.pub")
+    hv.add_argument("--kubeconfig", help="reaches cells that need the cluster")
+    hv.add_argument("--token-env", default="CLOUDFLARE_TOKEN")
+    hv.add_argument("--tunnel-credentials", default="cloudflare-tunnel.json")
+    hv.add_argument("--auth0-json", default="auth0.json")
+    hv.add_argument("--resolver", help="the candidate LAN resolver cell 6 should ask")
+    hv.add_argument("--trigger", action="store_true",
+                    help="cell 7 only: WRITE a Job when nothing has run yet")
+    hv.add_argument("--expect-addr", help="cell 9: the internal address handed over")
+    hv.add_argument("--machine-uuid", help="cell 1: the machine Omni knows")
+    hv.add_argument("--join-token-list",
+                    help="cell 1: a captured `omnictl jointoken list`; read for "
+                         "context, never a pass condition")
+    hv.add_argument("--expect-usecounts",
+                    help="cell 1: NAME=N,NAME=N from Step -1; a move is printed "
+                         "to chase, not failed on")
+    hv.add_argument("--node-token-json",
+                    help="cell 1: a captured `omnictl get nodeuniquetokenstatus"
+                         " <uuid> -o json`, instead of asking Omni here")
+    hv.set_defaults(func=check_handover)
+
+    t = sub.add_parser("tunnel-cert")
+    t.add_argument("--domain", required=True)
+    t.add_argument("--cert", default="~/.cloudflared/cert.pem")
+    t.add_argument("--token-env", default="CLOUDFLARE_TOKEN")
+    t.set_defaults(func=check_tunnel_cert)
+
     args = p.parse_args()
+    if args.cmd == "gateway" and not args.node and not args.routes_json:
+        p.error("gateway needs --node, or --routes-json to read a capture")
     sys.exit(args.func(args))
 
 

@@ -145,6 +145,21 @@ import (
 	// node-local class, so the pinning acknowledgement below fires and asks
 	// about exactly the thing that was forgotten.
 	db_storage_class: *"local-path" | string & !=""
+	// claude-code's config PVC — ~/.claude and the keyring it holds, one volume
+	// because a token and the keyring holding it have no reason to be apart.
+	//
+	// Defaults to default_storage_class (today's value), NOT to db_storage_class.
+	// `storageClassName` is immutable, so pointing a default somewhere else does
+	// not migrate a cluster, it renders a PVC the cluster cannot accept. Naming
+	// a class here is how a cluster records where it is — including recording
+	// that it has not moved yet.
+	claudecode_config_storage_class?: string & !=""
+	// Whether the workspace PVC is rendered at all. Default true.
+	//
+	// ⚠️ false REMOVES the PVC from the release. On the NFS class the
+	// provisioner archives rather than deletes; on local-path and
+	// longhorn-static the reclaim policy is Delete and nothing catches it.
+	claudecode_workspace?: bool
 
 	// Whether anything in this cluster lands on a node-local class. This, and
 	// not `storage_backend`, is what the acknowledgement below has to be keyed
@@ -239,6 +254,20 @@ import (
 	repository_name: string & !="" & !="ferry133/xxxxxx" & !="ferry133/jg-base"
 	repository_branch?: string & !=""
 	repository_visibility?: *"public" | "private"
+	// Where this cluster's shared base manifests come from. Defaulted, not
+	// optional: every cluster has an answer, and the default is the fleet's.
+	//
+	// A cluster whose owner takes over maintenance points these at their own
+	// fork; a cluster that wants to stop tracking `main` pins a tag or a commit.
+	// Nothing else about the rendered Flux tree may change with them — see
+	// ks.yaml.j2 for why renaming the GitRepository tears the cluster down.
+	base_repo_url: *"https://github.com/ferry133/jg-base" | string & !=""
+	base_repo_ref: *"main" | string & !=""
+	// Which Flux ref field `base_repo_ref` lands in. Declared rather than
+	// inferred: a tag and a branch are both just strings, and guessing wrong
+	// produces a GitRepository that reconciles something other than what the
+	// operator named — which reads exactly like it worked.
+	base_repo_ref_kind: *"branch" | "tag" | "semver" | "commit"
 	cloudflare_domain: net.FQDN
 	cloudflare_token: string
 	// How cloudflared reaches Cloudflare's edge.
@@ -278,6 +307,10 @@ import (
 	// to the profile's default storage class.
 	nas_server?: net.IPv4 & !=""
 	nas_path?: string & !=""
+	// ⚠️ UNCONSUMED since the claude-code `coding` mount was removed. Kept
+	// because three cluster.yaml files declare it and deleting the field would
+	// fail their next `cue vet` over a value that harms nothing. NAS_CODING_PATH
+	// is still rendered into cluster-secrets and still read by nobody.
 	nas_coding_path?: string & !=""
 
 	if storage_backend == "nfs" {
@@ -326,42 +359,139 @@ import (
 	freepbx_mysql_root_password?: string & !=""
 	freepbx_mysql_password?: string & !=""
 	claudecode_postgres_password?: string & !=""
+	// DEPRECATED 2026-09-06 (jgct#85): the URL is DERIVED by plugin.py from
+	// claudecode_postgres_password and this field is ignored (plugin overwrites
+	// it). Kept optional so existing cluster.yaml files still setting it do not
+	// fail cue vet; drop it at next edit.
 	claude_code_database_url?: string
-	// claudecode/claude-code (base app on every cluster). claude_instances
-	// defaults to ["im"] at render time.
+	// claudecode/claude-code EXTRA instances. The default `im` is a static
+	// base app in jg-base since 2026-09-06 — it deploys on every re-rendered
+	// cluster with no field set here, and "im" in this list is a render error
+	// (it would fight the base HelmRelease over the same object name; rename
+	// the instance instead).
 	claude_instances?: [...string]
-	// Which claude-code instances stay running. Empty by default — each is a
-	// root shell with cluster-admin RBAC that the tunnel exposes — so a cluster
-	// that wants one standing names it here. Scaling by hand instead works
-	// until the next reconcile and then disappears without an apparent cause.
+	// Which EXTRA claude-code instances stay running (the base im always
+	// does). Unset means: the one instance if claude_instances names exactly
+	// one, and NOTHING if it names more than one — the render refuses to pick
+	// and says so on stderr (#57). Each is a root shell with cluster-admin
+	// RBAC that the tunnel exposes, so a cluster that wants a specific one
+	// standing names it here. Scaling by hand instead works until the next
+	// reconcile and then disappears without an apparent cause.
 	//
-	// A list rather than a flag because clusters do mix: jcom keeps `im` up for
-	// support and leaves `cc` at zero until it is needed.
+	// The value lives in templates/scripts/plugin.py (DEFAULT_CLAUDE_INSTANCES
+	// and the rule beside it). Deliberately not restated here: this comment read
+	// "Empty by default" and stayed readable for a day after that stopped being
+	// true — the same defect #57 is about, one layer up.
 	claude_code_always_on?: [...string]
 	// Auth0 OIDC login in front of every claude-code instance. Defaults to true
-	// at render time; the four claudecode_auth0_* / allowed_emails values come
-	// from the gitignored auth0.json unless set here.
+	// at render time. When on, the gitignored auth0.json IS REQUIRED: since
+	// 2026-09-06 (jgct#84) it holds the FACTORY tenant that gates the base im,
+	// the factory's support agent shipped on every cluster. The customer values
+	// below are required only when this cluster names its own extra instances.
 	//
-	// Setting it false falls back to ttyd basic auth, which then needs
-	// ttyd_credential — checked by scripts/check-claudecode-auth.py.
+	// Setting it false does two things: swaps jg-base's claude-code-im to its
+	// empty disabled path (the base im hardwires the Auth0 sidecar, so a
+	// basic-auth base im cannot exist — Flux prunes it, the retain:true PVCs
+	// survive), and falls back to ttyd basic auth for the cluster's own
+	// claude_instances, which then needs ttyd_credential — checked by
+	// scripts/check-claudecode-auth.py.
 	claudecode_auth0?: bool
 	// Only used when claudecode_auth0 is false. Strength is checked by
 	// scripts/check-claudecode-auth.py, not here: a CUE constraint prints the
 	// offending value in its error, and a check that leaks the credential into
 	// a terminal and CI log to complain about it is worse than no check.
 	ttyd_credential?: string & !=""
-	// Each overrides the matching field in auth0.json. Rarely needed — every
-	// cluster fronts claude-code with the same Auth0 application.
+	// The CUSTOMER's Auth0 tenant, for the extra instances this cluster names in
+	// claude_instances (2026-08-25 ruling, narrowed by jgct#84). Required when
+	// there IS such an instance, not otherwise — the base im is gated by the
+	// factory tenant in auth0.json, so a cluster with claude_instances: [] needs
+	// none of these. Enforced in plugin.py rather than here: a CUE condition on
+	// an optional bool is not concrete and `cue vet` reports it against an
+	// unrelated field (measured on node_cidr, jgct#51).
+	//
+	// Never inherited from auth0.json. That file is the factory tenant now, and
+	// inheriting from it would put a customer's terminal behind the factory
+	// gate — the mirror image of the defect jgct#64 closed.
 	claudecode_auth0_domain?: string & !=""
 	claudecode_auth0_client_id?: string & !=""
 	claudecode_auth0_client_secret?: string & !=""
+	// REFUSED since 2026-09-06 (jgct#84): plugin.py raises if this is set. It
+	// meant "take the customer values out of auth0.json", and auth0.json is now
+	// the factory tenant — obeying it would put a customer instance behind the
+	// factory gate. Kept in the schema so an old cluster.yaml fails with that
+	// explanation instead of `cue vet`'s "field not allowed".
+	claudecode_auth0_shared?: bool
 	// Derived from age.key + cluster_name at render time when absent, so it is
-	// stable across renders and distinct per cluster.
+	// stable across renders and distinct per cluster. Leaving it unset is the
+	// good case — the derivation has always emitted the shape oauth2-proxy
+	// wants, and every value it has ever refused was one a human wrote.
+	//
+	// The format rule is in scripts/check-claudecode-auth.py, not here, for the
+	// same reason as ttyd_credential above: `cue vet` prints the offending
+	// value in its error (measured — a mismatching secret came back verbatim in
+	// the message), so a CUE constraint would put this secret in a terminal and
+	// a CI log in order to complain about it.
 	claudecode_oauth2_cookie_secret?: string & !=""
 	claudecode_allowed_emails?: string & !=""
+	// Per-instance override of the line above, keyed by instance name. Absent
+	// keys inherit the global list, so a cluster that sets only the global
+	// field renders exactly what it rendered before.
+	//
+	// Exists because the allowlist is the one layer of separation between two
+	// instances on a cluster that was NOT per-instance: each already has its
+	// own config and workspace PVC, hence its own ~/.claude, keyring, login and
+	// history. One shared door undoes all of that.
+	//
+	// A key that is not in claude_instances fails the render — see plugin.py.
+	// CUE cannot express that cross-check against a field it may only see
+	// defaulted, and an override that silently does nothing is exactly the
+	// failure this field exists to prevent.
+	claudecode_allowed_emails_by_instance?: [string]: string & !=""
 	talos_mcp_config?: string & !=""
 	talos_mcp_sa_key?: string & !=""
 	talos_mcp_omni_endpoint?: string & !=""
+	// When talos_mcp_sa_key expires, YYYY-MM-DD: the expiry picked when the
+	// service account was created (step 1 of the talos-mcp notes in
+	// cluster.sample.yaml). jg-base's daily-check row 24 reads it and warns 30
+	// days out (ferry133/fleet-ops#11). A date, not a credential, so a format
+	// constraint here cannot print anything sensitive. plugin.py refuses a key
+	// without a date, and a date without a key.
+	talos_mcp_sa_key_expires?: =~"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+	// factory provisioning credentials (extras/factory/factory in jg-base).
+	// Only the cluster that hosts factory sets these -- jcom today. Every one is
+	// optional and renders empty elsewhere, which is what the consuming Secret
+	// expects: empty means "not issued yet", and each consumer fails loudly on
+	// it (omnictl refuses to authenticate, gh reports no token, a zero-byte
+	// deploy key fails at key load).
+	//
+	// Declared here 2026-08-27. Before that the consuming half existed in
+	// jg-base while nothing could declare the values, so factory's pod ran
+	// 2/2 Ready holding three empty credentials -- measured on jcom that day:
+	// OMNI_SERVICE_ACCOUNT_KEY, GITHUB_TOKEN and CLOUDFLARE_API_TOKEN were all
+	// len=0 while the pod, the Secret and the env names all read as present.
+	//
+	// Four, not five. `factory_cloudflare_token` was declared here on
+	// 2026-08-27 and removed on 2026-08-29: ferry133/jg-base#44 established
+	// that its premise was gone. That row assumed "the operator's Cloudflare
+	// account holds every customer zone", and D11 (2026-08-25) puts each
+	// customer's Cloudflare account under the customer's own identity —
+	// measured, janncot.cc and jiahd.cc answer from different NS pairs, which
+	// Cloudflare assigns per account. jg-base removed the consuming key in
+	// #46, so a value set here would render into a Secret key that no longer
+	// exists. Do not re-add it without reading that README section: the
+	// deciding argument is that the credential cannot be singular while this
+	// field is a scalar.
+	factory_omni_sa_key?:            string & !=""
+	factory_omni_endpoint?:          string & !=""
+	// factory_omni_sa_key's expiry -- a date, not a fifth credential. Same
+	// contract as talos_mcp_sa_key_expires above.
+	factory_omni_sa_key_expires?:    =~"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+	factory_github_token?:           string & !=""
+	// When that PAT expires. Same contract as the two above; jg-base's
+	// daily-check row 25 reads it (ferry133/jg-base#99). GitHub shows the
+	// expiry when the token is issued, and reports it in a response header.
+	factory_github_token_expires?:   =~"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+	factory_fleet_ops_deploy_key?:   string & !=""
 	postgres_password?: string & !=""
 	trello_api_key?: string
 	trello_api_token?: string
@@ -369,7 +499,32 @@ import (
 	line_channel_access_token?: string
 	line_channel_secret?: string
 	line_notify_group_id?: string
+	// Optional in general, REQUIRED when an extra that reads it is selected.
+	// Conditional and not unconditional: a cluster that runs neither must not be
+	// made to supply a key it does not use.
+	//
+	// Without this, selecting either extra rendered cleanly with an empty key
+	// and the failure arrived later, from the workload, as an auth error a long
+	// way from the field that caused it.
+	//
+	// ⚠️ What this does NOT check is provenance. Presence is all a schema can
+	// see; whether the key belongs to the cluster's owner rather than to the
+	// operator is a delivery-time question with a recorded answer, and a set,
+	// valid, working key that bills the wrong party passes every check here.
+	// Same shape as a notification address that delivers mail to the wrong
+	// people.
+	//
+	// Also worth knowing: the two extras share this ONE variable rather than
+	// holding a key each. Fine while one party owns both; a cluster that ever
+	// runs them for different parties would be using one credential for both.
 	anthropic_api_key?: string
+	#AnthropicExtras: [
+		"default/linebot",
+		"default/synophoto",
+	]
+	if len([for e in extras if list.Contains(#AnthropicExtras, e) {e}]) > 0 {
+		anthropic_api_key: string & !=""
+	}
 	database_url?: string
 	synophoto_auth0_domain?: string
 	synophoto_auth0_client_id?: string
