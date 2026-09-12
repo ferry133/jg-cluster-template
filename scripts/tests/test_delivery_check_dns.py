@@ -254,19 +254,37 @@ class TestDohParsing(unittest.TestCase):
         letter on one side would read as a delegation mismatch — which this check
         reports as "the zone your token sees is NOT the zone this domain resolves
         to", a strong and wrong claim."""
+        # Five distinct names, not two, and the count is the point: dropping
+        # `sorted()` leaves the set's iteration order, which str hash
+        # randomisation re-rolls every run. `[c8c318]` measured the survival rate
+        # of that mutant against the number of distinct elements k (60 seeds per
+        # cell): k=2 43.3%, k=3 11.7%, k=4 0/60, k=5 0/60 — tracking 1/k!. At the
+        # original k=2 this assertion was a coin flip; at k=5 the mutant is caught
+        # in every run measured.
+        #
+        # NOT fixed by pinning PYTHONHASHSEED in the runner: that trades a
+        # measurable coin flip for a permanent one, because the seed might be one
+        # where the mutant happens to come out ordered — and then the assertion
+        # passes forever. Deterministic-but-arbitrary is worse than probabilistic
+        # and known.
         payload = {"Answer": [
             {"type": 2, "data": "Beth.NS.Cloudflare.com."},
             {"type": 2, "data": "amber.ns.cloudflare.com."},
             {"type": 2, "data": "AMBER.ns.cloudflare.com"},
+            {"type": 2, "data": "carl.ns.cloudflare.com."},
+            {"type": 2, "data": "Dina.NS.Cloudflare.com"},
+            {"type": 2, "data": "eve.ns.cloudflare.com."},
         ]}
         with self._resolver(payload):
             got = dc._doh("https://cloudflare-dns.com/dns-query?name=x&type=NS")
-        self.assertEqual(got, ["amber.ns.cloudflare.com", "beth.ns.cloudflare.com"])
+        self.assertEqual(got, ["amber.ns.cloudflare.com", "beth.ns.cloudflare.com",
+                               "carl.ns.cloudflare.com", "dina.ns.cloudflare.com",
+                               "eve.ns.cloudflare.com"])
         # The three properties, asserted one by one rather than left to the
         # equality above — `[c8c318]` asked for this when accepting #122: a
         # property that is only incidentally covered is not locked, and the next
         # person to touch this line cannot tell which parts mattered.
-        self.assertEqual(len(got), 2, "three answers, two distinct: deduped")
+        self.assertEqual(len(got), 5, "six answers, five distinct: deduped")
         self.assertEqual(got, sorted(got), "compared as sets upstream, but the "
                                            "order is what a reader diffs by eye")
         self.assertTrue(all(not n.endswith(".") and n == n.lower() for n in got))

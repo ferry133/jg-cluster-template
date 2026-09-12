@@ -549,6 +549,24 @@ def _nslookup_answers(text: str) -> list[str]:
 
     Capturing the whole token and rejecting anything containing `#` keeps the
     filter honest for `#53` and for a non-default port alike.
+
+    Old vs new on the same four inputs (measured 2026-09-13; the third row is
+    why the old form was worse than "it drops answers"):
+
+        only the server line   old ['10.9.1.50']            new []
+        server + IPv4 answer   old ['10.9.1.53','10.9.1.50'] new ['10.9.1.50']
+        server + IPv6 answer   old ['10.9.1.53','2001']     new ['2001:db8::1']
+        server on port 5353    old ['10.9.1.53','10.9.1.50'] new ['10.9.1.50']
+
+    Row 3: the old capture stopped at the colon, so an IPv6 answer became the
+    string `2001` — **an address that does not exist**, printed straight into the
+    FAIL message below (`did not resolve to … (got: …)`). Whoever read that went
+    looking for `2001`. A misleading diagnosis costs more than none.
+
+    Row 4 is why the new form rejects any `#` rather than the literal `#53`: the
+    old test could not have caught a resolver on a non-default port either. **The
+    fix is deliberately wider than the defect — do not narrow it back for
+    "precision".**
     """
     return [a for a in re.findall(r"^Address:\s*(\S+)", text, re.M) if "#" not in a]
 
