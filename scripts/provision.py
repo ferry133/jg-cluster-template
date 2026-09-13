@@ -48,9 +48,12 @@ What this file will not do
   Google, not Cloudflare, not Auth0, not a domain registrar. There is no code
   path here that creates one, and there should not be — automating consumer
   sign-up means holding the credential that recovers the account, which is the
-  one thing D11's model exists to avoid. **Who registers what, and when, is
-  D11's to state, not this file's**: restating a live decision here puts a copy
-  of it in every new customer repo, and that is the copy nobody comes back to.
+  one thing `factory-agent` D11 (`#5`) exists to avoid. **Who registers what,
+  and when, is that decision's to state, not this file's**: restating a live
+  decision here puts a copy of it in every new customer repo, and that is the
+  copy nobody comes back to. The change name is load-bearing — three fleet-ops
+  changes each have a D11 (`zero-it-onboarding`'s is about positive controls),
+  and a bare `D11` reads perfectly in all three.
 - **It mutates nothing without `--apply`.** The default prints the commands.
 
 A missing input, written down here because nothing detects it at runtime
@@ -68,9 +71,17 @@ default (`.`) nor `build_ctx` can tell you that — `build_ctx` only calls
 `abspath` and `join`, and a default of `.` says "stand in the right place", not
 which place. The definition is in what the steps *read*: measured 2026-09-13 on
 `jg-janncotcc`, 4.6 reads that repo's `cluster.yaml`, 4.7 its git tree, 4.8 its
-`kubeconfig-sa`. None of those exist in the template repo, where 4.6 is `ABSENT`
-at the first step. So the paragraph above is a statement about the *template*
-repo; the file has to arrive in the customer repo, and nothing puts it there.
+`kubeconfig-sa`. Point `--dir` at the template repo instead and 4.6 is `ABSENT`
+at its first step — but the three do not fail alike, and the difference is this
+file's whole subject. `cluster.yaml` and `kubeconfig-sa` are simply not there,
+so those steps say so. The template repo *does* have a `.git`, so 4.7 never
+reaches `UNMEASURABLE`: it runs its leak query against the wrong repository,
+finds nothing (measured 2026-09-14 — `git log --all -- '*cluster.yaml'` → 0,
+positive control `'*cluster.sample.yaml'` → 84) and reports `PRESENT`, tree
+clean. **A missing input announces itself; a wrong one answers.**
+
+So the paragraph above is a statement about the *template* repo; the file has
+to arrive in the customer repo, and nothing puts it there.
 
 Who does put it there: `fleet-ops
 docs/operations/provision-customer-cluster.md`, **Step 3b**, which carries how
