@@ -999,12 +999,14 @@ NEED_PLACE = "vantage"    # re-run from a place that can see it
 NEED_TOOL = "tool"        # install or configure something here
 NEED_HUMAN = "person"     # no machine can answer this half
 NOT_YET = "phase2"        # jgct#102 phase 2
+PAUSED = "ruling"         # a ruling says: do not judge this; nothing to run anywhere
 
 WHY_TEXT = {
     NEED_PLACE: "need a different vantage point — re-run from there",
     NEED_TOOL: "need a tool or credential here — install/set it, same place",
     NEED_HUMAN: "a person must answer this half; no run of this can",
     NOT_YET: "not implemented yet (jgct#102, a later phase)",
+    PAUSED: "paused by a ruling — not judged until it changes; nothing to install, nowhere to re-run from",
 }
 
 
@@ -1202,8 +1204,27 @@ def cell_im_front_door(args) -> tuple[int, str, str | None]:
                      f"Auth0 application — that failure appears after login"), NEED_HUMAN
 
 
+# The private per-user repo direction was paused by ferry133 on 2026-09-10
+# (ferry133/fleet-ops#8 and jgct#56 closed as not planned; the runbook's Step 3
+# has built --public since). While this stands, cell 5 does not judge: its FAIL
+# read "make it PRIVATE, switch sync to ssh://, add the deploy key" -- the paused
+# path, on every cluster, since every user repo is public (jgct#131, ruling
+# 2026-09-13: "改成附裁定出處的 ?"). Set to None to put the three checks back to
+# work; they are kept below, unchanged, for that day. Not deleted: a ruling that
+# is reversed needs the code to still be there.
+PRIVATE_REPO_PAUSED: dict | None = {
+    "since": "2026-09-10",
+    "by": "ferry133",
+    "refs": ("ferry133/fleet-ops#8", "ferry133/jg-cluster-template#56"),
+}
+
+
 def cell_private_repo(args) -> tuple[int, str, str | None]:
     """5. Three things about a private per-user repo, all of which must hold.
+
+    Since 2026-09-10 the cell does not judge at all -- see PRIVATE_REPO_PAUSED
+    above; the row carries the ruling and the kind `ruling`, so the summary
+    does not tell anyone to install or re-run anything.
 
     Phase 1 owns the two that need no cluster; the FluxInstance sync line is
     phase 2 and says so rather than reporting a bare "unchecked" -- except
@@ -1213,6 +1234,14 @@ def cell_private_repo(args) -> tuple[int, str, str | None]:
     The deploy-key third calls check_deploy_key rather than restating it: a
     second implementation drifts, and the copy that drifts keeps passing.
     """
+    if PRIVATE_REPO_PAUSED:
+        p = PRIVATE_REPO_PAUSED
+        return UNKNOWN, (f"not judged: the private-repo direction was paused by "
+                         f"{p['by']} on {p['since']} ({', '.join(p['refs'])} closed as "
+                         f"not planned). A FAIL here would send you down the paused "
+                         f"path; the three checks stay in the code for when the "
+                         f"ruling changes"), PAUSED
+
     parts, worst, kinds = [], PASS, set()
 
     def worsen(rc, kind=None):
@@ -1980,7 +2009,7 @@ def check_handover(args) -> int:
             rc, note, why = UNKNOWN, f"the check itself raised {type(e).__name__}: {e}", NEED_TOOL
         results.append((num, title, rc, note, why))
 
-    order = (NEED_PLACE, NEED_TOOL, NEED_HUMAN, NOT_YET)
+    order = (NEED_PLACE, NEED_TOOL, NEED_HUMAN, NOT_YET, PAUSED)
 
     def kinds_of(why) -> list[str]:
         """None / one kind / several. A cell blocked on more than one thing
