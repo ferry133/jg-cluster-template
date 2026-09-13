@@ -59,12 +59,25 @@ query shape: `cluster.sample.yaml` → 1). `fleet-ops
 openspec/changes/zero-it-onboarding/8.1-timing.md:315` recorded the same gap
 earlier and it is still open.
 
-So `run`/`plan` reach the cluster-creation step and stop there until someone
-supplies that file. It is written here because the alternative is finding out
-half-way through a delivery, in front of a customer — and because a script whose
-missing input is only known to the person who wrote it is the shape this repo
-keeps paying for. Related: §4.14 (nothing here has ever been executed against a
-real Omni) is open for the same reason.
+**That gap is only reached when the cluster does not already exist.**
+`OmniClusterStep.observe` returns `PRESENT` for a cluster Omni already holds,
+and the template file is consumed only by `OmniClusterStep.create`, which runs
+on the `ABSENT` path. So on an existing cluster **both `plan` and `run --apply`
+pass 4.3 without ever reading the file**; it is the FIRST provisioning of a new
+cluster (4.14) that stops there until someone supplies it.
+
+That distinction is spelled out because an earlier reader of this paragraph
+concluded "plan always stops at 4.3" — which the code does not do. The sentence
+that licensed it said `run`/`plan` stop there full stop, with no mention of
+whether the cluster exists; it has been replaced rather than qualified.
+
+It is written here because the alternative is finding out half-way through a
+delivery, in front of a customer — and because a script whose missing input is
+only known to the person who wrote it is the shape this repo keeps paying for.
+Related: §4.14 (`create`, the path that needs the file) has still never run
+against a real Omni. The *observe* path 4.3–4.8 now has: measured 2026-09-13 on
+`ferry133/jg-janncotcc#2`, six steps PASS against a real Omni, writing nothing
+(ruling and evidence: `#116` comment 5653393277).
 
 Usage
 -----
