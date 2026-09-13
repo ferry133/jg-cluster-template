@@ -50,8 +50,8 @@ What this file will not do
   account, which is the one thing D11's whole model exists to avoid.
 - **It mutates nothing without `--apply`.** The default prints the commands.
 
-A missing input, measured and written down rather than discovered at runtime
----------------------------------------------------------------------------
+A missing input, written down here because nothing detects it at runtime
+------------------------------------------------------------------------
 `build_ctx` computes a path to an Omni cluster template at
 `<--dir>/omni-cluster.yaml` (4.3) — it only joins the path, it never opens or
 stats it — and **no repo ships that file**. Measured 2026-09-12 on `jg-cluster-template`
@@ -65,11 +65,15 @@ earlier and it is still open.
 so 4.3 is satisfied and the path is never mentioned. On the `ABSENT` path the
 behaviour differs by mode, and the difference is the whole point:
 
-- `plan` prints `WOULD` and the `omnictl cluster template sync -f <path>` it
-  would run, then **continues to the next step**. It does not stop, and it
-  does not look at the file.
-- `run --apply` executes that command, and the FIRST provisioning of a new
+- **Without `--apply`** — that is `plan`, and also `run` with no flag, because
+  the driver keys off the flag and not off the subcommand — it prints `WOULD`
+  and the `omnictl cluster template sync -f <path>` it would run, then
+  **continues to the next step**. It does not stop, and it does not look at
+  the file.
+- **`run --apply`** executes that command, and the FIRST provisioning of a new
   cluster fails there — inside `omnictl`, not here — until the file exists.
+  FIRST, because of the `PRESENT` rule above: on every later run the cluster
+  already exists and this path is not taken.
 
 Nothing in this script opens or stats it. `omni_template` occurs exactly twice:
 the `os.path.join` above, and the argv of `OmniClusterStep.create`. The consumer
