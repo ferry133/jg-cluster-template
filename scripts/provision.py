@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Provisioning flow driver — §4 of the factory-agent change.
 
-`fleet-ops docs/operations/provision-customer-cluster.md` is the procedure. It was
-executed by a person once (§7.2, 2026-08-22) before any of this was written, on
+`fleet-ops docs/operations/provision-customer-cluster.md` is the procedure. A person
+ran it end to end (§7.2, 2026-08-22) in the time before this file existed, on
 purpose: automating a procedure nobody has run multiplies whatever is wrong with
-it and then hides that behind a script. This file automates the steps that run
-against Omni, GitHub and Cloudflare, and refuses the ones that need a human.
+it and then hides that behind a script. There have been more runs since; what
+matters here is the order, not a count that keeps going up. This file automates
+the steps that run against Omni, GitHub and Cloudflare, and refuses the ones
+that need a human.
 
 The one rule this file is built around
 --------------------------------------
@@ -43,11 +45,12 @@ What this file will not do
 - **It will not retry an unrecognised failure** (4.12). It prints what it ran,
   what it expected and what it got, verbatim, and exits.
 - **It will not register an account with any consumer service** (5.2). Not
-  Google, not Cloudflare, not Auth0, not a domain registrar. The customer
-  registers one Google account at contract time and the company signs in with
-  it; there is no code path here that creates one, and there should not be —
-  automating consumer sign-up means holding the credential that recovers the
-  account, which is the one thing D11's whole model exists to avoid.
+  Google, not Cloudflare, not Auth0, not a domain registrar. There is no code
+  path here that creates one, and there should not be — automating consumer
+  sign-up means holding the credential that recovers the account, which is the
+  one thing D11's model exists to avoid. **Who registers what, and when, is
+  D11's to state, not this file's**: restating a live decision here puts a copy
+  of it in every new customer repo, and that is the copy nobody comes back to.
 - **It mutates nothing without `--apply`.** The default prints the commands.
 
 A missing input, written down here because nothing detects it at runtime
@@ -58,10 +61,23 @@ stats it — and **nothing this repo ships provides that file**. Measured
 2026-09-12 on `jg-cluster-template` `main`: zero tracked files match
 `omni-cluster.ya?ml` (positive control, same query shape:
 `cluster.sample.yaml` → 1). That is one repo on one branch on one day; whether
-any *other* repo ships one has not been measured here, and `--dir` defaults to
-the working directory, so the file is looked for wherever the operator runs. `fleet-ops
-openspec/changes/zero-it-onboarding/8.1-timing.md:315` recorded the same gap
-earlier and it is still open.
+any *other* repo ships one has not been measured here.
+
+`--dir` is **the generated customer repo's working directory**. Neither the
+default (`.`) nor `build_ctx` can tell you that — `build_ctx` only calls
+`abspath` and `join`, and a default of `.` says "stand in the right place", not
+which place. The definition is in what the steps *read*: measured 2026-09-13 on
+`jg-janncotcc`, 4.6 reads that repo's `cluster.yaml`, 4.7 its git tree, 4.8 its
+`kubeconfig-sa`. None of those exist in the template repo, where 4.6 is `ABSENT`
+at the first step. So the paragraph above is a statement about the *template*
+repo; the file has to arrive in the customer repo, and nothing puts it there.
+
+Who does put it there: `fleet-ops
+docs/operations/provision-customer-cluster.md`, **Step 3b**, which carries how
+the file is produced (export a template from an existing cluster, then four
+edits). Cited by section and not by line: that document is edited daily, and a
+line number does not go blank when it rots — it starts pointing at an unrelated
+sentence, which is worse than pointing at nothing.
 
 **That path is only used when the cluster does not already exist.**
 `OmniClusterStep.observe` returns `PRESENT` for a cluster Omni already holds,
