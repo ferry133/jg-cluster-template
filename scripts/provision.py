@@ -54,9 +54,12 @@ A missing input, written down here because nothing detects it at runtime
 ------------------------------------------------------------------------
 `build_ctx` computes a path to an Omni cluster template at
 `<--dir>/omni-cluster.yaml` (4.3) — it only joins the path, it never opens or
-stats it — and **no repo ships that file**. Measured 2026-09-12 on `jg-cluster-template`
-`main`: zero tracked files match `omni-cluster.ya?ml` (positive control, same
-query shape: `cluster.sample.yaml` → 1). `fleet-ops
+stats it — and **nothing this repo ships provides that file**. Measured
+2026-09-12 on `jg-cluster-template` `main`: zero tracked files match
+`omni-cluster.ya?ml` (positive control, same query shape:
+`cluster.sample.yaml` → 1). That is one repo on one branch on one day; whether
+any *other* repo ships one has not been measured here, and `--dir` defaults to
+the working directory, so the file is looked for wherever the operator runs. `fleet-ops
 openspec/changes/zero-it-onboarding/8.1-timing.md:315` recorded the same gap
 earlier and it is still open.
 
@@ -65,8 +68,9 @@ earlier and it is still open.
 so 4.3 is satisfied and the path is never mentioned. On the `ABSENT` path the
 behaviour differs by mode, and the difference is the whole point:
 
-- **Without `--apply`** — that is `plan`, and also `run` with no flag, because
-  the driver keys off the flag and not off the subcommand — it prints `WOULD`
+- **Without `--apply`** — that is `plan`, and also `run` with no flag: the
+  driver branches on the flag, and argparse offers that flag on `run` only, so
+  those two spellings are the whole of it — it prints `WOULD`
   and the `omnictl cluster template sync -f <path>` it would run, then
   **continues to the next step**. It does not stop, and it does not look at
   the file.
@@ -75,10 +79,9 @@ behaviour differs by mode, and the difference is the whole point:
   FIRST, because of the `PRESENT` rule above: on every later run the cluster
   already exists and this path is not taken.
 
-Nothing in this script opens or stats it. `omni_template` occurs exactly twice:
-the `os.path.join` above, and the argv of `OmniClusterStep.create`. The consumer
-is `omnictl`, so the gap is reported by that command's failure and by nothing
-earlier.
+Nothing in this script opens or stats it: the path is joined, then handed to
+`omnictl` inside `OmniClusterStep.create`'s argv. The consumer is `omnictl`, so
+the gap is reported by that command's failure and by nothing earlier.
 
 Both halves are spelled out because each has already misled someone. The
 sentence this replaces said `run`/`plan` "stop there", with no mention of
