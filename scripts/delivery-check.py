@@ -1057,16 +1057,27 @@ def _cf_zone(domain: str, token_env: str) -> tuple[dict | None, str | None]:
     return zones[0], None
 
 
-def _curl_headers(url: str, timeout: int = 15) -> tuple[int | None, dict, str | None]:
+def _curl_headers(url: str, timeout: int = 15,
+                  resolve: str | None = None) -> tuple[int | None, dict, str | None]:
     """(status, headers, error) for one request, WITHOUT following redirects.
 
     The redirect is the assertion in cell 4, so following it would throw away
     the thing being measured.
+
+    `resolve` pins one name to one address for this request (curl --resolve).
+    Without it the name goes to the system resolver, and on a LAN that
+    intercepts port 53 the reply describes *where the caller is standing*, not
+    the path being handed over -- a 200 with no `cf-ray`, which reads as a
+    broken cluster (jgct#131, cell 8).
     """
     if not shutil.which("curl"):
         return None, {}, "curl is not on PATH"
-    r = run(["curl", "-sS", "-o", os.devnull, "-D", "-", "-m", str(timeout),
-             "--max-redirs", "0", url])
+    cmd = ["curl", "-sS", "-o", os.devnull, "-D", "-", "-m", str(timeout),
+           "--max-redirs", "0"]
+    if resolve:
+        cmd += ["--resolve", resolve]
+    cmd.append(url)
+    r = run(cmd)
     if r.returncode != 0:
         return None, {}, (r.stderr.strip()[:160] or f"curl exited {r.returncode}")
     status, hdrs = None, {}
@@ -1294,16 +1305,44 @@ def cell_echo_ext(args) -> tuple[int, str, str | None]:
     actually crossed Cloudflare, which is the path being handed over.
     """
     host = f"echo-ext.{args.domain}"
-    status, hdrs, err = _curl_headers(f"https://{host}/")
+    # Ask a resolver outside the building and pin the answer, the same line
+    # cell 13 already uses. Handing the name to the system resolver measured
+    # the LAN instead: a router that intercepts port 53 answers with the
+    # k8s-gateway address, the request never leaves the site, and the 200 comes
+    # back with no cf-ray -- reported as "answered by something other than
+    # Cloudflare", which sends the reader to fix a cluster that is fine
+    # (jgct#131; four such things were checked before the vantage was).
+    control, cerr = _doh_a("cloudflare.com")
+    if cerr or not control:
+        return UNKNOWN, (f"the positive control (cloudflare.com) did not resolve "
+                         f"over DoH{': ' + cerr if cerr else ''} — this box "
+                         f"cannot ask a public resolver, so nothing it learns "
+                         f"about {host} would mean anything"), NEED_TOOL
+    addrs, aerr = _doh_a(host)
+    if aerr:
+        return UNKNOWN, f"DoH query for {host} failed: {aerr}", NEED_TOOL
+    if not addrs:
+        return FAIL, (f"{host} does not resolve from a public resolver, while "
+                      f"the control does — the public name does not exist, "
+                      f"whatever the LAN answers for it"), None
+    public = [a for a in addrs if _is_public_v4(a)]
+    if not public:
+        return FAIL, (f"{host} resolves publicly to {', '.join(addrs)} — all "
+                      f"private, so the public path ends inside the building"), None
+    pin = public[0]
+    status, hdrs, err = _curl_headers(f"https://{host}/",
+                                      resolve=f"{host}:443:{pin}")
     if err:
-        return UNKNOWN, f"could not reach https://{host}/ — {err}", NEED_TOOL
+        return UNKNOWN, f"could not reach https://{host}/ at {pin} — {err}", NEED_TOOL
     if status != 200:
-        return FAIL, f"https://{host}/ returned {status}, not 200", None
+        return FAIL, f"https://{host}/ at {pin} returned {status}, not 200", None
     if "cf-ray" not in hdrs:
-        return FAIL, (f"https://{host}/ returned 200 with no cf-ray header — "
-                      f"answered by something other than Cloudflare, so this "
-                      f"measured a local shortcut, not the public path"), None
-    return PASS, f"{host} 200 with cf-ray {hdrs['cf-ray'][:20]}", None
+        return FAIL, (f"https://{host}/ at {pin} returned 200 with no cf-ray "
+                      f"header — that address is what a public resolver gives "
+                      f"for this name, so the gap is in front of the tunnel, "
+                      f"not in this LAN"), None
+    return PASS, (f"{host} at {pin} (public resolver) 200 with cf-ray "
+                  f"{hdrs['cf-ray'][:20]}"), None
 
 
 def _doh_a(name: str) -> tuple[list[str], str | None]:
@@ -1400,15 +1439,30 @@ def _newest_completed_job_log(args) -> tuple[str | None, str, str | None, str | 
     can answer these cells. That case is UNKNOWN, never a pass.
     """
     okj, jout, jerr = _kubectl(args, "-n", "monitoring", "get", "jobs",
-                              "-l", "app=daily-check", "-o", "json")
+                              "-o", "json")
     if not okj:
         # Cannot reach the cluster at all: a vantage problem, not a "wait for
         # the schedule" problem. The two 2s have opposite next actions.
         return None, "", jerr, NEED_PLACE
-    jobs = [j for j in json.loads(jout or "{}").get("items", [])
-            if (j.get("status") or {}).get("succeeded", 0)]
+    # NOT a label selector. `-l app=daily-check` matched zero Jobs on every
+    # cluster, because jg-base's cronjob.yaml sets no labels anywhere -- so
+    # these cells could never pass, and said "no completed daily-check Job",
+    # which reads as "the schedule has not come round yet" (jgct#131).
+    # The Job's owner is the fact that identifies it, and the kubelet writes
+    # it; the name prefix is the fallback for a hand-made run.
+    items = json.loads(jout or "{}").get("items", [])
+    mine = [j for j in items
+            if any(r.get("kind") == "CronJob" and r.get("name") == "daily-check"
+                   for r in (j.get("metadata") or {}).get("ownerReferences") or [])
+            or (j.get("metadata") or {}).get("name", "").startswith("daily-check-")]
+    jobs = [j for j in mine if (j.get("status") or {}).get("succeeded", 0)]
     if not jobs:
-        return None, "", "no completed daily-check Job", NEED_TOOL
+        # Carry the denominators: "0 of 0" (nothing has run) and "0 of 3"
+        # (three ran and none succeeded) need opposite next actions, and the
+        # sentence without them cannot tell them apart.
+        return None, "", (f"no completed Job from CronJob/daily-check "
+                          f"({len(mine)} of the namespace's {len(items)} Job(s) "
+                          f"come from it, none succeeded)"), NEED_TOOL
     jobs.sort(key=lambda j: (j.get("status") or {}).get("completionTime") or "")
     name = jobs[-1]["metadata"]["name"]
     okl, logs, lerr = _kubectl(args, "-n", "monitoring", "logs", f"job/{name}",
