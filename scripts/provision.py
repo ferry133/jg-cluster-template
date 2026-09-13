@@ -52,24 +52,36 @@ What this file will not do
 
 A missing input, measured and written down rather than discovered at runtime
 ---------------------------------------------------------------------------
-`build_ctx` expects an Omni cluster template at `<--dir>/omni-cluster.yaml`
-(4.3), and **no repo ships one**. Measured 2026-09-12 on `jg-cluster-template`
+`build_ctx` computes a path to an Omni cluster template at
+`<--dir>/omni-cluster.yaml` (4.3) — it only joins the path, it never opens or
+stats it — and **no repo ships that file**. Measured 2026-09-12 on `jg-cluster-template`
 `main`: zero tracked files match `omni-cluster.ya?ml` (positive control, same
 query shape: `cluster.sample.yaml` → 1). `fleet-ops
 openspec/changes/zero-it-onboarding/8.1-timing.md:315` recorded the same gap
 earlier and it is still open.
 
-**That gap is only reached when the cluster does not already exist.**
+**That path is only used when the cluster does not already exist.**
 `OmniClusterStep.observe` returns `PRESENT` for a cluster Omni already holds,
-and the template file is consumed only by `OmniClusterStep.create`, which runs
-on the `ABSENT` path. So on an existing cluster **both `plan` and `run --apply`
-pass 4.3 without ever reading the file**; it is the FIRST provisioning of a new
-cluster (4.14) that stops there until someone supplies it.
+so 4.3 is satisfied and the path is never mentioned. On the `ABSENT` path the
+behaviour differs by mode, and the difference is the whole point:
 
-That distinction is spelled out because an earlier reader of this paragraph
-concluded "plan always stops at 4.3" — which the code does not do. The sentence
-that licensed it said `run`/`plan` stop there full stop, with no mention of
-whether the cluster exists; it has been replaced rather than qualified.
+- `plan` prints `WOULD` and the `omnictl cluster template sync -f <path>` it
+  would run, then **continues to the next step**. It does not stop, and it
+  does not look at the file.
+- `run --apply` executes that command, and the FIRST provisioning of a new
+  cluster fails there — inside `omnictl`, not here — until the file exists.
+
+Nothing in this script opens or stats it. `omni_template` occurs exactly twice:
+the `os.path.join` above, and the argv of `OmniClusterStep.create`. The consumer
+is `omnictl`, so the gap is reported by that command's failure and by nothing
+earlier.
+
+Both halves are spelled out because each has already misled someone. The
+sentence this replaces said `run`/`plan` "stop there", with no mention of
+whether the cluster exists — one reader took that to mean `plan` always stops
+at 4.3. The first attempt at a fix then said the new-cluster case "stops there",
+which is false for `plan` for the same reason. Same sentence, two halves, one
+reader each.
 
 It is written here because the alternative is finding out half-way through a
 delivery, in front of a customer — and because a script whose missing input is
