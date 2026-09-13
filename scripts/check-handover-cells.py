@@ -32,6 +32,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import json
 import types
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -277,11 +278,14 @@ def main() -> int:
     # PASS，靜態掃描說它不能過，實際餵滿三件它就過。所以這裡用行為量。
     import io as _io, contextlib as _ctx
 
-    never_pass = []
+    never_pass, why5 = [], None
     for num, title, fn in m.HANDOVER_CELLS:
         src = fn.__doc__ or ""
         # 行為判準：把這一格能拿到的東西都給滿，看它回不回 0。
-        # 只對兩個「設計上把最後一步交給人」的格子斷言，其餘不猜。
+        # 只對三個格子斷言，其餘不猜：1、4 是「設計上把最後一步交給人」，
+        # 5 是另一類——「一條裁定說先別判」（PRIVATE_REPO_PAUSED，#133）。
+        # ⚠️ 這個白名單就是漏掉 5 的機制（#133 驗收時由 [c8c318] 量到：
+        # 守衛用「數量 == 2」寫，任何以 cell 名稱為關鍵字的查詢都找不到它）。
         if fn is m.cell_arrived_on_own_identity:
             cap = pathlib.Path(__file__).resolve().parent.parent / ".nvp1.json"
             cap.write_text('{"spec": {"state": 1}}')
@@ -294,11 +298,35 @@ def main() -> int:
             m._curl_headers = lambda url, timeout=15: (302, {"location": "https://t/authorize"}, None)
             rc, _, _ = fn(A())
             never_pass.append((num, rc))
+        elif fn is m.cell_private_repo:
+            # 給它最好的世界——PRIVATE、ssh://、deploy key 都在——裁定在的時候它
+            # 仍不量、不回 0，kind 是 ruling。裁定撤銷（常數設 None）那天這一格
+            # 會回 0、本斷言會紅：那是對的，runbook 那一頁要跟著改回兩格。
+            # 三個替身用完就還回去，後面的案例不該活在這個世界裡。
+            class _Best:
+                stderr, returncode = "", 0
+                def __init__(self, cmd):
+                    self.stdout = (json.dumps({"visibility": "PRIVATE"}) if cmd[0] == "gh"
+                                   else json.dumps({"spec": {"sync": {
+                                       "url": "ssh://git@github.com/x/y",
+                                       "pullSecret": "github-deploy-key"}}}))
+            saved = (m._run_bounded, m.shutil, m.check_deploy_key)
+            m._run_bounded = lambda cmd, timeout, label: (_Best(cmd), None)
+            m.shutil = types.SimpleNamespace(which=lambda name: "/usr/bin/" + name)
+            m.check_deploy_key = lambda a: 0
+            try:
+                rc, _, why5 = fn(A(repo="ferry133/x", kubeconfig="kc"))
+            finally:
+                m._run_bounded, m.shutil, m.check_deploy_key = saved
+            never_pass.append((num, rc))
     checked += 1
-    if all(rc != 0 for _, rc in never_pass) and len(never_pass) == 2:
-        print("PASS  cells 1 與 4 在最好的情況下仍不回 0（設計上把最後一步交給人）")
+    got = {n for n, _ in never_pass}
+    if all(rc != 0 for _, rc in never_pass) and got == {1, 4, 5} and why5 == m.PAUSED:
+        print("PASS  cells 1、4 在最好的情況下仍不回 0（設計上把最後一步交給人）；"
+              "cell 5 也不回 0（裁定暫停，kind=ruling）——三格、兩種理由")
     else:
-        print(f"FAIL  期望 cells 1、4 結構上回不了 0，量到 {never_pass}")
+        print(f"FAIL  期望 cells 1、4、5 結構上回不了 0（5 的 kind 是 ruling），"
+              f"量到 {never_pass}，5 的 kind={why5!r}")
         print("        runbook 依這件事告訴 operator「不要等一張全綠的表」——")
         print("        它若改變，那一頁就開始描述一個不存在的東西")
         failed += 1
