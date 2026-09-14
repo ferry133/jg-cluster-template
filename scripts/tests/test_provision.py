@@ -930,5 +930,68 @@ class TestThisFileRunsWholeBothWays(unittest.TestCase):
         )
 
 
+
+class TestStepsAreWiredToTheDriver(unittest.TestCase):
+    """`STEPS` is the only thing that connects a Step class to `drive()`.
+
+    Every other test in this file instantiates the class it is testing —
+    `prov.OmniClusterStep().observe(ctx)` — because that is the only way to feed
+    it a fake `omnictl`. So nothing asked whether the class is in the list the
+    driver walks. **Removing `OmniClusterStep()` from `STEPS` left all 220 tests
+    green** (jgct#144, found by `FO-runbook [5fe39a]` while accepting `#143`):
+    the whole of 4.3 disappeared — its name match, its template comparison, its
+    ticket identity — and the suite could not tell.
+
+    It fails silently by construction: a step that is not in the list prints
+    nothing, and **"this step had nothing to report" and "this step is not
+    there" look the same on a terminal.**
+
+    Order is asserted too, not just membership. The tasks run in sequence and
+    each reads what the ones before it produced, so a reordering is a different
+    program; and asserting only `len(STEPS)` would pass a swap.
+    """
+
+    #: (task, class name), in the order `drive()` walks them.
+    EXPECTED = [
+        ("4.3", "OmniClusterStep"),
+        ("4.4", "UserRepoStep"),
+        ("4.5", "TunnelStep"),
+        ("4.6", "ClusterYamlStep"),
+        ("4.7", "ConfigurePushStep"),
+        ("4.8", "KubeconfigStep"),
+    ]
+
+    def test_steps_match_the_expected_wiring(self):
+        got = [(s.task, type(s).__name__) for s in prov.STEPS]
+        # longMessage off, and the difference printed by hand: unittest appends
+        # a custom message *after* its own list diff, and the one thing a reader
+        # needs first is what to do about it. A message they have to scroll past
+        # a diff to reach is halfway to not being written.
+        self.longMessage = False
+        self.assertEqual(
+            got, self.EXPECTED,
+            "\n"
+            "STEPS is not what this test expects.\n"
+            "\n"
+            "  If you added, removed or reordered a step ON PURPOSE: update\n"
+            "  EXPECTED in this test. Going red on a legitimate change is this\n"
+            "  assertion's job, not a defect — but say so here rather than\n"
+            "  deleting it.\n"
+            "\n"
+            "  If you did NOT change STEPS: a step left the driver's list while\n"
+            "  its class stayed in place. The class still passes its own tests,\n"
+            "  and nothing else in this suite would notice (jgct#144).\n"
+            "\n"
+            f"  in STEPS:  {got}\n"
+            f"  expected:  {self.EXPECTED}\n",
+        )
+
+    def test_every_step_in_the_list_has_a_distinct_task(self):
+        # A duplicate task number would make two rows print the same [4.x] head,
+        # and the operator reads that head to decide what to fix.
+        tasks = [s.task for s in prov.STEPS]
+        self.assertEqual(sorted(tasks), sorted(set(tasks)), f"duplicate task in {tasks}")
+
+
 if __name__ == "__main__":
     unittest.main()
