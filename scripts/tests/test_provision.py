@@ -591,9 +591,6 @@ class TestTemplateClusterNameParser(unittest.TestCase):
         self.assertIn("/nonexistent/t.yaml", why)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class TestIdentity(unittest.TestCase):
     """5.3. The interesting case is the unset one: `claudecode_allowed_emails`
@@ -703,3 +700,32 @@ class TestTemplateResidue(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             rc, _ = self.residue(d)
             self.assertEqual(rc, prov.UNKNOWN)
+
+class TestThisFileRunsWholeBothWays(unittest.TestCase):
+    """The `__main__` guard has to stay at the end of this file.
+
+    REGRESSION, measured 2026-09-14 on `main` 3b090e38 and again on 03a7dbd7:
+    it used to sit above several classes, so running this file directly
+    collected the classes defined *before* it and nothing after —
+    `Ran 44` against `discover`'s `Ran 54`, **and both printed `OK`**.
+    Ten tests were skipped with no warning, no non-zero exit, nothing to
+    compare the number against. `run-tests.py` uses discovery so CI was never
+    blind; the person running the file directly was.
+
+    A comment saying "keep this last" is not a guard — it reads exactly like a
+    guard that works. This asserts the position from the file's own text, so
+    appending a class below it goes red.
+    """
+
+    def test_the_main_guard_is_the_last_statement(self):
+        lines = [l for l in pathlib.Path(__file__).read_text().splitlines() if l.strip()]
+        self.assertEqual(
+            lines[-2:],
+            ['if __name__ == "__main__":', "    unittest.main()"],
+            "a class defined below the __main__ guard is silently not collected "
+            "when this file is run directly, and the run still prints OK",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
