@@ -88,7 +88,10 @@ to arrive in the customer repo, and **nothing automated puts it there** —
 no repo ships it and no step here writes it. Measured 2026-09-14 across the
 three customer repos (`jcom`, `jg-jiahd`, `jg-janncotcc`): `omni-cluster.ya?ml`
 has **0 commits** in each history and is tracked by none (per-repo positive
-control, the `.editorconfig` each one does track: 1, 2, 1 commits).
+control, the `.editorconfig` each one does track: 1, 2, 1 commits — counted
+with `git log --all`, which is the point: sticking to `HEAD` gives 1, 1, 1
+because `jg-jiahd` has one of them on a branch, and two people comparing these
+numbers without the query shape will disagree and both be right).
 `jg-janncotcc` has one in its working tree, untracked — caught by the
 `*cluster.yaml` rule in its `.gitignore`, which is there for `cluster.yaml` and
 swallows this name too. (Named by rule, not by line — for the reason the next
@@ -135,9 +138,9 @@ stated that path, and that `omnictl`'s failure was the first report of the gap.
 them — **said once, there, and not restated here**: two copies of the same
 explanation in one section is how they start to disagree.
 
-**Detecting the gap is not providing the file.** The rest of
-this section is kept because the *input* is still missing and still nobody's
-job to produce — detecting it is not providing it.
+**Detecting the gap is not providing the file.** The rest of this section
+stands because the input is still missing and **no step here produces it** —
+a person does, per Step 3b above.
 
 Both halves are spelled out because each has already misled someone. The
 sentence this replaces said `run`/`plan` "stop there", with no mention of
@@ -149,10 +152,12 @@ reader each.
 It is written here because the alternative is finding out half-way through a
 delivery, in front of a customer — and because a script whose missing input is
 only known to the person who wrote it is the shape this repo keeps paying for.
-Related: §4.14 (`create`, the path that needs the file) has still never run
-against a real Omni. The *observe* path 4.3–4.8 now has: measured 2026-09-13 on
-`ferry133/jg-janncotcc#2`, six steps PASS against a real Omni, writing nothing
-(ruling and evidence: `#116` comment 5653393277).
+What *has* run against a real Omni: the **observe** path 4.3–4.8, measured
+2026-09-13 on `ferry133/jg-janncotcc#2` — six steps PASS, writing nothing
+(ruling and evidence: `#116` comment 5653393277). ⚠️ **That reading predates
+`#128`**, which changed 4.3's observe to open the template and compare the name
+it describes; **that comparison has not been run against a real Omni.** The
+`create` side (§4.14) has not either — said once, above.
 
 Usage
 -----
