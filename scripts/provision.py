@@ -318,6 +318,19 @@ class Step:
     def observe(self, ctx: dict) -> Observation:  # pragma: no cover - interface
         raise NotImplementedError
 
+    def inputs(self, ctx: dict) -> list[str]:
+        """Files `create()` reads. The driver checks these before it acts.
+
+        Empty for most steps. A step that hands a path to an external CLI names
+        it here instead of checking it in `observe()`, and the difference is not
+        stylistic: `observe()` runs in every mode, and `plan` and a `run`
+        without `--apply` do not touch these files and should not have to have
+        them. Checking there would make "show me what you would do" fail on a
+        machine where nothing is wrong yet — and a check that fires on a
+        correct run is a check that gets switched off.
+        """
+        return []
+
     def create(self, ctx: dict) -> list[list[str]]:  # pragma: no cover - interface
         """Commands that would create the resource. Returned, not run."""
         raise NotImplementedError
@@ -416,6 +429,15 @@ class OmniClusterStep(Step):
             )
         return Observation(ABSENT, f"no Omni cluster named {ctx['cluster_name']}",
                            evidence=f"{len(names)} other clusters listed, so the query worked")
+
+    def inputs(self, ctx: dict) -> list[str]:
+        # `omnictl cluster template sync -f` is handed this path. Nothing in
+        # this repo ships the file (measured 2026-09-12 and re-measured
+        # 2026-09-14 on `main`: zero tracked files match `omni-cluster.ya?ml`,
+        # positive control `cluster.sample.yaml` -> 1), so on a fresh clone it
+        # is always absent and the operator has to produce it first — the
+        # runbook's Step 3b says how.
+        return [ctx["omni_template"]]
 
     def create(self, ctx: dict) -> list[list[str]]:
         return [["omnictl", "cluster", "template", "sync", "-f", ctx["omni_template"]]]
@@ -1111,6 +1133,20 @@ def drive(ctx: dict, apply_: bool) -> int:
                 print("        " + (" ".join(c) if c[0] != "#" else " ".join(c)))
             worst = max(worst, DONE)
             continue
+
+        # About to act. Now — and only now — the files this step will hand to
+        # an external CLI have to be here. The driver refuses to act on an
+        # UNMEASURABLE observation of the outside world; its own inputs are not
+        # exempt, and `omnictl cluster template sync -f <missing>` fails inside
+        # omnictl, which reports it as an omnictl problem several lines away
+        # from the thing that is actually wrong.
+        missing = [p for p in step.inputs(ctx) if not os.path.exists(p)]
+        if missing:
+            huh(f"{head}: needs a file that is not here: " + ", ".join(missing))
+            print("      Stopping. This step's own input could not be measured, "
+                  "so acting would be acting on a world nobody described.")
+            print("      (The runbook's Step 3b says where this file comes from.)")
+            return UNKNOWN
 
         print(f"DO    {head}: {obs.detail}")
         for c in cmds:
