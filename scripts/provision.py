@@ -48,12 +48,15 @@ What this file will not do
   Google, not Cloudflare, not Auth0, not a domain registrar. There is no code
   path here that creates one, and there should not be — automating consumer
   sign-up means holding the credential that recovers the account, which is the
-  one thing `factory-agent` D11 (`#5`) exists to avoid. **Who registers what,
+  one thing `factory-agent` D11 (`ferry133/jg-cluster-template#5`) exists to
+  avoid. **Who registers what,
   and when, is that decision's to state, not this file's**: restating a live
   decision here puts a copy of it in every new customer repo, and that is the
   copy nobody comes back to. The change name is load-bearing — three fleet-ops
   changes each have a D11 (`zero-it-onboarding`'s is about positive controls),
-  and a bare `D11` reads perfectly in all three.
+  and a bare `D11` reads perfectly in all three. The change itself lives in
+  `fleet-ops openspec/changes/factory-agent/` — private, so a customer reading
+  this cannot open it; the pointer still has to resolve for whoever can.
 - **It mutates nothing without `--apply`.** The default prints the commands.
 
 A missing input, written down here because nothing detects it at runtime
@@ -63,8 +66,9 @@ A missing input, written down here because nothing detects it at runtime
 stats it — and **nothing this repo ships provides that file**. Measured
 2026-09-12 on `jg-cluster-template` `main`: zero tracked files match
 `omni-cluster.ya?ml` (positive control, same query shape:
-`cluster.sample.yaml` → 1). That is one repo on one branch on one day; whether
-any *other* repo ships one has not been measured here.
+`cluster.sample.yaml` → 1). That is one repo on one branch on one day; the
+customer repos are measured below (**nothing automated puts it there**), and
+they do not ship it either.
 
 `--dir` is **the generated customer repo's working directory**. Neither the
 default (`.`) nor `build_ctx` can tell you that — `build_ctx` only calls
@@ -81,9 +85,16 @@ positive control `'*cluster.sample.yaml'` → 84) and reports `PRESENT`, tree
 clean. **A missing input announces itself; a wrong one answers.**
 
 So the paragraph above is a statement about the *template* repo; the file has
-to arrive in the customer repo, and nothing puts it there.
+to arrive in the customer repo, and **nothing automated puts it there** —
+no repo ships it and no step here writes it. Measured 2026-09-14 across the
+three customer repos (`jcom`, `jg-jiahd`, `jg-janncotcc`): `omni-cluster.ya?ml`
+has **0 commits** in each history and is tracked by none (per-repo positive
+control, a file each one does track: 1, 2, 1 commits). `jg-janncotcc` has one
+in its working tree, untracked — caught by `.gitignore:55 *cluster.yaml`, the
+rule meant for `cluster.yaml`, which swallows this name too. A person put it
+there, by hand.
 
-Who does put it there: `fleet-ops
+Who does that, and how: `fleet-ops
 docs/operations/provision-customer-cluster.md`, **Step 3b**, which carries how
 the file is produced (export a template from an existing cluster, then four
 edits). Cited by section and not by line: that document is edited daily, and a
@@ -105,6 +116,9 @@ behaviour differs by mode, and the difference is the whole point:
   cluster fails there — inside `omnictl`, not here — until the file exists.
   FIRST, because of the `PRESENT` rule above: on every later run the cluster
   already exists and this path is not taken.
+  **This bullet is predicted from the argv, not observed**: §4.14 has never
+  run against a real Omni (said again at the end — repeated here because this
+  is the sentence most likely to be acted on, and the end is too late).
 
 Nothing in this script opens or stats it: the path is joined, then handed to
 `omnictl` inside `OmniClusterStep.create`'s argv. The consumer is `omnictl`, so
