@@ -301,6 +301,146 @@ class TestLive(unittest.TestCase):
         self.assertTrue(o.evidence, "an ABSENT with no positive control is a guess")
 
 
+class TestStepInputsAreCheckedOnlyWhenActing(unittest.TestCase):
+    """4.3 + #129. `omnictl cluster template sync -f <path>` is handed a file
+    that nothing in this repo ships. The driver refuses to act on an
+    unmeasurable observation of the outside world; `Step.inputs()` is that same
+    refusal turned on the driver's own inputs.
+
+    **Where the check lives is the whole design**, and it is a negative
+    condition: `plan` and a `run` without `--apply` do not read that file, and
+    must not start needing it. A check that fires on a correct "show me what
+    you would do" gets switched off, and a switched-off check reads like
+    coverage. `test_moving_the_check_into_observe_breaks_plan` is the control
+    that proves the tests below can tell the difference — it puts the check in
+    the wrong place and watches plan stop.
+    """
+
+    class StepWithInput(prov.Step):
+        """A step that hands a path to an external command, like 4.3 does."""
+
+        name, task = "needs-a-file", "test"
+
+        def __init__(self, path, states, cmds=None):
+            self.path = path
+            self._states = list(states)
+            self.cmds = cmds if cmds is not None else []
+            self.created = 0
+            self.observed = 0
+
+        def observe(self, ctx):
+            self.observed += 1
+            return prov.Observation(self._states.pop(0), "says so")
+
+        def inputs(self, ctx):
+            return [self.path]
+
+        def create(self, ctx):
+            self.created += 1
+            return list(self.cmds)
+
+    class PlainStep(prov.Step):
+        """Declares no inputs. Used to ask whether the driver carried on."""
+
+        name, task = "after", "test"
+
+        def __init__(self, states):
+            self._states = list(states)
+            self.observed = 0
+
+        def observe(self, ctx):
+            self.observed += 1
+            return prov.Observation(self._states.pop(0), "says so")
+
+        def create(self, ctx):
+            return []
+
+    def drive(self, steps, apply_):
+        import contextlib
+        import io
+        out = io.StringIO()
+        old, prov.STEPS = prov.STEPS, steps
+        try:
+            with contextlib.redirect_stdout(out):
+                rc = prov.drive({"dir": "/nonexistent"}, apply_=apply_)
+        finally:
+            prov.STEPS = old
+        return rc, out.getvalue()
+
+    # --- the wiring is the real step, not only the fake one ----------------
+
+    def test_the_real_step_declares_the_template_as_its_input(self):
+        self.assertEqual(
+            prov.OmniClusterStep().inputs({"omni_template": "/w/omni-cluster.yaml"}),
+            ["/w/omni-cluster.yaml"],
+            "if 4.3 stops declaring it, every test below still passes",
+        )
+
+    # --- acting without the file: stop, and say which path ----------------
+
+    def test_applying_without_the_file_stops_and_names_the_path(self):
+        missing = "/nonexistent/omni-cluster.yaml"
+        s = self.StepWithInput(missing, [prov.ABSENT])
+        rc, out = self.drive([s], apply_=True)
+        self.assertEqual(rc, prov.UNKNOWN, "not DONE, and not a crash inside omnictl")
+        self.assertIn(missing, out, "a stop that does not name the path is a riddle")
+        # `create()` has already been called at this point, and that is not a
+        # defect: by its own contract it *returns* the commands and runs
+        # nothing (`Step.create`: "Returned, not run"), and `drive()` calls it
+        # before the apply/plan split so that plan can print them. The
+        # assertion that carries the meaning is that nothing was executed —
+        # `drive()` marks each command it runs with "$ ".
+        self.assertEqual(s.created, 1)
+        self.assertNotIn("$ ", out, "no command may be executed after the stop")
+
+    def test_the_file_being_there_is_not_a_stop(self):
+        # Negative control. Without it, a check that always stops would pass
+        # every assertion above.
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "omni-cluster.yaml")
+            open(p, "w").write("kind: Cluster\n")
+            s = self.StepWithInput(p, [prov.ABSENT, prov.PRESENT])
+            rc, _ = self.drive([s], apply_=True)
+        self.assertEqual(rc, prov.DONE)
+        self.assertEqual(s.created, 1, "the input was there, so acting is correct")
+
+    # --- the negative condition: plan and non-apply run are unchanged -----
+
+    def test_plan_still_prints_would_and_carries_on(self):
+        # The condition is NOT "plan exits 0" — plan can exit 0 having skipped
+        # the step entirely. What is asserted is that it still says what it
+        # would do, with the command, AND that the next step was reached.
+        missing = "/nonexistent/omni-cluster.yaml"
+        sync = ["omnictl", "cluster", "template", "sync", "-f", missing]
+        first = self.StepWithInput(missing, [prov.ABSENT], cmds=[sync])
+        after = self.PlainStep([prov.PRESENT])
+        rc, out = self.drive([first, after], apply_=False)
+        self.assertEqual(rc, prov.DONE)
+        self.assertIn("WOULD", out)
+        self.assertIn(" ".join(sync), out, "plan must still print the command")
+        self.assertEqual(after.observed, 1, "it carried on; it did not stop")
+
+    def test_moving_the_check_into_observe_breaks_plan(self):
+        """The control for the test above: put the check in the wrong place
+        and watch plan stop. Asserting in a comment that a misplaced check
+        would be caught is not a measurement — this runs it."""
+
+        class CheckedInObserve(TestStepInputsAreCheckedOnlyWhenActing.StepWithInput):
+            def observe(self, ctx):
+                self.observed += 1
+                if not os.path.exists(self.path):      # the misplacement
+                    return prov.Observation(prov.UNMEASURABLE, f"{self.path} is not here")
+                return prov.Observation(self._states.pop(0), "says so")
+
+        missing = "/nonexistent/omni-cluster.yaml"
+        first = CheckedInObserve(missing, [prov.ABSENT])
+        after = self.PlainStep([prov.PRESENT])
+        rc, out = self.drive([first, after], apply_=False)
+        self.assertEqual(rc, prov.UNKNOWN, "plan started failing — this is the harm")
+        self.assertNotIn("WOULD", out)
+        self.assertEqual(after.observed, 0, "and it stopped the steps after it")
+
+
 if __name__ == "__main__":
     unittest.main()
 
