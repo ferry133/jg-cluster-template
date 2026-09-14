@@ -165,6 +165,11 @@ DONE, REFUSED, UNKNOWN = 0, 1, 2
 # the two systems: change it here and every already-shipped disk stops matching.
 TICKET_LABEL_PREFIX = "delivery-ticket"
 
+# How Omni relates a machine to a cluster. Read 2026-09-14 from the Omni
+# checkout in ~/coding/omni, `client/pkg/omni/resources/omni/labels.go`:
+# `SystemLabelPrefix = "omni.sidero.dev/"` and `LabelSuffixCluster = "cluster"`.
+CLUSTER_LABEL = "omni.sidero.dev/cluster"
+
 # Phase vocabulary is owned by delivery-ticket.py. Imported by name rather than
 # re-listed: two copies of an ordered list diverge, and the one being followed
 # is whichever the reader opened.
@@ -542,11 +547,103 @@ class OmniClusterStep(Step):
                 f"{want!r}. Syncing it from here would create or change that "
                 "other cluster, and the two need opposite corrections.",
             )
+        return self._members_carry_this_ticket(ctx, listed, path)
+
+    def _members_carry_this_ticket(self, ctx: dict, listed: int, path: str) -> Observation:
+        """The last question, and the only one that actually identifies.
+
+        The template naming this cluster says the *description* here is this
+        delivery's. It does not say the cluster in Omni is. Someone else's
+        cluster of the same name, or one built by hand, passes everything
+        above — which is what `#140` was opened for.
+
+        What identifies is the ticket: machines carry a `delivery-ticket`
+        label written at image-build time by `omnictl media preset create
+        --initial-labels`, and 4.2's refusal is already built on it. Omni
+        relates a machine to a cluster with `omni.sidero.dev/cluster` (read
+        2026-09-14 from `client/pkg/omni/resources/omni/labels.go`:
+        `SystemLabelPrefix` + `LabelSuffixCluster`) — not a string guessed
+        here.
+
+        **`--ticket` is optional, deliberately.** Requiring it would make
+        `plan` start failing for everyone who can run it today, and a check
+        that fires on a correct "show me what you would do" gets switched off
+        — that is #129's lesson, and it applies to command-line arguments too.
+        Without it this returns the weaker PRESENT, and says in its evidence
+        exactly which comparison was made, so PRESENT never claims more than
+        it measured.
+
+        Every way of not being able to ask stays UNMEASURABLE. In particular a
+        cluster with no machines yet is normal (it was just created), and
+        machines with no ticket label have two opposite corrections — "this is
+        someone else's" and "it is ours and the label was never written".
+        """
+        want = ctx["cluster_name"]
+        weak = (f"omnictl get clusters -> {listed} clusters; template's "
+                f"`kind: Cluster` name == {want}; ticket not compared "
+                f"(no --ticket given)")
+        ticket = ctx.get("ticket")
+        if not ticket:
+            return Observation(
+                PRESENT,
+                f"Omni cluster {want} exists, and {path} describes that same cluster",
+                evidence=weak,
+            )
+
+        rows, err = omnictl_json("machinestatus")
+        if rows is None:
+            return Observation(
+                UNMEASURABLE,
+                f"Omni cluster {want} exists and {path} describes it, but the "
+                f"machines could not be read ({err}), so whether this is "
+                f"ticket {ticket}'s cluster was not asked.",
+            )
+        members = [m for m in rows
+                   if (m.get("metadata", {}).get("labels", {}) or {}).get(CLUSTER_LABEL) == want]
+        if not members:
+            return Observation(
+                UNMEASURABLE,
+                f"Omni cluster {want} exists, but no machine reports "
+                f"{CLUSTER_LABEL}={want}. A cluster whose machines have not "
+                "been allocated yet looks exactly like this, so it is not an "
+                "answer about whose cluster it is.",
+            )
+        tickets = {machine_ticket_label(m) for m in members}
+        if tickets == {None}:
+            return Observation(
+                UNMEASURABLE,
+                f"{len(members)} machines are in {want}, and none carries a "
+                f"{TICKET_LABEL_PREFIX} label. 'This is another delivery's "
+                "cluster' and 'it is ours and the label was never written' "
+                "need opposite corrections, so this is not evidence either way.",
+            )
+        others = sorted(t for t in tickets if t is not None and t != str(ticket))
+        if others:
+            return Observation(
+                CONFLICT,
+                f"the machines in {want} carry ticket(s) {', '.join(others)}, "
+                f"this delivery is ticket {ticket}. A cluster of the right "
+                "name built for another delivery needs the opposite correction "
+                "to a missing one.",
+            )
+        # Some members may still be unlabelled while others identify the
+        # cluster as ours. PRESENT is right — one machine on this ticket is a
+        # positive answer — but the evidence has to say what it could not
+        # identify, or it reads as though every machine was checked. The
+        # ambiguity deliberately kept above (unlabelled: "someone else's" or
+        # "ours, never written") does not disappear because a sibling is
+        # labelled; it just stops being the whole answer.
+        unlabelled = sum(1 for m in members if machine_ticket_label(m) is None)
+        caveat = (f"; {unlabelled} of them carry no {TICKET_LABEL_PREFIX} label "
+                  "and were not identified either way") if unlabelled else ""
         return Observation(
             PRESENT,
-            f"Omni cluster {want} exists, and {path} describes that same cluster",
+            f"Omni cluster {want} exists, {path} describes it, and its machines "
+            f"carry ticket {ticket}",
             evidence=(f"omnictl get clusters -> {listed} clusters; template's "
-                      f"`kind: Cluster` name == {want}"),
+                      f"`kind: Cluster` name == {want}; {len(members)} machines "
+                      f"with {CLUSTER_LABEL}={want}, ticket label(s) "
+                      f"{sorted(t for t in tickets if t is not None)}{caveat}"),
         )
 
     def inputs(self, ctx: dict) -> list[str]:
@@ -1302,6 +1399,8 @@ def build_ctx(args) -> dict:
         "dir": d,
         "omni_template": os.path.join(d, "omni-cluster.yaml"),
         "repo_visibility": getattr(args, "visibility", "public"),
+        # Optional on purpose: see OmniClusterStep._members_carry_this_ticket.
+        "ticket": getattr(args, "ticket", None),
     }
 
 
@@ -1620,6 +1719,10 @@ def main() -> int:
         s = sub.add_parser(name, help=helptext)
         s.add_argument("--domain", required=True)
         s.add_argument("--dir", default=".")
+        s.add_argument("--ticket", default=None,
+                       help="delivery ticket number. Optional: without it 4.3 "
+                            "cannot tell this delivery's cluster from another "
+                            "one of the same name, and says so.")
         s.add_argument("--owner", default="ferry133")
         s.add_argument("--visibility", default="public", choices=["public", "private"])
         if name == "run":

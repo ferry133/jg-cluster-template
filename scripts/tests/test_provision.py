@@ -701,6 +701,171 @@ class TestTemplateResidue(unittest.TestCase):
             rc, _ = self.residue(d)
             self.assertEqual(rc, prov.UNKNOWN)
 
+class TestOmniClusterTicketIdentity(unittest.TestCase):
+    """4.3 + #140. The template naming this cluster says the *description*
+    here is this delivery's; it does not say the cluster in Omni is. What
+    identifies is the ticket the machines carry.
+
+    Two label keys, both read from the systems that define them rather than
+    guessed: `delivery-ticket` is written at image-build time and already has
+    a reader in this file (`machine_ticket_label`, two shapes, covered by
+    `TestMachineTicketMatching`), and `omni.sidero.dev/cluster` is Omni's own
+    (`client/pkg/omni/resources/omni/labels.go`, read 2026-09-14).
+
+    Every "could not ask" below is UNMEASURABLE. The one that is easiest to
+    get wrong is a cluster with no machines yet: that is what a freshly
+    created cluster looks like, so it cannot mean "someone else's".
+    """
+
+    THIS = "jg-target"
+    TICKET = "42"
+
+    def machine(self, uuid, cluster=None, ticket=None, slash=False):
+        labels = {}
+        if cluster:
+            labels[prov.CLUSTER_LABEL] = cluster
+        if ticket is not None:
+            if slash:
+                labels[f"{prov.TICKET_LABEL_PREFIX}/{ticket}"] = ""
+            else:
+                labels[prov.TICKET_LABEL_PREFIX] = ticket
+        return {"metadata": {"id": uuid, "labels": labels}}
+
+    def observe(self, machines, ticket=None, cluster_ids=None, template=True):
+        """4.3's observation with Omni stubbed. `machines=None` = cannot read."""
+        ids = cluster_ids if cluster_ids is not None else [self.THIS, "jg-other"]
+
+        def fake(resource, *rest):
+            if resource == "clusters":
+                return ([{"metadata": {"id": i}, "spec": {}} for i in ids], "")
+            if resource == "machinestatus":
+                if machines is None:
+                    return None, "omnictl is not installed"
+                return machines, ""
+            raise AssertionError(f"4.3 asked for an unexpected resource: {resource!r}")
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "omni-cluster.yaml")
+            if template:
+                open(path, "w").write(f"kind: Cluster\nname: {self.THIS}\n")
+            ctx = {"cluster_name": self.THIS, "omni_template": path, "dir": d}
+            if ticket is not None:
+                ctx["ticket"] = ticket
+            old, prov.omnictl_json = prov.omnictl_json, fake
+            try:
+                return prov.OmniClusterStep().observe(ctx)
+            finally:
+                prov.omnictl_json = old
+
+    # --- the two controls --------------------------------------------------
+
+    def test_this_deliverys_own_cluster_is_not_flagged(self):
+        # NEGATIVE CONTROL. A guard that fires on the right cluster blocks
+        # every normal re-run, and then gets switched off.
+        for slash in (False, True):          # both label shapes
+            obs = self.observe([self.machine("m1", self.THIS, self.TICKET, slash)],
+                               ticket=self.TICKET)
+            self.assertEqual(obs.state, prov.PRESENT, f"slash={slash}")
+            self.assertIn(self.TICKET, obs.evidence)
+
+    def test_another_deliverys_cluster_of_the_same_name_is_a_conflict(self):
+        # POSITIVE CONTROL. Same name, same template, different delivery.
+        obs = self.observe([self.machine("m1", self.THIS, "99")], ticket=self.TICKET)
+        self.assertEqual(obs.state, prov.CONFLICT)
+        self.assertIn("99", obs.detail)
+
+    def test_one_foreign_machine_among_ours_is_still_a_conflict(self):
+        obs = self.observe([self.machine("m1", self.THIS, self.TICKET),
+                            self.machine("m2", self.THIS, "99")], ticket=self.TICKET)
+        self.assertEqual(obs.state, prov.CONFLICT)
+
+    # --- every way of not being able to ask --------------------------------
+
+    def test_machines_that_cannot_be_read_are_unmeasurable(self):
+        obs = self.observe(None, ticket=self.TICKET)
+        self.assertEqual(obs.state, prov.UNMEASURABLE)
+
+    def test_a_cluster_with_no_machines_yet_is_unmeasurable(self):
+        # Not CONFLICT: this is exactly what a just-created cluster looks like.
+        obs = self.observe([self.machine("m1", "jg-other", "99")], ticket=self.TICKET)
+        self.assertEqual(obs.state, prov.UNMEASURABLE)
+        self.assertIn(prov.CLUSTER_LABEL, obs.detail)
+
+    def test_unlabelled_machines_are_unmeasurable_not_a_conflict(self):
+        # "someone else's" and "ours, label never written" need opposite
+        # corrections, so neither may be chosen here.
+        obs = self.observe([self.machine("m1", self.THIS), self.machine("m2", self.THIS)],
+                           ticket=self.TICKET)
+        self.assertEqual(obs.state, prov.UNMEASURABLE)
+
+    def test_the_cluster_label_is_omnis_own_string(self):
+        """FOUND IN ACCEPTANCE by `FO-runbook [5fe39a]`, #143.
+
+        Every fixture above builds its labels with `prov.CLUSTER_LABEL`, so
+        the constant is being compared with itself and **any value passes**.
+        Measured: setting it to `"totally.wrong/never-matches"` leaves all 218
+        tests green. In production that is not a quiet failure — `members`
+        would always be empty, and this step reports an empty membership as
+        "a cluster whose machines have not been allocated yet", which reads
+        perfectly normal, forever, while the check never fires once.
+
+        So the literal is written out here, once. It is the only place in the
+        tests that does not go through the constant.
+        """
+        self.assertEqual(prov.CLUSTER_LABEL, "omni.sidero.dev/cluster")
+
+    def test_an_unidentified_member_is_named_in_the_evidence(self):
+        """Also found in acceptance. One machine on our ticket and one with no
+        label at all is still PRESENT — a positive identification is a
+        positive answer — but the evidence used to read `2 machines … ticket
+        label(s) ['42']`, which says every machine was checked. The contract
+        this step is built on is that PRESENT never claims more than it
+        measured."""
+        obs = self.observe([self.machine("m1", self.THIS, self.TICKET),
+                            self.machine("m2", self.THIS)], ticket=self.TICKET)
+        self.assertEqual(obs.state, prov.PRESENT)
+        self.assertIn("1 of them carry no", obs.evidence)
+
+    # --- the negative condition: --ticket stays optional -------------------
+
+    def test_without_a_ticket_present_says_what_it_did_not_compare(self):
+        # The weaker answer is allowed; claiming more than was measured is not.
+        obs = self.observe([self.machine("m1", self.THIS, "99")])   # no ticket in ctx
+        self.assertEqual(obs.state, prov.PRESENT)
+        self.assertIn("ticket not compared", obs.evidence)
+
+    def test_build_ctx_tolerates_a_namespace_without_a_ticket(self):
+        import argparse
+        ns = argparse.Namespace(domain="acme.tw", dir=".")
+        self.assertIsNone(prov.build_ctx(ns)["ticket"])
+        ns2 = argparse.Namespace(domain="acme.tw", dir=".", ticket="42")
+        self.assertEqual(prov.build_ctx(ns2)["ticket"], "42")
+
+    def test_plan_still_parses_without_a_ticket(self):
+        """#129's negative condition, applied to the command line: requiring
+        `--ticket` would make `plan` start failing for everyone who can run it
+        today. Exercised through the real parser in `main()`, with the command
+        stubbed so the driver does not run."""
+        import sys
+        seen = {}
+
+        def fake_plan(args):
+            seen["ticket"] = getattr(args, "ticket", "MISSING")
+            return prov.DONE
+
+        old_plan, prov.cmd_plan = prov.cmd_plan, fake_plan
+        old_argv = sys.argv
+        try:
+            sys.argv = ["provision.py", "plan", "--domain", "acme.tw"]
+            self.assertEqual(prov.main(), prov.DONE)
+            self.assertIsNone(seen["ticket"], "--ticket must default, not be required")
+            sys.argv = ["provision.py", "plan", "--domain", "acme.tw", "--ticket", "42"]
+            self.assertEqual(prov.main(), prov.DONE)
+            self.assertEqual(seen["ticket"], "42")
+        finally:
+            prov.cmd_plan, sys.argv = old_plan, old_argv
+
+
 class TestThisFileRunsWholeBothWays(unittest.TestCase):
     """The `__main__` guard has to stay at the end of this file.
 
