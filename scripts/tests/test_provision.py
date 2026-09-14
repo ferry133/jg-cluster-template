@@ -591,9 +591,6 @@ class TestTemplateClusterNameParser(unittest.TestCase):
         self.assertIn("/nonexistent/t.yaml", why)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class TestIdentity(unittest.TestCase):
     """5.3. The interesting case is the unset one: `claudecode_allowed_emails`
@@ -703,3 +700,70 @@ class TestTemplateResidue(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             rc, _ = self.residue(d)
             self.assertEqual(rc, prov.UNKNOWN)
+
+class TestThisFileRunsWholeBothWays(unittest.TestCase):
+    """The `__main__` guard has to stay at the end of this file.
+
+    REGRESSION, measured 2026-09-14 on `main` 3b090e38 and again on 03a7dbd7:
+    it used to sit above several classes, so running this file directly
+    collected the classes defined *before* it and nothing after —
+    `Ran 44` against `discover`'s `Ran 54`, **and both printed `OK`**.
+    Ten tests were skipped with no warning, no non-zero exit, nothing to
+    compare the number against. `run-tests.py` uses discovery so CI was never
+    blind; the person running the file directly was.
+
+    A comment saying "keep this last" is not a guard — it reads exactly like a
+    guard that works. This asserts the position from the file's own text, so
+    appending a class below it goes red.
+    """
+
+    GUARD = 'if __name__ == "__main__":'
+
+    def test_the_main_guard_is_the_last_statement(self):
+        lines = [l for l in pathlib.Path(__file__).read_text().splitlines() if l.strip()]
+        self.assertEqual(
+            lines[-2:],
+            [self.GUARD, "    unittest.main()"],
+            "a class defined below the __main__ guard is silently not collected "
+            "when this file is run directly, and the run still prints OK",
+        )
+
+    def test_there_is_exactly_one_main_guard(self):
+        """The property that matters is "last statement that *runs*", and the
+        assertion above only says "last two lines". Those are the same sentence
+        while there is one guard and different sentences when there are two.
+
+        FALSE NEGATIVE, found by `k8scc [ef2bb8]` accepting #141 and reproduced
+        here: put a second guard back in the middle (a merge resolved wrong, a
+        copy-paste revival) and keep the one at the end. Running the file
+        directly gives `Ran 44 OK` again — the original defect, whole — while
+        the test above stays green two ways over: the last two lines really are
+        the guard, and in the direct run that test is not even collected,
+        because the middle `unittest.main()` has already called `sys.exit()`.
+        Measured: collected 0 times directly, once under discovery.
+
+        Counting whole lines is what keeps this honest — the literal in the
+        assertion above is indented, so it is not one of these.
+
+        ⚠️ **What this assertion cannot do, measured rather than assumed.**
+        It does not rescue the direct run: with a second guard in place,
+        `python3 scripts/tests/test_provision.py` still prints `Ran 44 OK`,
+        because this test is not collected either — nothing inside a file can
+        catch a `sys.exit()` that happens before collection starts. What it
+        buys is that the state cannot *survive*: discovery sees the whole
+        module, so `run-tests.py` and CI go red and the second guard cannot be
+        committed. The local liar is still a liar until someone runs CI.
+        Closing that would need a check outside this file — comparing the two
+        collection counts — which is `#137`'s own follow-up note about
+        `run-tests.py` catching "zero collected" but not "half a file missing".
+        """
+        lines = [l for l in pathlib.Path(__file__).read_text().splitlines() if l.strip()]
+        self.assertEqual(
+            lines.count(self.GUARD), 1,
+            "a second __main__ guard above the classes exits before they are "
+            "collected, and the run still prints OK",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
