@@ -37,11 +37,83 @@ import sys
 
 sys.dont_write_bytecode = True
 
+import re
+import subprocess
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 TESTS = ROOT / "scripts" / "tests"
+
+
+def _cases(suite):
+    for item in suite:
+        if isinstance(item, unittest.TestSuite):
+            yield from _cases(item)
+        else:
+            yield item
+
+
+def collection_counts_agree(by_module: dict) -> bool:
+    """Every test file must collect the same number of tests both ways.
+
+    The failure this catches (#137): a second `unittest.main()` above some of
+    the classes. `python3 scripts/tests/test_provision.py` then exits inside it,
+    the classes below are never defined, and the file reports `Ran 44 OK` while
+    discovery reports `Ran 56 OK`. **Both are green.** The count guard above
+    does not see it either: the total is still far from zero, because only one
+    file lost half of itself.
+
+    Not a text check. `#141` asserted the `__main__` line appeared exactly once,
+    and `k8scc [ef2bb8]` got past it during acceptance by writing the guard with
+    single quotes. Chasing that family by spelling is unbounded — `sys.exit()`,
+    `raise SystemExit`, `exit()`, another `__name__` comparison — and each new
+    pattern is another round of scope. This asks the question the patterns are
+    a proxy for: **do the two ways of running this file see the same tests?**
+    Anything that ends the direct run early makes the two numbers differ,
+    whatever it is spelled like.
+
+    The discovery side is counted off the suite before it runs, so it costs
+    nothing — and it has to be *before*: `TestSuite.run` drops its references
+    as it goes, so walking the same object afterwards yields nothing and this
+    check reports every file as empty. Measured 2026-09-14, by writing it the
+    wrong way round first. The direct side has to be a real subprocess: executing the
+    module top to bottom under `__main__` is the thing being measured, and no
+    amount of reading the file reproduces it.
+    """
+    ok = True
+    for path in sorted(TESTS.glob("test_*.py")):
+        want = by_module.get(path.stem)
+        run = subprocess.run([sys.executable, "-B", str(path)],
+                             cwd=str(ROOT), capture_output=True, text=True)
+        seen = re.findall(r"^Ran (\d+) tests?", run.stderr, re.M)
+        rel = path.relative_to(ROOT)
+
+        if want is None:
+            print(f"FAIL  {rel} collected 0 tests under discovery.")
+            print("      Either it has no tests, or discovery cannot import it.")
+            ok = False
+            continue
+        if not seen:
+            print(f"FAIL  {rel} printed no 'Ran N tests' line when run directly.")
+            print(f"      Discovery collects {want}. Running the file itself has to")
+            print("      report a count, or these two can never be compared.")
+            print(f"      Its exit code was {run.returncode}.")
+            ok = False
+            continue
+
+        direct = int(seen[-1])
+        if direct != want:
+            print(f"FAIL  {rel}: direct run collected {direct}, discovery {want} "
+                  f"(difference {want - direct}).")
+            print("      Something ends the direct run before the file finishes")
+            print("      defining its tests — a `unittest.main()` or any other exit")
+            print("      above the later classes. Both ways still print OK, which is")
+            print("      why this is compared rather than trusted (#137, #142).")
+            ok = False
+        else:
+            print(f"  {rel}: {direct} both ways")
+    return ok
 
 
 def main() -> int:
@@ -63,11 +135,30 @@ def main() -> int:
         return 1
 
     print(f"collected {count} tests from {TESTS.relative_to(ROOT)}/", flush=True)
+
+    # Counted before the run, not after: see collection_counts_agree.
+    by_module: dict[str, int] = {}
+    for case in _cases(suite):
+        by_module[type(case).__module__] = by_module.get(type(case).__module__, 0) + 1
+
     result = unittest.TextTestRunner(verbosity=2).run(suite)
+
+    # Both signals always run. An earlier `return` here would mean that
+    # whenever any test fails, the collection comparison never reports — and
+    # the first thing that makes a test fail is often the very edit that also
+    # truncates the file. Measured 2026-09-14: with a second `__main__` guard
+    # spelled with double quotes, `#141`'s in-file assertion fails, and with an
+    # early return that failure is the only thing printed. The two checks would
+    # then look like one.
+    print("collection counts, direct run vs discovery:", flush=True)
+    counts_ok = collection_counts_agree(by_module)
 
     if not result.wasSuccessful():
         print(f"::error::{len(result.failures)} failed, {len(result.errors)} errored "
               f"out of {count} collected")
+    if not counts_ok:
+        print("::error::a test file does not collect the same tests both ways")
+    if not result.wasSuccessful() or not counts_ok:
         return 1
 
     print(f"ok — {count} tests passed")
