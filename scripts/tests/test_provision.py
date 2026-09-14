@@ -798,6 +798,34 @@ class TestOmniClusterTicketIdentity(unittest.TestCase):
                            ticket=self.TICKET)
         self.assertEqual(obs.state, prov.UNMEASURABLE)
 
+    def test_the_cluster_label_is_omnis_own_string(self):
+        """FOUND IN ACCEPTANCE by `FO-runbook [5fe39a]`, #143.
+
+        Every fixture above builds its labels with `prov.CLUSTER_LABEL`, so
+        the constant is being compared with itself and **any value passes**.
+        Measured: setting it to `"totally.wrong/never-matches"` leaves all 218
+        tests green. In production that is not a quiet failure — `members`
+        would always be empty, and this step reports an empty membership as
+        "a cluster whose machines have not been allocated yet", which reads
+        perfectly normal, forever, while the check never fires once.
+
+        So the literal is written out here, once. It is the only place in the
+        tests that does not go through the constant.
+        """
+        self.assertEqual(prov.CLUSTER_LABEL, "omni.sidero.dev/cluster")
+
+    def test_an_unidentified_member_is_named_in_the_evidence(self):
+        """Also found in acceptance. One machine on our ticket and one with no
+        label at all is still PRESENT — a positive identification is a
+        positive answer — but the evidence used to read `2 machines … ticket
+        label(s) ['42']`, which says every machine was checked. The contract
+        this step is built on is that PRESENT never claims more than it
+        measured."""
+        obs = self.observe([self.machine("m1", self.THIS, self.TICKET),
+                            self.machine("m2", self.THIS)], ticket=self.TICKET)
+        self.assertEqual(obs.state, prov.PRESENT)
+        self.assertIn("1 of them carry no", obs.evidence)
+
     # --- the negative condition: --ticket stays optional -------------------
 
     def test_without_a_ticket_present_says_what_it_did_not_compare(self):

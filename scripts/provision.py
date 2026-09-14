@@ -626,6 +626,16 @@ class OmniClusterStep(Step):
                 "name built for another delivery needs the opposite correction "
                 "to a missing one.",
             )
+        # Some members may still be unlabelled while others identify the
+        # cluster as ours. PRESENT is right — one machine on this ticket is a
+        # positive answer — but the evidence has to say what it could not
+        # identify, or it reads as though every machine was checked. The
+        # ambiguity deliberately kept above (unlabelled: "someone else's" or
+        # "ours, never written") does not disappear because a sibling is
+        # labelled; it just stops being the whole answer.
+        unlabelled = sum(1 for m in members if machine_ticket_label(m) is None)
+        caveat = (f"; {unlabelled} of them carry no {TICKET_LABEL_PREFIX} label "
+                  "and were not identified either way") if unlabelled else ""
         return Observation(
             PRESENT,
             f"Omni cluster {want} exists, {path} describes it, and its machines "
@@ -633,7 +643,7 @@ class OmniClusterStep(Step):
             evidence=(f"omnictl get clusters -> {listed} clusters; template's "
                       f"`kind: Cluster` name == {want}; {len(members)} machines "
                       f"with {CLUSTER_LABEL}={want}, ticket label(s) "
-                      f"{sorted(t for t in tickets if t is not None)}"),
+                      f"{sorted(t for t in tickets if t is not None)}{caveat}"),
         )
 
     def inputs(self, ctx: dict) -> list[str]:
