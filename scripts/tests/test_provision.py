@@ -441,6 +441,156 @@ class TestStepInputsAreCheckedOnlyWhenActing(unittest.TestCase):
         self.assertEqual(after.observed, 0, "and it stopped the steps after it")
 
 
+class TestOmniClusterIdentity(unittest.TestCase):
+    """4.3 + #128. `PRESENT` is documented as "it is there, and it is the one
+    this ticket says". Matching the name alone cannot say the second half, and
+    the two halves need opposite corrections — which is what CONFLICT is for.
+
+    **On the fixture.** The rows below are shaped from Omni's own definitions
+    (`ClusterSpec` in `client/api/omni/specs/omni.proto`, `Cluster` in
+    `client/pkg/template/internal/models/cluster.go`), not captured from a
+    live Omni — nobody working on this has an Omni to capture from. The
+    acceptance condition was relaxed to allow that on 2026-09-14 for one
+    stated reason, and the reason is a dependency worth failing loudly on:
+    **the only field these tests read out of a row is `metadata.id`**, which
+    the code on `main` already reads and which is therefore not the thing in
+    doubt. If the discrimination ever moves to another field, this fixture
+    stops being grounded and has to be re-grounded against a real capture.
+    """
+
+    THIS = "jg-target"
+
+    def rows(self, *ids):
+        # `omnictl get clusters -o json` prints one document per resource;
+        # `omnictl_json` has already decoded them into this list.
+        return [{"metadata": {"id": i, "namespace": "default"},
+                 "spec": {"kubernetesVersion": "v1.31.1", "talosVersion": "v1.8.1"}}
+                for i in ids]
+
+    def observe(self, ids, template=None, cluster_name=None):
+        """Run 4.3's observation with Omni stubbed and a real file on disk."""
+        want = cluster_name or self.THIS
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "omni-cluster.yaml")
+            if template is not None:
+                open(path, "w").write(template)
+            old = prov.omnictl_json
+            prov.omnictl_json = lambda *a, **k: (self.rows(*ids), "")
+            try:
+                return prov.OmniClusterStep().observe(
+                    {"cluster_name": want, "omni_template": path, "dir": d}), path
+            finally:
+                prov.omnictl_json = old
+
+    CLUSTER_DOC = 'kind: Cluster\nname: {name}\nkubernetes:\n  version: v1.31.1\ntalos:\n  version: v1.8.1\n'
+
+    # --- the two controls the acceptance asked for -------------------------
+
+    def test_this_deliverys_own_cluster_is_not_flagged(self):
+        # NEGATIVE CONTROL. A guard that fires on the correct cluster would
+        # block every normal provisioning run, and would then be switched off.
+        obs, _ = self.observe([self.THIS, "jg-other"],
+                              template=self.CLUSTER_DOC.format(name=self.THIS))
+        self.assertEqual(obs.state, prov.PRESENT)
+        self.assertNotEqual(obs.state, prov.CONFLICT)
+        self.assertIn(self.THIS, obs.evidence)
+
+    def test_a_template_describing_another_cluster_is_a_conflict(self):
+        # POSITIVE CONTROL. Same name in Omni, different thing described here.
+        obs, _ = self.observe([self.THIS],
+                              template=self.CLUSTER_DOC.format(name="jg-someoneelse"))
+        self.assertEqual(obs.state, prov.CONFLICT)
+        self.assertIn("jg-someoneelse", obs.detail)
+
+    # --- what happens when the description is not there --------------------
+
+    def test_no_template_is_unmeasurable_not_present(self):
+        obs, path = self.observe([self.THIS], template=None)
+        self.assertEqual(obs.state, prov.UNMEASURABLE)
+        self.assertIn(path, obs.detail, "a stop that does not name the path is a riddle")
+
+    def test_a_template_this_parser_cannot_read_is_never_a_conflict(self):
+        # The parser's own three-valued rule: "I could not read it" is not
+        # evidence about the cluster, so it must not become CONFLICT — that
+        # would flag a correct delivery on a parser bug.
+        for bad_doc in ("kind: ControlPlane\nname: jg-target\n",      # no Cluster doc
+                        "kind: Cluster\n",                            # no name
+                        "kind: Cluster\nname: a\n---\nkind: Cluster\nname: b\n"):
+            obs, _ = self.observe([self.THIS], template=bad_doc)
+            self.assertEqual(obs.state, prov.UNMEASURABLE, bad_doc)
+
+    def test_a_nested_name_is_not_mistaken_for_the_clusters(self):
+        """Reading column 0 only is what keeps a stdlib parser honest.
+
+        REGRESSION IN THE TEST, not the code. The first version of this case
+        nested the decoy as a list item (`  - name: …`). It passed — and it
+        passed for the wrong reason: a leading `-` misses the key pattern on
+        its own, so the case stayed green even with the column-0 rule removed.
+        A mutation (allowing indented keys) survived it, which is the only
+        reason anyone noticed. The decoy below is a plain indented key, so it
+        is the column-0 rule and nothing else that rejects it.
+        """
+        doc = ("kind: Cluster\n"
+               "kubernetes:\n"
+               "  name: jg-someoneelse\n"          # kills the mutant
+               "  version: v1.31.1\n"
+               "patches:\n"
+               "  - name: jg-alsonotthis\n"        # kept: a real template has these
+               "    inline:\n"
+               "      cluster: {}\n"
+               f"name: {self.THIS}\n")
+        obs, _ = self.observe([self.THIS], template=doc)
+        self.assertEqual(obs.state, prov.PRESENT)
+        self.assertIn(self.THIS, obs.evidence)
+
+    # --- the paths that must not have changed ------------------------------
+
+    def test_absent_is_unchanged_when_the_template_is_missing(self):
+        # This is what keeps `plan` and a `run` without --apply working on a
+        # fresh clone: the cluster is not in Omni, so 4.3 is ABSENT and the
+        # driver prints WOULD and carries on. #129 checks the file only when
+        # it is about to act.
+        obs, _ = self.observe(["jg-other"], template=None)
+        self.assertEqual(obs.state, prov.ABSENT)
+        self.assertTrue(obs.evidence, "an ABSENT with no positive control is a guess")
+
+    def test_the_existing_unmeasurable_paths_still_work(self):
+        with tempfile.TemporaryDirectory() as d:
+            ctx = {"cluster_name": self.THIS,
+                   "omni_template": os.path.join(d, "omni-cluster.yaml"), "dir": d}
+            old = prov.omnictl_json
+            try:
+                prov.omnictl_json = lambda *a, **k: (None, "omnictl is not installed")
+                self.assertEqual(prov.OmniClusterStep().observe(ctx).state, prov.UNMEASURABLE)
+                prov.omnictl_json = lambda *a, **k: ([], "")
+                o = prov.OmniClusterStep().observe(ctx)
+                self.assertEqual(o.state, prov.UNMEASURABLE, "zero clusters is not an answer")
+            finally:
+                prov.omnictl_json = old
+
+
+class TestTemplateClusterNameParser(unittest.TestCase):
+    """The parser behind 4.3's comparison, on its own. It is deliberately
+    incurious: anything it is not sure of comes back as a reason, not a name."""
+
+    def test_reads_the_name_from_the_cluster_document(self):
+        for doc, want in (
+            ("kind: Cluster\nname: jg-a\n", "jg-a"),
+            ('kind: Cluster\nname: "jg-a"\n', "jg-a"),
+            ("kind: Cluster\nname: 'jg-a'\n", "jg-a"),
+            ("kind: ControlPlane\nname: mach\n---\nkind: Cluster\nname: jg-a\n", "jg-a"),
+        ):
+            with tempfile.TemporaryDirectory() as d:
+                p = os.path.join(d, "t.yaml")
+                open(p, "w").write(doc)
+                self.assertEqual(prov.template_cluster_name(p), (want, ""), doc)
+
+    def test_a_missing_file_is_a_reason_not_an_exception(self):
+        name, why = prov.template_cluster_name("/nonexistent/t.yaml")
+        self.assertIsNone(name)
+        self.assertIn("/nonexistent/t.yaml", why)
+
+
 if __name__ == "__main__":
     unittest.main()
 

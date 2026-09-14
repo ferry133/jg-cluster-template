@@ -369,6 +369,63 @@ def omnictl_json(resource: str, *rest: str) -> tuple[list[dict] | None, str]:
     return rows, ""
 
 
+def template_cluster_name(path: str) -> tuple[str | None, str]:
+    """The cluster name the Omni template at `path` describes.
+
+    Returns (name, why_not) — exactly one is set. **Anything this parser
+    cannot read confidently comes back as `None` with a reason, never a
+    guess.** The caller turns a name that differs into CONFLICT, so a misparse
+    here would flag a correct delivery, and a guard that fires on correct input
+    is worse than no guard: it gets switched off.
+
+    Parsed with the standard library on purpose. This file has no YAML
+    dependency and is not going to grow one — a script that stops running on
+    the machine that most needed it is the failure this repo keeps paying for.
+    What is read is narrow enough not to need one: the documents are split on
+    `---`, and only *top-level* keys (column 0) are collected, so a `name:`
+    nested under `patches:` or inside a machine set cannot be mistaken for the
+    cluster's.
+
+    The three keys come from Omni's own template model (`Cluster` in
+    `client/pkg/template/internal/models/cluster.go`, read 2026-09-14 from the
+    checkout in `~/coding/omni`): `kind`, `name`, and — not read here —
+    `kubernetes.version` / `talos.version`.
+    """
+    try:
+        text = open(path).read()
+    except OSError as e:
+        return None, f"cannot read {path}: {e}"
+
+    top = re.compile(r"^([A-Za-z_][A-Za-z0-9_.-]*):\s*(.*?)\s*$")
+    docs: list[list[str]] = [[]]
+    for line in text.splitlines():
+        if line.strip() == "---":
+            docs.append([])
+        else:
+            docs[-1].append(line)
+
+    named = []
+    for doc in docs:
+        fields = {}
+        for line in doc:
+            m = top.match(line)
+            if m:
+                fields.setdefault(m.group(1), m.group(2))
+        if fields.get("kind") == "Cluster":
+            named.append(fields.get("name", ""))
+
+    if not named:
+        return None, f"{path} has no `kind: Cluster` document"
+    if len(named) > 1:
+        # Not a parse failure — a real template cannot mean two things, and
+        # picking one would be choosing which cluster this delivery is.
+        return None, f"{path} has {len(named)} `kind: Cluster` documents"
+    name = named[0].strip().strip('"').strip("'")
+    if not name:
+        return None, f"{path} has a `kind: Cluster` document with no `name`"
+    return name, ""
+
+
 class OmniClusterStep(Step):
     """4.3 — the Omni cluster, with the patch that must exist before first boot.
 
@@ -388,8 +445,7 @@ class OmniClusterStep(Step):
             return Observation(UNMEASURABLE, err)
         names = [r.get("metadata", {}).get("id") for r in rows]
         if ctx["cluster_name"] in names:
-            return Observation(PRESENT, f"Omni cluster {ctx['cluster_name']} exists",
-                               evidence=f"omnictl get clusters -> {len(names)} clusters")
+            return self._is_this_deliverys(ctx, len(names))
         # The positive control: this listing found *other* clusters, so the
         # empty answer for ours is an answer. A listing that found nothing at
         # all is what a wrong endpoint or an expired key also produces.
@@ -402,6 +458,69 @@ class OmniClusterStep(Step):
             )
         return Observation(ABSENT, f"no Omni cluster named {ctx['cluster_name']}",
                            evidence=f"{len(names)} other clusters listed, so the query worked")
+
+    def _is_this_deliverys(self, ctx: dict, listed: int) -> Observation:
+        """A cluster of that name exists. Ask whether it is this delivery's.
+
+        A name match is not an identity check. It reads like one because in a
+        single Omni the cluster id *is* the name, so `metadata.id` cannot be
+        asked twice — comparing it again adds nothing. Every other field the
+        listing carries was measured and rejected (2026-09-14, against Omni's
+        own `ClusterSpec` in `client/api/omni/specs/omni.proto`):
+
+        - `kubernetesVersion` / `talosVersion` — a cluster legitimately
+          upgraded after provisioning differs from its template, so this would
+          flag a *correct* cluster, and a guard that fires on correct input
+          gets switched off;
+        - `features`, `backupConfiguration` — describe settings, not which
+          delivery this is;
+        - the `cniConfig: none` patch this class exists around — **not in
+          `ClusterSpec` at all**. It is a separate `ConfigPatches.omni.sidero.dev`
+          resource bound by label, so reading it is a second query whose JSON
+          shape nobody here can verify against a live Omni.
+
+        What is left is the template: it is this delivery's only written
+        description of the cluster it means. So the comparison is against that
+        file, and when the file is not here the honest answer is that the
+        question was not asked.
+
+        **What this still does not answer**, written here rather than left for
+        a reader to discover: a template that names this cluster does not prove
+        the cluster in Omni is the one this delivery created. Someone else's
+        cluster of the same name, or one built by hand, passes this. Closing
+        that needs the machines' `delivery-ticket` label — which `plan` and
+        `run` cannot reach today, because neither takes `--ticket`.
+        """
+        want = ctx["cluster_name"]
+        path = ctx["omni_template"]
+        if not os.path.exists(path):
+            return Observation(
+                UNMEASURABLE,
+                f"Omni holds a cluster named {want}, but {path} is not here, so "
+                "there is nothing to compare it against. Note what PRESENT "
+                f"would mean without that comparison: 'some cluster is called "
+                f"{want}' — which is equally true of one built by hand or by an "
+                "earlier delivery that is not this one. The runbook's Step 3b "
+                "says where this file comes from.",
+            )
+        described, why = template_cluster_name(path)
+        if described is None:
+            # The parser could not read it. That is not evidence about the
+            # cluster, so it must not become CONFLICT.
+            return Observation(UNMEASURABLE, f"Omni holds a cluster named {want}, but {why}")
+        if described != want:
+            return Observation(
+                CONFLICT,
+                f"{path} describes cluster {described!r}, this delivery is "
+                f"{want!r}. Syncing it from here would create or change that "
+                "other cluster, and the two need opposite corrections.",
+            )
+        return Observation(
+            PRESENT,
+            f"Omni cluster {want} exists, and {path} describes that same cluster",
+            evidence=(f"omnictl get clusters -> {listed} clusters; template's "
+                      f"`kind: Cluster` name == {want}"),
+        )
 
     def inputs(self, ctx: dict) -> list[str]:
         # `omnictl cluster template sync -f` is handed this path. Nothing in
