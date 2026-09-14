@@ -59,12 +59,11 @@ What this file will not do
   this cannot open it; the pointer still has to resolve for whoever can.
 - **It mutates nothing without `--apply`.** The default prints the commands.
 
-A missing input, written down here because nothing detects it at runtime
-------------------------------------------------------------------------
+A missing input, and what now detects it
+---------------------------------------
 `build_ctx` computes a path to an Omni cluster template at
-`<--dir>/omni-cluster.yaml` (4.3) — it only joins the path, it never opens or
-stats it — and **nothing this repo ships provides that file**. Measured
-2026-09-12 on `jg-cluster-template` `main`: zero tracked files match
+`<--dir>/omni-cluster.yaml` (4.3), and **nothing this repo ships provides that
+file**. Measured 2026-09-12 on `jg-cluster-template` `main`: zero tracked files match
 `omni-cluster.ya?ml` (positive control, same query shape:
 `cluster.sample.yaml` → 1). That is one repo on one branch on one day; the
 customer repos are measured below (**nothing automated puts it there**), and
@@ -89,10 +88,12 @@ to arrive in the customer repo, and **nothing automated puts it there** —
 no repo ships it and no step here writes it. Measured 2026-09-14 across the
 three customer repos (`jcom`, `jg-jiahd`, `jg-janncotcc`): `omni-cluster.ya?ml`
 has **0 commits** in each history and is tracked by none (per-repo positive
-control, a file each one does track: 1, 2, 1 commits). `jg-janncotcc` has one
-in its working tree, untracked — caught by `.gitignore:55 *cluster.yaml`, the
-rule meant for `cluster.yaml`, which swallows this name too. A person put it
-there, by hand.
+control, the `.editorconfig` each one does track: 1, 2, 1 commits).
+`jg-janncotcc` has one in its working tree, untracked — caught by the
+`*cluster.yaml` rule in its `.gitignore`, which is there for `cluster.yaml` and
+swallows this name too. (Named by rule, not by line — for the reason the next
+paragraph gives about line numbers; a citation that contradicts its own section
+is worse than no citation.) A person put it there, by hand.
 
 Who does that, and how: `fleet-ops
 docs/operations/provision-customer-cluster.md`, **Step 3b**, which carries how
@@ -101,28 +102,42 @@ edits). Cited by section and not by line: that document is edited daily, and a
 line number does not go blank when it rots — it starts pointing at an unrelated
 sentence, which is worse than pointing at nothing.
 
-**That path is only used when the cluster does not already exist.**
-`OmniClusterStep.observe` returns `PRESENT` for a cluster Omni already holds,
-so 4.3 is satisfied and the path is never mentioned. On the `ABSENT` path the
-behaviour differs by mode, and the difference is the whole point:
+**The path is read on both sides of that question now, for different
+reasons** — this used to be the paragraph saying an existing cluster meant the
+file was never looked at, and `#128` ended that:
 
-- **Without `--apply`** — that is `plan`, and also `run` with no flag: the
-  driver branches on the flag, and argparse offers that flag on `run` only, so
-  those two spellings are the whole of it — it prints `WOULD`
-  and the `omnictl cluster template sync -f <path>` it would run, then
-  **continues to the next step**. It does not stop, and it does not look at
-  the file.
-- **`run --apply`** executes that command, and the FIRST provisioning of a new
-  cluster fails there — inside `omnictl`, not here — until the file exists.
-  FIRST, because of the `PRESENT` rule above: on every later run the cluster
-  already exists and this path is not taken.
-  **This bullet is predicted from the argv, not observed**: §4.14 has never
-  run against a real Omni (said again at the end — repeated here because this
-  is the sentence most likely to be acted on, and the end is too late).
+- **Omni already holds a cluster of this name.** `OmniClusterStep.observe`
+  opens the template and compares the name it describes, in **every** mode
+  including `plan`, because a name match is not an identity check. Same name →
+  `PRESENT`. Different → `CONFLICT`. **No template, or one this parser cannot
+  read → `UNMEASURABLE`**, and the run stops: the question was not asked, and
+  `PRESENT` here would mean only "something is called that".
+- **No such cluster (`ABSENT`).** Here the two modes still differ, and the
+  difference is the whole point:
+  - **Without `--apply`** — that is `plan`, and also `run` with no flag: the
+    driver branches on the flag, and argparse offers that flag on `run` only,
+    so those two spellings are the whole of it. It prints `WOULD` and the
+    `omnictl cluster template sync -f <path>` it would run, then **continues to
+    the next step**. It does not stop, and on this path it does not open the
+    file.
+  - **`run --apply`** stops before running that command if the template is not
+    there: `drive()` checks `step.inputs(ctx)` at the moment it is about to
+    act — after the `plan` branch, so "show me what you would do" still does
+    not need the file — and names the missing path (`#129`).
 
-Nothing in this script opens or stats it: the path is joined, then handed to
-`omnictl` inside `OmniClusterStep.create`'s argv. The consumer is `omnictl`, so
-the gap is reported by that command's failure and by nothing earlier.
+**What is still predicted rather than observed**: what `omnictl cluster
+template sync` does once the file *is* there. §4.14 has never run against a
+real Omni. The stopping above is measured; the success beyond it is not.
+
+Until 2026-09-14 this section ended by saying that nothing here ever opened or
+stated that path, and that `omnictl`'s failure was the first report of the gap.
+`#129` and `#128` made both false, and the two bullets above are what replaced
+them — **said once, there, and not restated here**: two copies of the same
+explanation in one section is how they start to disagree.
+
+**Detecting the gap is not providing the file.** The rest of
+this section is kept because the *input* is still missing and still nobody's
+job to produce — detecting it is not providing it.
 
 Both halves are spelled out because each has already misled someone. The
 sentence this replaces said `run`/`plan` "stop there", with no mention of
