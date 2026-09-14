@@ -48,23 +48,26 @@ What this file will not do
   Google, not Cloudflare, not Auth0, not a domain registrar. There is no code
   path here that creates one, and there should not be — automating consumer
   sign-up means holding the credential that recovers the account, which is the
-  one thing `factory-agent` D11 (`#5`) exists to avoid. **Who registers what,
+  one thing `factory-agent` D11 (`ferry133/jg-cluster-template#5`) exists to
+  avoid. **Who registers what,
   and when, is that decision's to state, not this file's**: restating a live
   decision here puts a copy of it in every new customer repo, and that is the
   copy nobody comes back to. The change name is load-bearing — three fleet-ops
   changes each have a D11 (`zero-it-onboarding`'s is about positive controls),
-  and a bare `D11` reads perfectly in all three.
+  and a bare `D11` reads perfectly in all three. The change itself lives in
+  `fleet-ops openspec/changes/factory-agent/` — private, so a customer reading
+  this cannot open it; the pointer still has to resolve for whoever can.
 - **It mutates nothing without `--apply`.** The default prints the commands.
 
-A missing input, written down here because nothing detects it at runtime
-------------------------------------------------------------------------
+A missing input, and what now detects it
+---------------------------------------
 `build_ctx` computes a path to an Omni cluster template at
-`<--dir>/omni-cluster.yaml` (4.3) — it only joins the path, it never opens or
-stats it — and **nothing this repo ships provides that file**. Measured
-2026-09-12 on `jg-cluster-template` `main`: zero tracked files match
+`<--dir>/omni-cluster.yaml` (4.3), and **nothing this repo ships provides that
+file**. Measured 2026-09-12 on `jg-cluster-template` `main`: zero tracked files match
 `omni-cluster.ya?ml` (positive control, same query shape:
-`cluster.sample.yaml` → 1). That is one repo on one branch on one day; whether
-any *other* repo ships one has not been measured here.
+`cluster.sample.yaml` → 1). That is one repo on one branch on one day; the
+customer repos are measured below (**nothing automated puts it there**), and
+they do not ship it either.
 
 `--dir` is **the generated customer repo's working directory**. Neither the
 default (`.`) nor `build_ctx` can tell you that — `build_ctx` only calls
@@ -81,34 +84,63 @@ positive control `'*cluster.sample.yaml'` → 84) and reports `PRESENT`, tree
 clean. **A missing input announces itself; a wrong one answers.**
 
 So the paragraph above is a statement about the *template* repo; the file has
-to arrive in the customer repo, and nothing puts it there.
+to arrive in the customer repo, and **nothing automated puts it there** —
+no repo ships it and no step here writes it. Measured 2026-09-14 across the
+three customer repos (`jcom`, `jg-jiahd`, `jg-janncotcc`): `omni-cluster.ya?ml`
+has **0 commits** in each history and is tracked by none (per-repo positive
+control, the `.editorconfig` each one does track: 1, 2, 1 commits — counted
+with `git log --all`, which is the point: sticking to `HEAD` gives 1, 1, 1
+because `jg-jiahd` has one of them on a branch, and two people comparing these
+numbers without the query shape will disagree and both be right).
+`jg-janncotcc` has one in its working tree, untracked — caught by the
+`*cluster.yaml` rule in its `.gitignore`, which is there for `cluster.yaml` and
+swallows this name too. (Named by rule, not by line — for the reason the next
+paragraph gives about line numbers; a citation that contradicts its own section
+is worse than no citation.) A person put it there, by hand.
 
-Who does put it there: `fleet-ops
+Who does that, and how: `fleet-ops
 docs/operations/provision-customer-cluster.md`, **Step 3b**, which carries how
 the file is produced (export a template from an existing cluster, then four
 edits). Cited by section and not by line: that document is edited daily, and a
 line number does not go blank when it rots — it starts pointing at an unrelated
 sentence, which is worse than pointing at nothing.
 
-**That path is only used when the cluster does not already exist.**
-`OmniClusterStep.observe` returns `PRESENT` for a cluster Omni already holds,
-so 4.3 is satisfied and the path is never mentioned. On the `ABSENT` path the
-behaviour differs by mode, and the difference is the whole point:
+**The path is read on both sides of that question now, for different
+reasons** — this used to be the paragraph saying an existing cluster meant the
+file was never looked at, and `#128` ended that:
 
-- **Without `--apply`** — that is `plan`, and also `run` with no flag: the
-  driver branches on the flag, and argparse offers that flag on `run` only, so
-  those two spellings are the whole of it — it prints `WOULD`
-  and the `omnictl cluster template sync -f <path>` it would run, then
-  **continues to the next step**. It does not stop, and it does not look at
-  the file.
-- **`run --apply`** executes that command, and the FIRST provisioning of a new
-  cluster fails there — inside `omnictl`, not here — until the file exists.
-  FIRST, because of the `PRESENT` rule above: on every later run the cluster
-  already exists and this path is not taken.
+- **Omni already holds a cluster of this name.** `OmniClusterStep.observe`
+  opens the template and compares the name it describes, in **every** mode
+  including `plan`, because a name match is not an identity check. Same name →
+  `PRESENT`. Different → `CONFLICT`. **No template, or one this parser cannot
+  read → `UNMEASURABLE`**, and the run stops: the question was not asked, and
+  `PRESENT` here would mean only "something is called that".
+- **No such cluster (`ABSENT`).** Here the two modes still differ, and the
+  difference is the whole point:
+  - **Without `--apply`** — that is `plan`, and also `run` with no flag: the
+    driver branches on the flag, and argparse offers that flag on `run` only,
+    so those two spellings are the whole of it. It prints `WOULD` and the
+    `omnictl cluster template sync -f <path>` it would run, then **continues to
+    the next step**. It does not stop, and on this path it does not open the
+    file.
+  - **`run --apply`** stops before running that command if the template is not
+    there: `drive()` checks `step.inputs(ctx)` at the moment it is about to
+    act — after the `plan` branch, so "show me what you would do" still does
+    not need the file — and names the missing path (`#129`).
 
-Nothing in this script opens or stats it: the path is joined, then handed to
-`omnictl` inside `OmniClusterStep.create`'s argv. The consumer is `omnictl`, so
-the gap is reported by that command's failure and by nothing earlier.
+**What is still predicted rather than observed**: what `omnictl cluster
+template sync` does once the file *is* there. §4.14 has never run against a
+real Omni. The stopping above is measured; the success beyond it is not.
+
+Until 2026-09-14 this section ended by saying that nothing here ever opened or
+stated that path, and that `omnictl`'s failure was the first report of the gap.
+`#129` and `#128` made both false, and the two bullets above are what replaced
+them — **said once, there, and not restated here**: two copies of the same
+explanation in one section is how they start to disagree.
+
+**Detecting the gap is not providing the file.** The rest of this section
+stands because the input is still missing and **no step here produces it** —
+a person does, per Step 3b above.
 
 Both halves are spelled out because each has already misled someone. The
 sentence this replaces said `run`/`plan` "stop there", with no mention of
@@ -120,10 +152,12 @@ reader each.
 It is written here because the alternative is finding out half-way through a
 delivery, in front of a customer — and because a script whose missing input is
 only known to the person who wrote it is the shape this repo keeps paying for.
-Related: §4.14 (`create`, the path that needs the file) has still never run
-against a real Omni. The *observe* path 4.3–4.8 now has: measured 2026-09-13 on
-`ferry133/jg-janncotcc#2`, six steps PASS against a real Omni, writing nothing
-(ruling and evidence: `#116` comment 5653393277).
+What *has* run against a real Omni: the **observe** path 4.3–4.8, measured
+2026-09-13 on `ferry133/jg-janncotcc#2` — six steps PASS, writing nothing
+(ruling and evidence: `#116` comment 5653393277). ⚠️ **That reading predates
+`#128`**, which changed 4.3's observe to open the template and compare the name
+it describes; **that comparison has not been run against a real Omni.** The
+`create` side (§4.14) has not either — said once, above.
 
 Usage
 -----
