@@ -73,6 +73,26 @@ def collection_counts_agree(by_module: dict) -> bool:
     Anything that ends the direct run early makes the two numbers differ,
     whatever it is spelled like.
 
+    **This makes a `__main__` guard mandatory in every test file.** The direct
+    side is read from its `Ran N tests` line, and a file without a guard prints
+    none — it is reported as a failure here, saying so. All ten have one today
+    (measured 2026-09-14), so this costs nothing now; it is written down because
+    the requirement is otherwise invisible until someone adds the eleventh file.
+
+    Cost, measured 2026-09-14 on `d8f6441` by three sessions: about 10.2s → 21.4s,
+    **2.1×**. Kept deliberately (`#142`, the opener's call). The cheap version
+    — patch `unittest.main` in the subprocess so the file is only collected, not
+    run — would drop the added time to about a second, but it detects the
+    `sys.exit()` family by *the absence of a printed count*, and an absence is
+    what this whole line keeps being fooled by: `#137` hid precisely because both
+    ways printed `OK` and there was no second number to compare the first with.
+    **The eleven seconds buy the second number.**
+
+    If 2.1× ever becomes a problem, reduce the bookkeeping, not the executing:
+    the ten single-file discoveries can come from one whole-suite discovery split
+    by module. ⚠️ **Not by sampling, and not by running this only on `main`** —
+    either makes the guard miss the run that needed it.
+
     The discovery side is counted off the suite before it runs, so it costs
     nothing — and it has to be *before*: `TestSuite.run` drops its references
     as it goes, so walking the same object afterwards yields nothing and this
