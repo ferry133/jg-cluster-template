@@ -798,11 +798,7 @@ def cmd_template_residue(args) -> int:
         huh(f"{d} tracks no files in any subdirectory — nothing to judge")
         return UNKNOWN
 
-    # What a cluster repo legitimately holds. Anything else is residue until
-    # someone decides otherwise and adds it here, with a reason.
-    EXPECTED = {"kubernetes", "templates", "scripts", ".taskfiles", ".github",
-                "bootstrap", "talos", "flux"}
-    residue = [t for t in tops if t not in EXPECTED]
+    residue = [t for t in tops if t not in CLUSTER_REPO_TOPLEVEL]
     if not residue:
         ok(f"{d}: {len(tops)} tracked top-level directories, all expected")
         print(f"      ({', '.join(tops)})")
@@ -812,10 +808,38 @@ def cmd_template_residue(args) -> int:
     print("      Remove them before the first push. Each one is a second copy of")
     print("      a tracked record: the duplicate diverges, and the one being")
     print("      followed is usually the wrong one.")
-    print("      If one of these belongs here, add it to EXPECTED in")
-    print("      scripts/provision.py with the reason — reviewing the allowlist")
-    print("      is the point, not silencing the finding.")
+    print("      If one of these belongs here, add it to CLUSTER_REPO_TOPLEVEL")
+    print("      in scripts/provision.py with the reason — reviewing the")
+    print("      allowlist is the point, not silencing the finding.")
     return REFUSED
+
+
+#: Top-level directories a cluster repo legitimately holds, with why.
+#:
+#: Module level, not a local, so a guard can assert against it — see
+#: `scripts/tests/test_provision.py::TestClusterRepoToplevelCoversTheTemplate`.
+#: Anything not here is residue until someone adds it *with a reason*.
+#:
+#: ⚠️ **A repo made from this template inherits every tracked file**, so any
+#: directory this template tracks must be in here or `template-residue` flags a
+#: repo that was just created and has not been touched. That is what happened
+#: between 2026-09-05 and 2026-09-15: `zero-it-assets/` entered the template ten
+#: days after this list was written, and nothing tied the two together, so every
+#: new repo failed the check and the message told the operator to delete the
+#: customer's printed handout (jgct#148).
+CLUSTER_REPO_TOPLEVEL = {
+    ".github": "workflows the customer repo inherits and runs",
+    ".taskfiles": "the task definitions `task configure` uses",
+    "bootstrap": "rendered by `task configure`; not tracked in the template",
+    "flux": "Flux's own bootstrap manifests",
+    "kubernetes": "rendered by `task configure`; not tracked in the template",
+    "scripts": "provisioning, credential and delivery tooling",
+    "talos": "rendered by `task configure`; not tracked in the template",
+    "templates": "the Jinja2 sources `task configure` renders from",
+    "zero-it-assets": "images the customer's printed handout references; "
+                      "`build-zero-it-print.py` aborts if one cannot be resolved, "
+                      "so they are load-bearing, not decoration (jgct#148)",
+}
 
 
 def cloudflared_tunnels() -> tuple[list[dict] | None, str]:

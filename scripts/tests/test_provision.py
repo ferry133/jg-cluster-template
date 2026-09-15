@@ -1059,5 +1059,68 @@ class TestDeriveGatewayKey(unittest.TestCase):
         self.assertNotEqual(absent, empty)
 
 
+
+class TestClusterRepoToplevelCoversTheTemplate(unittest.TestCase):
+    """Every directory THIS repo tracks must be in `CLUSTER_REPO_TOPLEVEL`.
+
+    A repo made from this template inherits every tracked file, so the moment
+    this template tracks a directory the allowlist does not name,
+    `provision.py template-residue` fails on a repo that was just created and
+    has not been touched — and its message tells the operator to delete it.
+
+    That is not hypothetical (jgct#148): the allowlist was written 2026-08-26,
+    `zero-it-assets/` entered the template 2026-09-05, **and nothing tied the
+    two together**. Every new customer repo failed the check for ten days, and
+    the deletion it advised would have removed the images the customer's
+    printed handout references. It surfaced only on a real delivery.
+
+    So the tie is written here, where CI runs it: **this is the check that
+    should have gone red on 2026-09-05 instead of a person going red on
+    2026-09-15.**
+
+    ⚠️ Only one direction is asserted. `CLUSTER_REPO_TOPLEVEL` legitimately
+    holds names this template does not track — `kubernetes`, `bootstrap` and
+    `talos` are rendered by `task configure` and appear only in the customer's
+    repo. A superset is expected; a **subset** is the defect.
+    """
+
+    def _template_toplevel(self) -> set[str]:
+        # Same shape as `template-residue`: directories, from tracked paths.
+        r = subprocess.run(["git", "ls-tree", "-r", "--name-only", "HEAD"],
+                           cwd=str(ROOT), capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        tops = {p.split("/", 1)[0] for p in r.stdout.splitlines() if "/" in p}
+        # Positive control: if this ever comes back empty the assertion below
+        # passes vacuously, and an empty set is what a broken query looks like.
+        self.assertIn("scripts", tops, "git ls-tree returned nothing usable")
+        return tops
+
+    def test_the_template_tracks_nothing_the_allowlist_omits(self):
+        tops = self._template_toplevel()
+        missing = sorted(tops - set(prov.CLUSTER_REPO_TOPLEVEL))
+        self.longMessage = False
+        self.assertEqual(
+            missing, [],
+            "\n"
+            f"This template tracks top-level director{'y' if len(missing)==1 else 'ies'} "
+            f"that CLUSTER_REPO_TOPLEVEL does not name: {', '.join(missing)}\n"
+            "\n"
+            "  Every repo created from this template inherits them, so\n"
+            "  `provision.py template-residue` will fail on a brand-new repo and\n"
+            "  tell the operator to delete them.\n"
+            "\n"
+            "  If the directory belongs in a cluster repo: add it to\n"
+            "  CLUSTER_REPO_TOPLEVEL in scripts/provision.py **with its reason**.\n"
+            "  If it does not belong in a cluster repo: it should not be tracked\n"
+            "  in the template either, because the template is what makes them.\n",
+        )
+
+    def test_every_entry_carries_a_reason(self):
+        # The allowlist is a dict so that adding a name costs a sentence. An
+        # empty reason turns it back into a set that anyone can grow silently.
+        blank = sorted(k for k, v in prov.CLUSTER_REPO_TOPLEVEL.items() if not v.strip())
+        self.assertEqual(blank, [], f"no reason given for: {blank}")
+
+
 if __name__ == "__main__":
     unittest.main()
