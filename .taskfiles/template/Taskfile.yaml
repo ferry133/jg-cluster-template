@@ -44,7 +44,20 @@ tasks:
     internal: true
     cmd: age-keygen --output {{.SOPS_AGE_KEY_FILE}}
     status:
-      - test -f {{.SOPS_AGE_KEY_FILE}}
+    # `-s` (non-empty), not `-f` (exists). A generator that dies part-way still
+    # leaves the file: the shell's `>` creates it before the command runs, and
+    # `age-keygen`/`ssh-keygen` can fail after opening their output. With `-f`
+    # the next `task init` says "up to date" and the gap is never filled again
+    # — the first run's damage is covered by the second run's success (#149,
+    # measured 2026-09-14 on a real provisioning walk: `python` unresolved,
+    # 0-byte token, second run exit 0 with five tasks "up to date").
+    #
+    # ⚠️ `-s` catches 0 bytes. It does NOT catch truncated-but-non-empty, and
+    # a passing `-s` must not be read as "the contents were checked" — nothing
+    # here reads them. For `age.key` the only thing that answers that is an
+    # `age-keygen -y` round-trip, which ferry133 considered and did NOT
+    # authorise (2026-09-15, #149): do not add it here without its own nod.
+      - test -s {{.SOPS_AGE_KEY_FILE}}
     preconditions:
       - which age-keygen
 
@@ -52,7 +65,20 @@ tasks:
     internal: true
     cmd: ssh-keygen -t ed25519 -C "deploy-key" -f {{.ROOT_DIR}}/github-deploy.key -q -P ""
     status:
-      - test -f {{.ROOT_DIR}}/github-deploy.key
+    # `-s` (non-empty), not `-f` (exists). A generator that dies part-way still
+    # leaves the file: the shell's `>` creates it before the command runs, and
+    # `age-keygen`/`ssh-keygen` can fail after opening their output. With `-f`
+    # the next `task init` says "up to date" and the gap is never filled again
+    # — the first run's damage is covered by the second run's success (#149,
+    # measured 2026-09-14 on a real provisioning walk: `python` unresolved,
+    # 0-byte token, second run exit 0 with five tasks "up to date").
+    #
+    # ⚠️ `-s` catches 0 bytes. It does NOT catch truncated-but-non-empty, and
+    # a passing `-s` must not be read as "the contents were checked" — nothing
+    # here reads them. For `age.key` the only thing that answers that is an
+    # `age-keygen -y` round-trip, which ferry133 considered and did NOT
+    # authorise (2026-09-15, #149): do not add it here without its own nod.
+      - test -s {{.ROOT_DIR}}/github-deploy.key
     preconditions:
       - which ssh-keygen
 
@@ -60,7 +86,20 @@ tasks:
     internal: true
     cmd: python -c "import secrets; print(secrets.token_hex(16))" > {{.ROOT_DIR}}/github-push-token.txt
     status:
-      - test -f {{.ROOT_DIR}}/github-push-token.txt
+    # `-s` (non-empty), not `-f` (exists). A generator that dies part-way still
+    # leaves the file: the shell's `>` creates it before the command runs, and
+    # `age-keygen`/`ssh-keygen` can fail after opening their output. With `-f`
+    # the next `task init` says "up to date" and the gap is never filled again
+    # — the first run's damage is covered by the second run's success (#149,
+    # measured 2026-09-14 on a real provisioning walk: `python` unresolved,
+    # 0-byte token, second run exit 0 with five tasks "up to date").
+    #
+    # ⚠️ `-s` catches 0 bytes. It does NOT catch truncated-but-non-empty, and
+    # a passing `-s` must not be read as "the contents were checked" — nothing
+    # here reads them. For `age.key` the only thing that answers that is an
+    # `age-keygen -y` round-trip, which ferry133 considered and did NOT
+    # authorise (2026-09-15, #149): do not add it here without its own nod.
+      - test -s {{.ROOT_DIR}}/github-push-token.txt
 
   :configure:
     desc: Render and validate configuration files
