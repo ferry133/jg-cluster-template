@@ -19,13 +19,17 @@ re-reading it. They are marked REGRESSION.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import pathlib
 import subprocess
 import tempfile
+import types
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("prov", ROOT / "scripts" / "provision.py")
@@ -991,6 +995,68 @@ class TestStepsAreWiredToTheDriver(unittest.TestCase):
         # and the operator reads that head to decide what to fix.
         tasks = [s.task for s in prov.STEPS]
         self.assertEqual(sorted(tasks), sorted(set(tasks)), f"duplicate task in {tasks}")
+
+
+
+class TestDeriveGatewayKey(unittest.TestCase):
+    """4.6 must tell "I asked the wrong thing" from "Omni says none" (jgct#152).
+
+    The defect: the code read `default_gateways` — the **proto** field name —
+    while `omnictl get machinestatus -o json` emits `defaultgateways`. The key
+    was never found, `or []` turned the miss into an empty list, and the empty
+    list was reported as *no default gateway reported*. That sentence is about
+    Omni; what had actually happened was about the query. It then applied the
+    template's `.1`-of-`node_cidr` guess, which is the assumption `#49` removed.
+
+    Both halves are asserted because either alone passes on a broken version:
+    read the right key and you still cannot tell absent from empty; split the
+    states while reading the wrong key and every machine looks "absent".
+    """
+
+    ARGS = dict(machine="m-1", domain="example.test", dir=".", profile="full")
+
+    def _derive(self, network: dict):
+        rows = [{"spec": {"network": network}}]
+        out = io.StringIO()
+        with mock.patch.object(prov, "omnictl_json", return_value=(rows, "")), \
+             contextlib.redirect_stdout(out):
+            rc = prov.cmd_derive(types.SimpleNamespace(**self.ARGS))
+        return rc, out.getvalue()
+
+    NET = {"addresses": ["10.9.9.62/24"]}
+
+    def test_reads_the_lower_case_key_omnictl_actually_emits(self):
+        rc, out = self._derive({**self.NET, "defaultgateways": ["10.9.9.1"]})
+        self.assertIn("node_default_gateway: 10.9.9.1", out)
+
+    def test_the_proto_name_is_not_what_is_read(self):
+        # The exact shape that produced the defect: the value is there under the
+        # proto name, and this command must NOT find it — otherwise the test
+        # would pass against a version that reads both and hides the mistake.
+        rc, out = self._derive({**self.NET, "default_gateways": ["10.9.9.1"]})
+        self.assertNotIn("node_default_gateway: 10.9.9.1", out)
+        self.assertIn("no `defaultgateways` key", out)
+
+    def test_key_absent_is_a_question_about_the_name(self):
+        rc, out = self._derive(self.NET)
+        self.assertEqual(rc, prov.UNKNOWN)
+        self.assertIn("no `defaultgateways` key", out)
+        self.assertNotIn("Omni reports no default gateway", out)
+        # And it must not send the reader to the .1 default.
+        self.assertNotIn(".1-of-node_cidr", out)
+
+    def test_key_present_and_empty_is_an_answer_from_omni(self):
+        rc, out = self._derive({**self.NET, "defaultgateways": []})
+        self.assertIn("Omni reports no default gateway", out)
+        self.assertNotIn("no `defaultgateways` key", out)
+
+    def test_the_two_empty_cases_do_not_print_the_same_thing(self):
+        # NEGATIVE CONTROL for the split itself. Collapsing them is the defect,
+        # and a version that reports both the same way passes every test above
+        # that only checks one of them.
+        _, absent = self._derive(self.NET)
+        _, empty = self._derive({**self.NET, "defaultgateways": []})
+        self.assertNotEqual(absent, empty)
 
 
 if __name__ == "__main__":
