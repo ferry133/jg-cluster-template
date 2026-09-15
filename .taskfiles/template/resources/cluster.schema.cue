@@ -9,9 +9,29 @@ import (
 	// Who this cluster is for. No default: an unmigrated config must fail here
 	// rather than be rendered under an assumed profile.
 	//   appliance  zero customer-supplied fields; single node; operator-managed
-	//   prosumer   customer has a NAS and some infrastructure of their own
 	//   full       expert operates it directly; today's behaviour
-	deployment_profile: "appliance" | "prosumer" | "full"
+	deployment_profile: "appliance" | "full"
+
+	// `prosumer` was removed 2026-09-16 (#158). It was in this enum for as long
+	// as the enum existed, and **nothing ever read it**: every profile
+	// comparison in the template — schema, `ks.yaml.j2`, `plugin.py` — asks only
+	// whether the value is `appliance`, so `prosumer` and `full` rendered
+	// byte-identically. A third name that produces the second name's cluster is
+	// worse than two names, because README and cluster.sample.yaml described a
+	// difference and people choose from descriptions.
+	//
+	// A config still carrying it now fails `cue vet` here, which is the point.
+	// CUE's own message already names the value and where it came from:
+	//
+	//   deployment_profile: conflicting values "appliance" and "prosumer"
+	//       cluster.schema.cue:13:22
+	//       cluster.yaml:36:21
+	//
+	// An `if deployment_profile == "prosumer"` branch carrying a friendlier
+	// sentence was written here and removed: the disjunction fails before any
+	// `if` is evaluated, so that branch never ran. It would have been a guard
+	// that cannot fire, which reads like coverage and is not. Measured, not
+	// assumed — the hint never appeared in the output.
 
 	// Where stateful data lives. Databases always want block storage regardless
 	// of this — it selects what bulk media and file shares use.
