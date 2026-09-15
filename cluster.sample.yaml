@@ -28,7 +28,7 @@
 #                still configures the cluster.
 #   "full"       Expert operates it directly. Today's behaviour: everything is
 #                declared by hand.
-deployment_profile: "full"
+deployment_profile: "appliance"
 
 # ── Storage backend ───────────────────────────────────────────────────────────
 # (REQUIRED) Which storage class is the cluster default — what bulk media and
@@ -44,7 +44,7 @@ deployment_profile: "full"
 # This picks the default, not which provisioners exist: every cluster installs
 # local-path-provisioner, because a NAS is not somewhere a database can live.
 # Choosing "nfs" additionally enables the NFS provisioner.
-storage_backend: "nfs"
+storage_backend: "local-path"
 
 # (REQUIRED when anything lands on node-local storage — see below) Does this
 # cluster have exactly one node? Derived automatically for appliance (always
@@ -237,10 +237,10 @@ provisioning_path: "omni"
 # (REQUIRED for prosumer/full · appliance: n/a) Unused IPs in node_cidr for the
 # LB / VIP addresses. An appliance discovers its single LAN address at runtime
 # and needs none of these, so declaring them there is rejected.
-cluster_api_addr: "10.9.9.2"          # Kube API VIP / first controller IP
-cluster_dns_gateway_addr: "10.9.9.3"  # k8s-gateway (DNS) LB IP
-cluster_gateway_addr: "10.9.9.4"      # envoy-internal LB IP
-cloudflare_gateway_addr: "10.9.9.5"   # envoy-external LB IP
+#cluster_api_addr: "10.9.9.2"          # Kube API VIP / first controller IP
+#cluster_dns_gateway_addr: "10.9.9.3"  # k8s-gateway (DNS) LB IP
+#cluster_gateway_addr: "10.9.9.4"      # envoy-internal LB IP
+#cloudflare_gateway_addr: "10.9.9.5"   # envoy-external LB IP
 
 # (OPTIONAL) Collapse every LAN-facing service onto one address. Their ports do
 # not overlap — envoy-internal 80/443, k8s-gateway 53, mqtt 1883 — so one
@@ -374,8 +374,8 @@ cluster_name: "xxxxxx"
 # (REQUIRED when storage_backend is "nfs" · not used otherwise)
 # With storage_backend "local-path" there is no NAS and these are omitted; the
 # storage/nfs-subdir extra is skipped automatically rather than left failing.
-nas_server: "10.x.x.x"
-nas_path: "/volume/path"              # NFS export for storage provisioner (sc-nas)
+#nas_server: "10.x.x.x"
+#nas_path: "/volume/path"              # NFS export for storage provisioner (sc-nas)
 # ⚠️ nas_coding_path is UNCONSUMED as of the removal of the claude-code `coding`
 # mount. It still renders into cluster-secrets as NAS_CODING_PATH and nothing
 # reads it. Kept so existing cluster.yaml files keep validating.
