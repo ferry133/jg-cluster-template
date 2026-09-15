@@ -46,7 +46,6 @@ validation rather than being rendered under an assumption.
 | Profile | For | Customer-supplied fields |
 |---------|-----|--------------------------|
 | `appliance` | Operator-delivered, single node | none |
-| `prosumer` | Customer has a NAS or some infrastructure | a few |
 | `full` | Expert operates it directly | all of them |
 
 `storage_backend` (`local-path` / `nfs` / `replicated`) is the second axis: it

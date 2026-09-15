@@ -96,8 +96,13 @@ CASES = [
         [{"cidr": "10.9.1.0/24"}],
     ),
     (
-        "prosumer sharing an address still declares its own pool",
-        dict(deployment_profile="prosumer", lan_shared_addr="10.9.1.254"),
+        # Was `prosumer` until jgct#158 removed that value from the enum. What
+            # this case measures is `lan_shared_addr`, not the profile — the
+            # case above is the same profile without it — so the rename changes
+            # the label and nothing else. Left as `prosumer` it would be a
+            # fixture for a configuration that can no longer exist.
+            "a shared address still declares its own pool",
+        dict(deployment_profile="full", lan_shared_addr="10.9.1.254"),
         [{"start": "10.9.1.254", "stop": "10.9.1.254"}],
     ),
 ]

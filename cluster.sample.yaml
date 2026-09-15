@@ -24,16 +24,14 @@
 #                Implies provisioning_path "omni" and storage_backend
 #                "local-path"; LAN addresses are discovered at runtime; off-site
 #                backup is mandatory.
-#   "prosumer"   Customer has some infrastructure (often a NAS) but the operator
-#                still configures the cluster.
 #   "full"       Expert operates it directly. Today's behaviour: everything is
 #                declared by hand.
 # ⚠️ 這一格沒有安全的預設值，所以這裡刻意填一個會失敗的字串。
 # 它是整份設定裡**唯一靜默的一格**：填錯 profile 會得到一份完全合法的設定，
 # 然後部署錯的產品，而 `cue vet` 一句話都不會說。其餘每一格填錯都會被擋下。
-# schema 是 "appliance" | "prosumer" | "full"，沒有預設——**是這份範例先前
+# schema 是 "appliance" | "full"，沒有預設——**是這份範例先前
 # 預填了 "full"**，於是忘記改的人拿到的是一座 full 叢集而不是一個錯誤。
-deployment_profile: "CHOOSE-ONE-appliance-prosumer-full"
+deployment_profile: "CHOOSE-ONE-appliance-full"
 
 # ── Storage backend ───────────────────────────────────────────────────────────
 # (REQUIRED) Which storage class is the cluster default — what bulk media and
@@ -245,12 +243,12 @@ provisioning_path: "omni"
 #
 # node_cidr: "192.168.1.0/24"
 
-# (REQUIRED for prosumer/full · appliance: n/a) Unused IPs in node_cidr for the
+# (REQUIRED for full · appliance: n/a) Unused IPs in node_cidr for the
 # LB / VIP addresses. An appliance discovers its single LAN address at runtime
 # and needs none of these, so declaring them there is rejected.
 # 預設註解掉，因為 appliance（客戶交付的形態）**禁止**這四格（schema `_|_`）。
 #
-# ⚠️ **prosumer/full 必須取消註解這四行。** 忘了的話 `cue vet` 會紅，**而且它會
+# ⚠️ **full 必須取消註解這四行。** 忘了的話 `cue vet` 會紅，**而且它會
 # 逐行指名這四個欄位**（2026-09-16 對 jgct#157 合併後的 main 重量）：
 #     cluster_api_addr: incomplete value net.IPv4()
 #     cluster_gateway_addr / cluster_dns_gateway_addr / cloudflare_gateway_addr:
@@ -261,12 +259,15 @@ provisioning_path: "omni"
 # （jgct#151），於是每一份 full/prosumer 設定都先死在那裡，驗證走不到這幾格。
 # jgct#157 修掉之後，這四格才開始指得出人。原句留在這裡而不是默默改掉，因為
 # **一句默默改對的話，與一句一直都對的話，讀起來一樣。**
+# （上一句裡的 `prosumer` 是**當時**的世界——那個值已由 jgct#158 移除，現在
+#   `deployment_profile` 只有 `appliance` 與 `full`。句子不改，因為改了就是在
+#   改紀錄而不是改程式；但這份檔案是操作員照著填的，所以這裡說一聲。）
 #
 # **但答案仍然要寫在這裡**：訊息指名的是欄位，不會告訴你該填什麼值。
-# cluster_api_addr: "10.9.9.2"          # full/prosumer 必填，取消註解 · Kube API VIP
-# cluster_dns_gateway_addr: "10.9.9.3"  # full/prosumer 必填，取消註解 · k8s-gateway (DNS) LB IP
-# cluster_gateway_addr: "10.9.9.4"      # full/prosumer 必填，取消註解 · envoy-internal LB IP
-# cloudflare_gateway_addr: "10.9.9.5"   # full/prosumer 必填，取消註解 · envoy-external LB IP
+# cluster_api_addr: "10.9.9.2"          # full 必填，取消註解 · Kube API VIP
+# cluster_dns_gateway_addr: "10.9.9.3"  # full 必填，取消註解 · k8s-gateway (DNS) LB IP
+# cluster_gateway_addr: "10.9.9.4"      # full 必填，取消註解 · envoy-internal LB IP
+# cloudflare_gateway_addr: "10.9.9.5"   # full 必填，取消註解 · envoy-external LB IP
 
 # (OPTIONAL) Collapse every LAN-facing service onto one address. Their ports do
 # not overlap — envoy-internal 80/443, k8s-gateway 53, mqtt 1883 — so one
