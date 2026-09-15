@@ -250,9 +250,19 @@ provisioning_path: "omni"
 # and needs none of these, so declaring them there is rejected.
 # 預設註解掉，因為 appliance（客戶交付的形態）**禁止**這四格（schema `_|_`）。
 #
-# ⚠️ **prosumer/full 必須取消註解這四行。** 量到的（2026-09-15）：忘了取消註解時
-# `cue vet` 確實會紅，**但它一行都不會提到這四個欄位**——main 與本版皆然。所以
-# 答案必須寫在這裡，不能指望錯誤訊息把人帶回來。
+# ⚠️ **prosumer/full 必須取消註解這四行。** 忘了的話 `cue vet` 會紅，**而且它會
+# 逐行指名這四個欄位**（2026-09-16 對 jgct#157 合併後的 main 重量）：
+#     cluster_api_addr: incomplete value net.IPv4()
+#     cluster_gateway_addr / cluster_dns_gateway_addr / cloudflare_gateway_addr:
+#         non-concrete value cluster_api_addr for bound !=
+#
+# 這一段原本寫「它一行都不會提到這四個欄位，不能指望錯誤訊息把人帶回來」。
+# **那句話當時是真的，而它之所以真是因為另一個缺陷**：`single_node` 當時是可選欄位
+# （jgct#151），於是每一份 full/prosumer 設定都先死在那裡，驗證走不到這幾格。
+# jgct#157 修掉之後，這四格才開始指得出人。原句留在這裡而不是默默改掉，因為
+# **一句默默改對的話，與一句一直都對的話，讀起來一樣。**
+#
+# **但答案仍然要寫在這裡**：訊息指名的是欄位，不會告訴你該填什麼值。
 # cluster_api_addr: "10.9.9.2"          # full/prosumer 必填，取消註解 · Kube API VIP
 # cluster_dns_gateway_addr: "10.9.9.3"  # full/prosumer 必填，取消註解 · k8s-gateway (DNS) LB IP
 # cluster_gateway_addr: "10.9.9.4"      # full/prosumer 必填，取消註解 · envoy-internal LB IP
@@ -408,7 +418,9 @@ cluster_name: "xxxxxx"
 # With storage_backend "local-path" there is no NAS and these are omitted; the
 # storage/nfs-subdir extra is skipped automatically rather than left failing.
 # 預設註解掉：appliance 沒有 NAS。
-# ⚠️ **`storage_backend: "nfs"` 時必須取消註解這兩行**，同上：錯誤訊息指不出它們。
+# ⚠️ **`storage_backend: "nfs"` 時必須取消註解這兩行。** 同上，忘了的話 `cue vet`
+# 會紅並逐行指名（2026-09-16 重量：`nas_server: incomplete value net.IPv4() & !=""`、
+# `nas_path: incomplete value !=""`）。jgct#157 之前是 0 行指名，原因與上面那格相同。
 # nas_server: "10.x.x.x"                # storage_backend=nfs 時必填，取消註解
 # nas_path: "/volume/path"              # storage_backend=nfs 時必填，取消註解 · NFS export (sc-nas)
 # ⚠️ nas_coding_path is UNCONSUMED as of the removal of the claude-code `coding`
