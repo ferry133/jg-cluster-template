@@ -28,7 +28,12 @@
 #                still configures the cluster.
 #   "full"       Expert operates it directly. Today's behaviour: everything is
 #                declared by hand.
-deployment_profile: "full"
+# ⚠️ 這一格沒有安全的預設值，所以這裡刻意填一個會失敗的字串。
+# 它是整份設定裡**唯一靜默的一格**：填錯 profile 會得到一份完全合法的設定，
+# 然後部署錯的產品，而 `cue vet` 一句話都不會說。其餘每一格填錯都會被擋下。
+# schema 是 "appliance" | "prosumer" | "full"，沒有預設——**是這份範例先前
+# 預填了 "full"**，於是忘記改的人拿到的是一座 full 叢集而不是一個錯誤。
+deployment_profile: "CHOOSE-ONE-appliance-prosumer-full"
 
 # ── Storage backend ───────────────────────────────────────────────────────────
 # (REQUIRED) Which storage class is the cluster default — what bulk media and
@@ -44,6 +49,10 @@ deployment_profile: "full"
 # This picks the default, not which provisioners exist: every cluster installs
 # local-path-provisioner, because a NAS is not somewhere a database can live.
 # Choosing "nfs" additionally enables the NFS provisioner.
+# ⚠️ 留著不註解是刻意的。註解掉會讓 `cue vet` 多一則
+# `unresolved disjunction "local-path" | "nfs" | "replicated"`——那是 schema 內部的
+# 求值錯誤，指不出任何一個你寫過的欄位。appliance 會強制成 "local-path" 並與這裡
+# 衝突，而**那個衝突指名得出欄位**，比一則無主的錯誤好。
 storage_backend: "nfs"
 
 # (REQUIRED when anything lands on node-local storage — see below) Does this
@@ -239,10 +248,15 @@ provisioning_path: "omni"
 # (REQUIRED for prosumer/full · appliance: n/a) Unused IPs in node_cidr for the
 # LB / VIP addresses. An appliance discovers its single LAN address at runtime
 # and needs none of these, so declaring them there is rejected.
-cluster_api_addr: "10.9.9.2"          # Kube API VIP / first controller IP
-cluster_dns_gateway_addr: "10.9.9.3"  # k8s-gateway (DNS) LB IP
-cluster_gateway_addr: "10.9.9.4"      # envoy-internal LB IP
-cloudflare_gateway_addr: "10.9.9.5"   # envoy-external LB IP
+# 預設註解掉，因為 appliance（客戶交付的形態）**禁止**這四格（schema `_|_`）。
+#
+# ⚠️ **prosumer/full 必須取消註解這四行。** 量到的（2026-09-15）：忘了取消註解時
+# `cue vet` 確實會紅，**但它一行都不會提到這四個欄位**——main 與本版皆然。所以
+# 答案必須寫在這裡，不能指望錯誤訊息把人帶回來。
+# cluster_api_addr: "10.9.9.2"          # full/prosumer 必填，取消註解 · Kube API VIP
+# cluster_dns_gateway_addr: "10.9.9.3"  # full/prosumer 必填，取消註解 · k8s-gateway (DNS) LB IP
+# cluster_gateway_addr: "10.9.9.4"      # full/prosumer 必填，取消註解 · envoy-internal LB IP
+# cloudflare_gateway_addr: "10.9.9.5"   # full/prosumer 必填，取消註解 · envoy-external LB IP
 
 # (OPTIONAL) Collapse every LAN-facing service onto one address. Their ports do
 # not overlap — envoy-internal 80/443, k8s-gateway 53, mqtt 1883 — so one
@@ -393,8 +407,10 @@ cluster_name: "xxxxxx"
 # (REQUIRED when storage_backend is "nfs" · not used otherwise)
 # With storage_backend "local-path" there is no NAS and these are omitted; the
 # storage/nfs-subdir extra is skipped automatically rather than left failing.
-nas_server: "10.x.x.x"
-nas_path: "/volume/path"              # NFS export for storage provisioner (sc-nas)
+# 預設註解掉：appliance 沒有 NAS。
+# ⚠️ **`storage_backend: "nfs"` 時必須取消註解這兩行**，同上：錯誤訊息指不出它們。
+# nas_server: "10.x.x.x"                # storage_backend=nfs 時必填，取消註解
+# nas_path: "/volume/path"              # storage_backend=nfs 時必填，取消註解 · NFS export (sc-nas)
 # ⚠️ nas_coding_path is UNCONSUMED as of the removal of the claude-code `coding`
 # mount. It still renders into cluster-secrets as NAS_CODING_PATH and nothing
 # reads it. Kept so existing cluster.yaml files keep validating.
