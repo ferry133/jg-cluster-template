@@ -1219,12 +1219,20 @@ def cmd_detect(args) -> int:
 def cmd_derive(args) -> int:
     """4.6 — network values read off the machine, never typed.
 
-    ⚠️ **The shape of `MachineStatusSpec.network` here was read from Omni's
-    protobuf definitions (`client/api/omni/specs/omni.proto`, §1.1's spike),
-    not observed on a live machine from this session** — the port-forward into
-    jcom that `omnictl` needs was not available while this was written. Every
-    lookup below therefore fails to UNKNOWN rather than to a default, and the
-    first real run should confirm the field names before trusting the output.
+    The shape of `MachineStatusSpec.network` was originally read from Omni's
+    protobuf definitions (`client/api/omni/specs/omni.proto`, §1.1's spike) and
+    not from a live machine, with a note here saying the first real run should
+    confirm the field names. **That run happened on 2026-09-14 (`jg-jcc1`) and
+    the note earned its keep: one of the names was wrong.** `defaultgateways`
+    is what the JSON carries; `default_gateways` is the proto name and matches
+    nothing in the reply (#152).
+
+    So the names below are now part proto-derived and part observed. The two
+    that have been seen on a live machine are `addresses` and `defaultgateways`.
+    Every lookup still fails to UNKNOWN rather than to a default, and reading a
+    key by a name the reply does not use produces exactly the same silence as a
+    machine that has not finished DHCP — which is why the absent key and the
+    empty list are now reported separately below.
     """
     rows, err = omnictl_json("machinestatus", args.machine)
     if rows is None:
@@ -1236,7 +1244,22 @@ def cmd_derive(args) -> int:
 
     net = (rows[0].get("spec") or {}).get("network") or {}
     addrs = net.get("addresses") or []
-    gws = net.get("default_gateways") or []
+    # `defaultgateways`, all lower case. NOT `default_gateways` (the proto field
+    # name, `omni.proto:130`) and NOT `defaultGateways` (the `json=` tag in the
+    # generated Go). What `omnictl get machinestatus -o json` actually emits is
+    # the lower-case form — measured 2026-09-14 against a live Omni on `jg-jcc1`,
+    # where the key was there with a value and this code read `None` (#152).
+    #
+    # Read into a sentinel, not `or []`: **"the key is not there" and "Omni says
+    # there are none" need opposite next actions**, and `or []` collapses them.
+    # That collapse is what #152 was: the wrong name produced an absent key, the
+    # absent key became `[]`, and `[]` was reported as "no default gateway
+    # reported" — a statement about Omni that was really a statement about this
+    # query. It then fell back to the template's `.1`-of-`node_cidr` guess,
+    # which is the assumption `#49` exists to have removed.
+    _GW_ABSENT = object()
+    gws_raw = net.get("defaultgateways", _GW_ABSENT)
+    gws = [] if gws_raw is _GW_ABSENT else (gws_raw or [])
     if not addrs:
         huh(f"machine {args.machine} reports no addresses "
             f"(keys present: {', '.join(sorted(net)) or 'none'})")
@@ -1267,8 +1290,22 @@ def cmd_derive(args) -> int:
         print(f"node_default_gateway: {gws[0]}")
     elif gws:
         huh(f"{len(gws)} default gateways reported: {', '.join(gws)} — pick by hand")
+    elif gws_raw is _GW_ABSENT:
+        # Not "Omni says none". This code looked for a key that is not in the
+        # reply at all, which is what reading it by the wrong name looks like.
+        huh(f"machine {args.machine} has no `defaultgateways` key in its network "
+            f"block (keys present: {', '.join(sorted(net)) or 'none'})")
+        print("      That is this command asking for something the reply does not")
+        print("      have — a question about the name, not an answer about the")
+        print("      network. Do not fall back to a default on it: check the key")
+        print("      name against `omnictl get machinestatus -o json` first (#152).")
+        return UNKNOWN
     else:
-        huh("no default gateway reported; the template's .1-of-node_cidr default applies")
+        huh("`defaultgateways` is present and empty: Omni reports no default "
+            "gateway for this machine")
+        print("      This one IS an answer, and it is the case the template's")
+        print("      .1-of-node_cidr default was written for — but it is still a")
+        print("      guess, which is what #49 removed. Confirm it on the machine.")
 
     if args.profile == "appliance":
         print()
