@@ -102,7 +102,27 @@ import (
 	// node list — but an Omni-provisioned cluster renders `nodes: []`, so it must
 	// declare this or be treated as having peers. Components that need peers
 	// (a peer-to-peer image mirror, for one) are suspended when this is true.
-	single_node?: bool
+	// NOT optional, and that is the fix for jgct#151. CUE refuses to reference an
+	// optional field from a condition — `cannot reference optional field:
+	// single_node` — so the two `if single_node == true` guards above died on
+	// every config that did not set it, which is every `full`/`prosumer` config:
+	// exactly the ones those guards exist for. `appliance` was unaffected only
+	// because it is forced `true` below, which is why nobody saw it until a real
+	// delivery. **A guard that errors instead of judging is not a guard.**
+	//
+	// ⚠️ The default is `false` and that is **narrower than `plugin.py`'s
+	// fallback**, which also derives single-node from the node count on the
+	// manual path. That arm cannot be mirrored here: `nodes` is not in this
+	// schema's scope (measured 2026-09-15 — `reference "nodes" not found`). So
+	// on `provisioning_path: "talos"` with one node and no explicit
+	// `single_node`, the two guards above do **not** fire while `plugin.py`
+	// still treats the cluster as single-node. Declare `single_node` on that
+	// path rather than relying on either default.
+	//
+	// A CUE default never reaches makejinja — it reads `cluster.yaml` — so this
+	// does not add the key to the rendered config. It only makes the value
+	// concrete for validation.
+	single_node: bool | *false
 
 	// local-path volumes live in a directory on one node and the PV carries node
 	// affinity to it. On a single node that is simply correct. On more than one
