@@ -246,7 +246,11 @@ provisioning_path: "omni"
 # (REQUIRED for full · appliance: n/a) Unused IPs in node_cidr for the
 # LB / VIP addresses. An appliance discovers its single LAN address at runtime
 # and needs none of these, so declaring them there is rejected.
-# 預設註解掉，因為 appliance（客戶交付的形態）**禁止**這四格（schema `_|_`）。
+# 預設註解掉，因為 appliance（客戶交付的形態）**禁止**這四格
+# （schema `matchN(0, [_])`；jgct#164 之前是 `_|_`，改掉的理由是那個寫法的
+#  錯誤訊息一個欄位名都不印，操作員得打開 schema 才知道自己多填了哪一格）。
+# ⚠️ appliance 誤填時 `cue vet` 現在會指名，例如
+#     cluster_api_addr: invalid value "10.9.9.2" (does not satisfy matchN)
 #
 # ⚠️ **full 必須取消註解這四行。** 忘了的話 `cue vet` 會紅，**而且它會
 # 逐行指名這四個欄位**（2026-09-16 對 jgct#157 合併後的 main 重量）：
