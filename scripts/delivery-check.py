@@ -313,9 +313,38 @@ def _ignore_text_covers(text: str, relpath: str) -> bool | None:
         return rc == 0
 
 
+# `[^\S\n]` and not `\s`: horizontal whitespace only. `\s` matches newlines, so
+# a field with no inline value —
+#
+#     TTYD_CREDENTIAL:
+#       valueFrom:
+#         secretKeyRef:
+#
+# — let the `\s*` after the colon swallow the line break and read `valueFrom:`
+# as the value (jgct#169). Three of this repo's seven flagged paths were that,
+# and none of them is a credential at all: the field simply has no value there.
 _SECRET_LINE = re.compile(
-    r"(?im)^\s*(" + "|".join(SECRET_FIELDS) + r")\s*:\s*(.+)$"
+    r"(?im)^[^\S\n]*(" + "|".join(SECRET_FIELDS) + r")[^\S\n]*:[^\S\n]*(.+)$"
 )
+
+# Values that are not values. Each entry is a *shape*, never a filename or an
+# extension — filtering by path is what jgct#166 exists to forbid.
+_PLACEHOLDER_VALUES = {
+    "user:password", "admin:admin", "token_placeholder", "placeholder",
+    "changeme", "change-me", "your-token-here", "xxx", "yyy", "todo", "tbd",
+}
+
+# A CUE type or constraint expression, not a value. Anchored deliberately:
+# an unanchored `[!=]=` also matches base64 ending in `==` and a password
+# containing `!=`, which would silence real credentials. Measured on seven
+# values before choosing this form, and both of those are in the tests.
+_TYPE_EXPRESSION = re.compile(
+    r'^(string|bytes|bool|int|number|null)\b|^!=|&\s*!=|=~\s*["\']|^\[|^\{'
+)
+
+# makejinja (`#{…}#`, `#%…%#`), Jinja/Helm (`{{…}}`, `{%…%}`). `${…}` and `<…>`
+# are handled by _is_real_credential's older prefix rules.
+_TEMPLATE_SYNTAX = re.compile(r"#\{|\}#|\{\{|\}\}|\{%|%\}")
 
 
 def _is_real_credential(value: str) -> bool:
@@ -343,6 +372,18 @@ def _is_real_credential(value: str) -> bool:
     if v.startswith(("ENC[", "ENC(")):           # SOPS ciphertext — meant to be here
         return False
     if "change" in v.lower() or set(v.lower()) == {"x"}:
+        return False
+    if _TEMPLATE_SYNTAX.search(v):               # rendered later, not a value
+        return False
+    # Strip a trailing comment and the quotes around the value before judging
+    # its shape: `"user:password"  # pick your own` is the sample file's
+    # placeholder, and neither the quotes nor the comment change that.
+    bare = v.split("#")[0].strip().strip("\"'")
+    if not bare or len(bare) < 8:
+        return False
+    if bare.lower() in _PLACEHOLDER_VALUES:      # the whole value, not a substring
+        return False
+    if _TYPE_EXPRESSION.search(bare):            # a declaration, not a value
         return False
     return True
 

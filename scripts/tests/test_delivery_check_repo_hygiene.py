@@ -481,5 +481,88 @@ class TestTheIgnoreRuleIsAskedOfGitNotOfARegex(unittest.TestCase):
         self.assertEqual(rc, dc.UNKNOWN, out)
 
 
+class TestWhatCountsAsARealCredential(unittest.TestCase):
+    """#169 — the value side. Written before the fix, so the fixtures are not
+    shaped by the implementation that has to satisfy them.
+
+    Two halves, and the second is the one that matters:
+
+    - **must NOT be a credential** — type expressions, template syntax, known
+      placeholders. Easy to satisfy, and easy to *over*satisfy.
+    - **must STILL be a credential** — values that look placeholder-ish and are
+      real. "No longer firing" is trivially achievable by tightening until
+      nothing fires, and **a check that was tightened too far reads exactly
+      like one that was tightened correctly.**
+    """
+
+    NOT_CREDENTIALS = [
+        ('string & !=""', "CUE type constraint"),
+        ("bool | *false", "CUE default"),
+        ('=~"^[a-z]+$"', "CUE regex constraint"),
+        ("#{ cluster.ttyd_credential }#", "makejinja variable"),
+        ("{{ .Values.credential }}", "Helm template"),
+        ('"user:password"', "the sample file's placeholder"),
+        ('"TOKEN_PLACEHOLDER"', "the renderer's placeholder"),
+        # Added after a mutation test: removing the template-syntax rule broke
+        # nothing, because every template case above is already rejected by an
+        # older rule (`#{…}#` loses everything to the comment strip, `{{…}}`
+        # starts with a brace). A value that is *partly* template is the one
+        # only that rule catches — and a guard no case can turn red is the
+        # shape this issue is about.
+        ("admin{{ suffix }}", "a value that is part literal, part template"),
+    ]
+
+    STILL_CREDENTIALS = [
+        ("0123456789abcdef0123456789abcdef01234567", "40 hex, the shape of a real token"),
+        ("c2VjcmV0LXZhbHVlLWhlcmU=", "base64 ending in one ="),
+        ("aGVsbG8td29ybGQtdGhpcy1pcy1yZWFs==", "base64 ending in == — NOT a `!=` type expression"),
+        ("p@ssw0rd!=notatype", "a password that happens to contain !="),
+        ("example0123456789abcdef0123456789abcdef", "contains the word example, and is 38 chars of hex"),
+        ("user:Tr0ub4dor&3xplanation", "contains & and a colon, and is somebody's password"),
+    ]
+
+    def test_the_shapes_that_are_not_values(self):
+        for value, why in self.NOT_CREDENTIALS:
+            with self.subTest(why=why):
+                self.assertFalse(dc._is_real_credential(value), why)
+
+    def test_the_values_that_only_look_like_placeholders(self):
+        """The negative control's positive control (#169 condition 3)."""
+        for value, why in self.STILL_CREDENTIALS:
+            with self.subTest(why=why):
+                self.assertTrue(dc._is_real_credential(value), why)
+
+    def test_a_key_with_no_inline_value_is_not_read_across_the_newline(self):
+        """The class nobody had named: `\s` matches newlines.
+
+            TTYD_CREDENTIAL:
+              valueFrom:
+                secretKeyRef:
+
+        `^\\s*(field)\\s*:\\s*(.+)$` lets the `\\s*` after the colon swallow the
+        line break, so the *next* line becomes the value and `valueFrom:` is
+        judged a live credential. Three of this repo's seven hit paths were
+        this, and it is not a placeholder problem at all — the field has no
+        value on that line.
+        """
+        nested = ("              TTYD_CREDENTIAL:\n"
+                  "                valueFrom:\n"
+                  "                  secretKeyRef:\n"
+                  "                    name: claude-code-secret\n")
+        self.assertEqual([], dc._scan_blob_for_secrets(nested))
+
+    def test_a_value_on_the_same_line_is_still_read(self):
+        """Positive control for the line-break fix: narrowing the whitespace
+        class must not stop the scanner reading ordinary values."""
+        self.assertEqual(
+            ["cloudflare_token"],
+            dc._scan_blob_for_secrets(
+                "  cloudflare_token: 0123456789abcdef0123456789abcdef01234567\n"))
+
+    def test_the_scanners_control_sample_still_matches(self):
+        """`_SCAN_CONTROL` is the thing every clean deep scan leans on."""
+        self.assertTrue(dc._scan_blob_for_secrets(dc._SCAN_CONTROL))
+
+
 if __name__ == "__main__":
     unittest.main()
