@@ -217,14 +217,25 @@ import (
 	if _uses_node_local {
 		single_node: bool
 		if single_node == false {
-			// `bool` and not `true`: an unresolved type is what makes an absent
-			// field fail validation. Asserting the value here instead would let
-			// CUE satisfy the requirement on the reader's behalf, and the check
-			// would pass without anyone having read it.
-			accept_node_pinning: bool
-			if accept_node_pinning == false {
-				accept_node_pinning: _|_
-			}
+			// Not plain `true`: an unresolved value is what makes an absent field
+			// fail validation, and asserting the value here would let CUE satisfy
+			// the requirement on the reader's behalf. Measured, not assumed
+			// (jgct#162): schema `x: true` against data with no `x` exits 0.
+			//
+			// `matchN` and not `bool` plus `if … == false { _|_ }` (jgct#162):
+			// the three outcomes are identical — absent fails, `false` fails,
+			// `true` passes — but that form named no field in either failure.
+			// An absent field read `non-concrete value bool in operand to ==`
+			// and a `false` one read `explicit error (_|_ literal) in source`,
+			// each followed only by line numbers in this file, so the operator
+			// had to read the schema to learn which box he left empty. `matchN`
+			// is a validator, so it stays unresolved while an absent field is
+			// still absent, and both messages now start with the field name —
+			// the same property `backup_r2_bucket: string & !=""` has always had.
+			// A `!=` bound would be the obvious analogue and does not work here:
+			// `!=false` rejects `true` as well, because the bound's own operand
+			// must be ordered and a bool is not.
+			accept_node_pinning: bool & matchN(1, [true])
 		}
 	}
 
@@ -383,11 +394,10 @@ import (
 	age_key_escrowed?: bool
 
 	if deployment_profile == "appliance" {
-		// `bool` and not `true`: an absent field must fail validation.
-		age_key_escrowed: bool
-		if age_key_escrowed == false {
-			age_key_escrowed: _|_
-		}
+		// An absent field must fail validation, and the message must say which
+		// field. See accept_node_pinning above for why this is neither plain
+		// `true` nor `bool` plus `if … == false { _|_ }` (jgct#162).
+		age_key_escrowed: bool & matchN(1, [true])
 		backup_r2_bucket: string & !=""
 		backup_r2_endpoint: string & !=""
 		backup_r2_access_key_id: string & !=""
