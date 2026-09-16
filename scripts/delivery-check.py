@@ -51,6 +51,7 @@ import pathlib
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 import urllib.parse
 import urllib.request
@@ -201,10 +202,17 @@ def check_repo_hygiene(args) -> int:
         failed = True
     else:
         head_ignore = run(["git", "-C", d, "show", "HEAD:.gitignore"]).stdout
-        if re.search(r"cluster\.yaml", head_ignore):
-            ok(".gitignore is tracked and HEAD's copy names cluster.yaml")
+        covered = _ignore_text_covers(head_ignore, "cluster.yaml")
+        if covered is None:
+            huh("could not ask git whether HEAD's .gitignore ignores "
+                "cluster.yaml — the answer here is neither pass nor fail")
+            return UNKNOWN
+        if covered:
+            ok(".gitignore is tracked and HEAD's copy ignores cluster.yaml")
         else:
-            bad(".gitignore is tracked but HEAD's copy has no cluster.yaml rule")
+            bad(".gitignore is tracked but HEAD's copy does not ignore "
+                "cluster.yaml (a mention in a comment is not a rule, and "
+                "`!cluster.yaml` turns the protection off)")
             failed = True
 
     # 2. Any path, not just the expected one.
@@ -253,6 +261,56 @@ def check_repo_hygiene(args) -> int:
         print("       a once-per-repo check rather than once-per-delivery.)")
 
     return FAIL if failed else PASS
+
+
+def _ignore_text_covers(text: str, relpath: str) -> bool | None:
+    """Would this `.gitignore` text ignore `relpath`? Asked of git, not of a regex.
+
+    Until jgct#167 this cell was `re.search(r"cluster\\.yaml", head_ignore)`,
+    which answers "does that string appear in the file", not "is there a rule
+    in force". Measured on six texts (jgct#167, and the last one is mine):
+
+        /cluster.yaml + /config.gen/cluster.yaml   regex ok      git ok
+        "# remember to ignore cluster.yaml"        regex PASSES  git no    <- a comment
+        *.yaml then !cluster.yaml                  regex PASSES  git no    <- protection OFF
+        *.log, node_modules/                       regex no      git no    <- negative control
+        config.gen/                                regex no      git no
+        cluster.*                                  regex NO      git ok    <- legitimate rule, refused
+
+    So it was wrong in both directions: it passed a file whose meaning is the
+    opposite of protection, and it failed a file that protects. Only the first
+    direction was in the issue; the wildcard row came out of writing the table.
+
+    Git is asked in a scratch repository holding exactly this text, because the
+    question is about **HEAD's copy** — `git check-ignore` in the delivery repo
+    itself would answer about the working tree, which is a different file and a
+    different question. `core.excludesFile=/dev/null` keeps the operator's
+    global ignore list out of an answer that is supposed to be about this text.
+
+    Three outcomes, not two. A scratch repo that cannot be created, or a git
+    that answers 128, is "cannot measure" — and to earn the `False` the
+    instrument must first be shown able to say `True`: a sentinel rule is
+    appended and asked about, and if *that* comes back unignored then the
+    instrument is not answering and `None` is returned. Without that, every
+    breakage of this helper would read as "the repo is unprotected", which is
+    a different wrong answer but still a wrong one.
+    """
+    sentinel = "zz-delivery-check-sentinel.tmp"
+    with tempfile.TemporaryDirectory() as t:
+        d = pathlib.Path(t)
+        init = run(["git", "-C", str(d), "init", "-q"])
+        if init.returncode != 0:
+            return None
+        (d / ".gitignore").write_text(text + f"\n{sentinel}\n")
+        def ask(path: str) -> int:
+            return run(["git", "-C", str(d), "-c", "core.excludesFile=/dev/null",
+                        "check-ignore", "-q", path]).returncode
+        if ask(sentinel) != 0:        # the instrument cannot say "ignored"
+            return None
+        rc = ask(relpath)
+        if rc not in (0, 1):          # 128 and friends are not answers
+            return None
+        return rc == 0
 
 
 _SECRET_LINE = re.compile(

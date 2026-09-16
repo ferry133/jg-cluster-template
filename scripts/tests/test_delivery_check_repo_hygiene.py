@@ -54,6 +54,7 @@ import subprocess
 import tempfile
 import types
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("dc", ROOT / "scripts" / "delivery-check.py")
@@ -141,10 +142,16 @@ class TestRepoHygiene(unittest.TestCase):
         self.assertIn("NOT tracked", out)
 
     def test_a_tracked_gitignore_without_the_rule_is_a_finding(self):
+        """#167 changed this cell's wording; the assertion used to be
+        `assertIn("no cluster.yaml rule")`, which bound the test to one
+        sentence rather than to the behaviour. It now asserts the verdict and
+        that the finding names the file — a message can be rewritten without
+        the guard changing what it decides."""
         with repo(ignore="*.log\n") as p:
             rc, out = capture(dc.check_repo_hygiene, args_for(p))
         self.assertEqual(rc, dc.FAIL, out)
-        self.assertIn("no cluster.yaml rule", out)
+        self.assertIn("cluster.yaml", out)
+        self.assertIn("FAIL", out)
 
     def test_cluster_yaml_at_an_unexpected_path_is_still_found(self):
         """The eleven blobs were at `config.gen/cluster.yaml`, not at the root.
@@ -394,6 +401,84 @@ class TestTheDeepScanFindsByContentNotByFilename(unittest.TestCase):
         `Dockerfile`, `Makefile`, or a pasted note called `notes`."""
         self.assertEqual({"leaked.notes-no-extension"},
                          self._hits(secret=True, extensions=["notes-no-extension"]))
+
+class TestTheIgnoreRuleIsAskedOfGitNotOfARegex(unittest.TestCase):
+    """#167 — the `.gitignore` cell used to ask whether a string appears.
+
+    `re.search(r"cluster\\.yaml", head_ignore)` passes a file that only
+    *mentions* the name in a comment, and passes `!cluster.yaml`, which is the
+    line that turns the protection off. It also refuses `cluster.*`, which
+    protects. Wrong in both directions — and the second direction was not in
+    the issue; it came out of writing the table.
+
+    Each case is the `.gitignore` text itself, so a reader can rerun one
+    without building a repository.
+    """
+
+    def test_the_real_delivery_shape_is_covered(self):
+        """Positive control. Red here and the rest of this class says nothing."""
+        self.assertIs(True, dc._ignore_text_covers(
+            "/cluster.yaml\n/config.gen/cluster.yaml\n", "cluster.yaml"))
+
+    def test_a_mention_inside_a_comment_is_not_a_rule(self):
+        self.assertIs(False, dc._ignore_text_covers(
+            "# remember to ignore cluster.yaml one day\n", "cluster.yaml"))
+
+    def test_a_negation_is_the_protection_being_turned_off(self):
+        """The worst row: the old cell reported "protected" about a file whose
+        meaning is the opposite of protection."""
+        self.assertIs(False, dc._ignore_text_covers(
+            "*.yaml\n!cluster.yaml\n", "cluster.yaml"))
+
+    def test_an_unrelated_ignore_file_is_not_covered(self):
+        """Negative control — the helper must be able to say no."""
+        self.assertIs(False, dc._ignore_text_covers(
+            "*.log\nnode_modules/\n", "cluster.yaml"))
+
+    def test_ignoring_only_the_generated_copy_leaves_the_root_one_exposed(self):
+        self.assertIs(False, dc._ignore_text_covers("config.gen/\n", "cluster.yaml"))
+
+    def test_a_wildcard_rule_does_protect(self):
+        """The other direction: `cluster.*` is a real rule, and the old cell
+        called that repo unprotected."""
+        self.assertIs(True, dc._ignore_text_covers("cluster.*\n", "cluster.yaml"))
+
+    def test_an_instrument_that_cannot_say_yes_returns_cannot_measure(self):
+        """The helper's own control, exercised.
+
+        If git stops answering, every text comes back "not ignored" — a
+        fleet-wide false alarm that reads exactly like a real finding. The
+        sentinel rule must come back ignored before any False is believed.
+        """
+        with mock.patch.object(
+                dc, "run",
+                side_effect=lambda cmd, **kw: types.SimpleNamespace(
+                    returncode=0 if "init" in cmd else 1, stdout="", stderr="")):
+            self.assertIsNone(
+                dc._ignore_text_covers("/cluster.yaml\n", "cluster.yaml"))
+
+    def test_a_git_error_is_cannot_measure_not_a_finding(self):
+        """128 is not "not ignored"."""
+        calls = {"n": 0}
+
+        def fake(cmd, **kw):
+            if "init" in cmd:
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+            calls["n"] += 1
+            # sentinel answers "ignored"; the real question then errors out
+            return types.SimpleNamespace(
+                returncode=0 if calls["n"] == 1 else 128, stdout="", stderr="")
+
+        with mock.patch.object(dc, "run", side_effect=fake):
+            self.assertIsNone(
+                dc._ignore_text_covers("/cluster.yaml\n", "cluster.yaml"))
+
+    def test_the_cell_reports_unknown_rather_than_pass_or_fail(self):
+        """Three outcomes reach the subcommand, not two."""
+        with repo(ignore="/cluster.yaml\n") as p:
+            with mock.patch.object(dc, "_ignore_text_covers", return_value=None):
+                rc, out = capture(dc.check_repo_hygiene, args_for(p))
+        self.assertEqual(rc, dc.UNKNOWN, out)
 
 
 if __name__ == "__main__":
