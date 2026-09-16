@@ -212,7 +212,11 @@ class TestDeepScan(unittest.TestCase):
         body = ("stringData:\n"
                 "  cloudflare_token: \"${CLOUDFLARE_TOKEN}\"\n"
                 "  ttyd_credential: <user:password>\n"
-                "  claudecode_postgres_password: changeme-please\n")
+                # `changeme-please` lived here until #175; it is now flagged
+                # (anchored placeholder matching), so the case uses the shape
+                # this repo actually ships instead — which is what it was
+                # always meant to stand for.
+                "  claudecode_postgres_password: \"#{ claudecode_postgres_password }#\"\n")
         with repo(extra={"templates/secret.yaml": body}) as p:
             rc, out = capture(dc.check_repo_hygiene, args_for(p, deep=True))
         self.assertEqual(rc, dc.PASS, out)
@@ -234,8 +238,18 @@ class TestIsRealCredential(unittest.TestCase):
     def test_an_angle_bracket_placeholder_is_not(self):
         self.assertFalse(dc._is_real_credential("<your-token-here>"))
 
-    def test_the_word_change_marks_a_placeholder(self):
-        self.assertFalse(dc._is_real_credential("changeme-please"))
+    def test_an_exact_placeholder_word_marks_a_placeholder(self):
+        """#175 narrowed this from a substring test to an anchored one.
+
+        This case used to assert `changeme-please` is a placeholder, because
+        the rule was `"change" in v.lower()`. Anchoring flags it — and that is
+        the point: the same looseness waved through `ops:Exchange2026!` and
+        `exchange_rate_api_key_live_abc123`. **The compound case is the
+        borderline the issue itself marked "arguable"**, so it is named here
+        rather than quietly moved.
+        """
+        self.assertFalse(dc._is_real_credential("ops:CHANGE-ME"))
+        self.assertTrue(dc._is_real_credential("changeme-please"))
 
     def test_a_short_value_is_not_a_credential(self):
         self.assertFalse(dc._is_real_credential("abc"))
@@ -709,6 +723,95 @@ class TestTheCoverageOfTheScanIsAsked(unittest.TestCase):
                 heads="aaa\trefs/heads/main\n", local="refs/heads/main\n",
                 pulls_rc=128)):
             self.assertEqual(-1, dc._remote_coverage(".").pull_refs)
+
+class TestThePlaceholderExemptionIsAnchored(unittest.TestCase):
+    """#175 — `"change" in v.lower()` exempted any value containing those five
+    letters, anywhere. Written before the fix.
+
+    The dangerous direction here is the opposite of #169's: that one was about
+    noise, this one is about silence. A password an operator really set to
+    `Change2026!`, committed into a public repo's history, was reported clean.
+
+    ⚠️ And the *other* dangerous direction is tightening too far: if a real
+    placeholder stops being exempt, the sample config starts failing, and **a
+    guard that fires on the correct state gets switched off** — which costs
+    more than the hole it closed.
+    """
+
+    # Provenance is part of each fixture. Two of these were read out of the
+    # repository; two are existing behaviour being pinned so a rewrite cannot
+    # drop it silently. **An invented fixture's blind spots never show up in
+    # any result** — `[bbf3d2]` spent a round on a hand-written CUE case whose
+    # shape did not exist here, and this list lost two entries the same way:
+    # `changeme-changeme` was mine, and anchoring correctly flags it.
+    STILL_EXEMPT = [
+        # OBSERVED — cluster.sample.yaml:616, the only non-empty placeholder in
+        # the file (the other five credential fields are `""`).
+        ("ops:CHANGE-ME", "the placeholder cluster.sample.yaml documents"),
+        # MINE, but a one-character variant of the observed one.
+        ("ops:change-me", "the same, lower case and unshouted"),
+        # EXISTING BEHAVIOUR, not an observed shape: the old rule's other half.
+        ("xxxxxxxxxx", "all-x, the second half of the rule being replaced"),
+        # EXISTING BEHAVIOUR: the `<` prefix rule, which predates both.
+        ("<your-token-here>", "angle brackets — asserted so a rewrite of this "
+                              "function cannot drop an older rule"),
+    ]
+
+    FLAGGED_NOW = [
+        ("ops:Exchange2026!", "the word Exchange contains change"),
+        ("exchange_rate_api_key_live_abc123", "so does exchange_rate"),
+        ("ops:changeme-but-real-99", "starts like the placeholder and is not one"),
+        ("ops:hunter2", "control: was already flagged, must stay flagged"),
+        ("admin:120120cla", "control: this one was really live on jg-jiahd"),
+    ]
+
+    def test_the_documented_placeholders_are_still_exempt(self):
+        """Condition 1. Red here means the sample config is about to start
+        failing, which is worse than the hole this issue closes."""
+        for value, why in self.STILL_EXEMPT:
+            with self.subTest(why=why):
+                self.assertFalse(dc._is_real_credential(value), why)
+
+    def test_a_real_value_that_merely_contains_change_is_flagged(self):
+        """Conditions 2 — the hole itself."""
+        for value, why in self.FLAGGED_NOW:
+            with self.subTest(why=why):
+                self.assertTrue(dc._is_real_credential(value), why)
+
+    def test_an_exempt_placeholder_turned_into_a_usable_value_is_flagged(self):
+        """Condition 3 — the negative control's own positive control.
+
+        Every entry of STILL_EXEMPT, mutated into something workable by
+        appending entropy. If the exemption matched loosely again, these would
+        stay silent and the list above would still pass.
+        """
+        for value, why in self.STILL_EXEMPT:
+            with self.subTest(why=why):
+                # Strip the delimiters that are themselves the exemption:
+                # `<…>` is exempt by shape, so appending entropy inside the
+                # brackets would test nothing.
+                usable = value.strip("<>") + "-7fQ2mK9x"
+                self.assertTrue(
+                    dc._is_real_credential(usable),
+                    f"a usable value built from {value!r} was exempted")
+
+    def test_the_tracked_tree_keeps_exactly_the_shapes_it_has_today(self):
+        """Condition 5, asserted rather than eyeballed once.
+
+        Measured on `main` before writing the fix: 89 tracked files, 10 values
+        reach this function, and **none of them is exempt because of the
+        `change` substring** — they are template syntax, CUE types, empty
+        strings and `TOKEN_PLACEHOLDER`. So tightening cannot change this
+        repo's verdicts, and this case pins that claim rather than leaving it
+        in a commit message.
+        """
+        shapes = [
+            '"#{ cloudflare_token }#"', '"#{ ttyd_credential | default(\'\') }#"',
+            'string & !=""', 'string', '""', '"TOKEN_PLACEHOLDER"',
+        ]
+        for value in shapes:
+            with self.subTest(value=value):
+                self.assertFalse(dc._is_real_credential(value))
 
 
 if __name__ == "__main__":
