@@ -244,5 +244,157 @@ class TestIsRealCredential(unittest.TestCase):
         self.assertTrue(dc._scan_blob_for_secrets(dc._SCAN_CONTROL))
 
 
+class TestTheDeepScanFindsByContentNotByFilename(unittest.TestCase):
+    """#166 — the path axis, which had no coverage at all.
+
+    `_SCAN_CONTROL` above is fed straight to `_scan_blob_for_secrets`, so it
+    proves the *matcher* recognises a credential. It never passes through
+    `_scan_history_for_secrets`, so it said nothing about whether the scan
+    walks to that blob — and for four years of filenames it did not: anything
+    that was not `*.yaml`/`*.yml` was skipped while the check reported clean.
+
+    Every case here goes through `_scan_history_for_secrets` against a real
+    repository, because that function *is* the thing under test.
+    """
+
+    EXTENSIONS = ["yaml", "md", "env", "sh", "json"]
+
+    @staticmethod
+    def _history(d: pathlib.Path, *, secret: bool, extensions=None,
+                 binary: bool = False) -> None:
+        """Commit one file per extension, then delete them all.
+
+        Two traps, both hit before this shape was settled on, both of which
+        produce "nothing was scanned" that reads like "nothing was found":
+
+        - **Identical contents collapse into one git object**, so five files
+          would leave one blob with one path. Each body is made distinct.
+        - The path only appears in `rev-list --objects` for a *reachable*
+          object, so the files are committed first and removed second — which
+          is also the situation being modelled: a credential committed once
+          and deleted afterwards is still in the history.
+        """
+        for i, ext in enumerate(extensions or TestTheDeepScanFindsByContentNotByFilename.EXTENSIONS):
+            body = (f"# distinct-body-{i}\n" + (
+                f"stringData:\n  cloudflare_token: {FAKE_TOKEN}{i}\n"
+                if secret else f"harmless: value-{i}\n"))
+            (d / f"leaked.{ext}").write_text(body)
+        if binary:
+            # A JPEG's first bytes; `text=True` used to raise UnicodeDecodeError
+            # on exactly this, which is a crash and not a finding.
+            (d / "photo.jpg").write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" * 8)
+        git(d, "add", "-fA")
+        git(d, "commit", "-qm", "add")
+        for ext in extensions or TestTheDeepScanFindsByContentNotByFilename.EXTENSIONS:
+            (d / f"leaked.{ext}").unlink()
+        if binary:
+            (d / "photo.jpg").unlink()
+        git(d, "add", "-fA")
+        git(d, "commit", "-qm", "remove")
+
+    def _hits(self, **kw) -> set[str]:
+        with tempfile.TemporaryDirectory() as t:
+            d = pathlib.Path(t)
+            git(d, "init", "-q")
+            self._history(d, **kw)
+            return {path for path, _ in dc._scan_history_for_secrets(str(d))}
+
+    def test_a_credential_in_a_yaml_blob_is_found(self):
+        """Positive control. If this goes red the rest of this class proves
+        nothing — four Falses and a broken scanner look the same."""
+        self.assertIn("leaked.yaml", self._hits(secret=True))
+
+    def test_a_credential_outside_yaml_is_found(self):
+        """The defect: `.md`/`.env`/`.sh`/`.json` were invisible.
+
+        Asserted as one set comparison rather than four `assertIn`s so that a
+        future narrowing cannot pass by finding some of them.
+        """
+        self.assertEqual(
+            {f"leaked.{e}" for e in self.EXTENSIONS}, self._hits(secret=True))
+
+    def test_a_history_with_no_credentials_is_reported_clean(self):
+        """Negative control."""
+        self.assertEqual(set(), self._hits(secret=False))
+
+    def test_that_negative_control_can_fail(self):
+        """The negative control's own positive control.
+
+        Same builder, same repo shape, one credential added: it must go
+        non-empty. Without this, "clean" above is also what a scan that never
+        ran returns.
+        """
+        self.assertNotEqual(set(), self._hits(secret=True))
+
+    def test_a_binary_blob_neither_crashes_nor_hides_the_text_ones(self):
+        """Removing the filename filter let binary objects reach the reader.
+
+        Measured on this repo's own history: eight blobs whose bytes are not
+        UTF-8, and a `text=True` read raises on the first. A crash mid-scan
+        would take the credentials found after it down with it, so the case
+        asserts both halves: no exception, and the text hits still arrive.
+        """
+        self.assertEqual(
+            {f"leaked.{e}" for e in self.EXTENSIONS},
+            self._hits(secret=True, binary=True))
+
+    def test_a_non_utf8_blob_without_a_nul_is_read_not_raised(self):
+        """The NUL guard and `errors="replace"` catch *different* blobs.
+
+        Written after a mutation test found this hole: dropping
+        `errors="replace"` broke nothing, because the JPEG in the case above
+        contains NUL and is skipped before anything is decoded. A blob can be
+        invalid UTF-8 with no NUL in it at all — latin-1 prose, a truncated
+        binary — and that one reaches the decoder. Without `errors="replace"`
+        it raises, and the credentials found after it are lost with it.
+        """
+        with tempfile.TemporaryDirectory() as t:
+            d = pathlib.Path(t)
+            git(d, "init", "-q")
+            (d / "latin1.txt").write_bytes(b"caf\xe9 " * 8)          # no NUL
+            (d / "leaked.md").write_text(
+                f"stringData:\n  cloudflare_token: {FAKE_TOKEN}\n")
+            git(d, "add", "-fA")
+            git(d, "commit", "-qm", "add")
+            hits = {path for path, _ in dc._scan_history_for_secrets(str(d))}
+        self.assertEqual({"leaked.md"}, hits)
+
+    def test_a_credential_shaped_line_inside_a_binary_blob_is_not_a_leak(self):
+        """The one narrowing this keeps, and the only axis it narrows on.
+
+        `#166` is about a narrowing along *filenames*. This one is along
+        content: a blob containing NUL is not a YAML document — NUL is not
+        legal in one — so a `key: value` match inside it is a byte coincidence
+        rather than a pasted credential.
+
+        Measured before keeping it: on this repo's own history the guard
+        changes nothing at all (127 hits with it, 127 without, 0.39s vs
+        0.44s). It is kept for the class of blob rather than for a number, and
+        this case exists so that the claim is falsifiable — remove the guard
+        and this goes red. A narrowing nobody can turn red is exactly the
+        shape this issue is about.
+        """
+        with tempfile.TemporaryDirectory() as t:
+            d = pathlib.Path(t)
+            git(d, "init", "-q")
+            (d / "blob.bin").write_bytes(
+                b"\x00\x01\x02\n"                       # NUL, then a line break
+                + f"cloudflare_token: {FAKE_TOKEN}\n".encode()
+                + b"\x00\xff")
+            (d / "leaked.md").write_text(
+                f"stringData:\n  cloudflare_token: {FAKE_TOKEN}\n")
+            git(d, "add", "-fA")
+            git(d, "commit", "-qm", "add")
+            hits = {path for path, _ in dc._scan_history_for_secrets(str(d))}
+        # The text one still arrives: this asserts the narrowing, not silence.
+        self.assertEqual({"leaked.md"}, hits)
+
+    def test_the_extensionless_case_is_covered_too(self):
+        """A filename filter would also miss a file with no extension at all —
+        `Dockerfile`, `Makefile`, or a pasted note called `notes`."""
+        self.assertEqual({"leaked.notes-no-extension"},
+                         self._hits(secret=True, extensions=["notes-no-extension"]))
+
+
 if __name__ == "__main__":
     unittest.main()
