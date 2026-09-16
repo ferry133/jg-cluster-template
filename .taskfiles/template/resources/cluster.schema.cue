@@ -295,12 +295,45 @@ import (
 
 	// Setting one of these on an appliance is a mistake worth catching: it looks
 	// like it configures something but nothing reads it.
+	//
+	// `matchN(0, [_])` and not `_|_` (jgct#164). Both reject the field; they
+	// differ in what the operator is told. `_|_` produced the whole message:
+	//
+	//     explicit error (_|_ literal) in source:
+	//         ./cluster.schema.cue:288:30
+	//
+	// — a schema line number and no field name, so the operator had to open
+	// this file to learn which of the five he had filled in. `matchN` names it:
+	//
+	//     cluster_api_addr: invalid value "10.9.9.2" (does not satisfy matchN):
+	//         1 matched, expected 0
+	//
+	// Measured on 2026-09-16 against `main` 9597b32d with cue v0.15.4 (the
+	// version pinned in .mise.toml), one legal appliance config plus exactly
+	// one forbidden field, five times. Before: four fields named nothing, and
+	// `mqtt_lb_ip` named itself. After: all five name themselves.
+	//
+	// ⚠️ `mqtt_lb_ip` was NOT the one that already worked. It named itself by
+	// accident: its second declaration further down carries `& !=""`, and the
+	// `_|_` poisoned that bound's left operand, which incidentally printed the
+	// field name. A throwaway mutation removing that `& !=""` dropped it to
+	// zero field names like the other four — so the one case that looked
+	// correct was one unrelated edit away from silently joining them. With
+	// `matchN` the same mutation leaves it naming itself: the guard now stands
+	// on its own. That bound is another field's constraint in another block
+	// and is deliberately left alone; the mutation was an experiment, not a
+	// change.
+	//
+	// Both directions were exercised. Making the guard unconditional (so it
+	// also applies to `full`, where four of these are REQUIRED) turns the
+	// legal-`full` control red — which is what says that control can fail at
+	// all. A guard that cannot over-fire has an untested negative control.
 	if deployment_profile == "appliance" {
-		cluster_api_addr?:         _|_
-		cluster_gateway_addr?:     _|_
-		cluster_dns_gateway_addr?: _|_
-		cloudflare_gateway_addr?:  _|_
-		mqtt_lb_ip?:               _|_
+		cluster_api_addr?:         matchN(0, [_])
+		cluster_gateway_addr?:     matchN(0, [_])
+		cluster_dns_gateway_addr?: matchN(0, [_])
+		cloudflare_gateway_addr?:  matchN(0, [_])
+		mqtt_lb_ip?:               matchN(0, [_])
 	}
 	repository_name: string & !="" & !="ferry133/xxxxxx" & !="ferry133/jg-base"
 	repository_branch?: string & !=""
