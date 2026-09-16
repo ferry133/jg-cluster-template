@@ -301,22 +301,72 @@ _SCAN_CONTROL = "stringData:\n  cloudflare_token: 0123456789abcdef0123456789abcd
 
 
 def _scan_history_for_secrets(d: str) -> list[tuple[str, str]]:
+    """Every named object in `--all` history, by content — not by filename.
+
+    Until jgct#166 this filtered to `*.yaml`/`*.yml`, which is the one thing
+    the runbook this was lifted from tells you not to do: "the next leak will
+    be at a filename nobody predicted". A token pasted into a README, an .env,
+    or a shell script was invisible while the check reported clean. Measured on
+    a throwaway repo: five extensions, one credential each, one hit.
+
+    Two things the filename filter was hiding, both measured on this repo's own
+    history (2650 named objects) rather than reasoned about:
+
+    - **`cat-file blob` per object costs 45.9s** and 1715 of those objects are
+      trees, forked only to fail. Asking one `cat-file --batch` instead, this
+      whole function runs in **0.39s over 2650 objects — against 2.52s for the
+      142 the filename filter let through.** Six times faster while looking at
+      eighteen times as much: the population was never the cost, the
+      process-per-object shape was. (Measured on this repo, 2026-09-16; the
+      shape of the finding survives a different repo, the seconds do not.)
+    - **Binary blobs crash a `text=True` read** (`UnicodeDecodeError`, byte
+      0xff — a JPEG). Eight in this repo. That is why the bytes are decoded
+      here with `errors="replace"` rather than by `run()`, and why a blob
+      containing NUL is skipped: NUL is not legal in a YAML document, so a
+      blob holding one cannot be the plaintext leak this looks for. That is
+      the exclusion criterion, stated because the previous one was not — and
+      it narrows on content, never on a filename, which is the axis jgct#166
+      exists to forbid. On this repo it changes no reading at all (127 hits
+      either way); it is kept for the class of blob, and
+      `test_a_credential_shaped_line_inside_a_binary_blob_is_not_a_leak`
+      turns red without it, so the claim can be falsified rather than trusted.
+    """
     listing = run(["git", "-C", d, "rev-list", "--all", "--objects"]).stdout
-    hits: list[tuple[str, str]] = []
+    order: list[tuple[str, str]] = []
     seen: set[str] = set()
     for line in listing.splitlines():
         parts = line.split(maxsplit=1)
-        if len(parts) != 2:
+        if len(parts) != 2 or parts[0] in seen:
             continue
-        sha, path = parts
-        if sha in seen or not path.endswith((".yaml", ".yml")):
+        seen.add(parts[0])
+        order.append((parts[0], parts[1]))
+    if not order:
+        return []
+
+    # `--batch` answers with "<sha> <type> <size>\n<payload>\n" per request,
+    # in the order asked. Bytes throughout: the payload may be anything.
+    batch = subprocess.run(
+        ["git", "-C", d, "cat-file", "--batch"],
+        input="\n".join(sha for sha, _ in order).encode(),
+        capture_output=True, timeout=RUN_TIMEOUT,
+    )
+    path_of = dict(order)
+    hits: list[tuple[str, str]] = []
+    buf, pos = batch.stdout, 0
+    while pos < len(buf):
+        nl = buf.find(b"\n", pos)
+        if nl == -1:
+            break
+        header = buf[pos:nl].split()
+        pos = nl + 1
+        if len(header) != 3:          # "<sha> missing" — nothing to read
             continue
-        seen.add(sha)
-        blob = run(["git", "-C", d, "cat-file", "blob", sha])
-        if blob.returncode != 0:
+        sha, otype, size = header[0].decode(), header[1], int(header[2])
+        payload, pos = buf[pos:pos + size], pos + size + 1
+        if otype != b"blob" or b"\0" in payload:
             continue
-        if _scan_blob_for_secrets(blob.stdout):
-            hits.append((path, sha))
+        if _scan_blob_for_secrets(payload.decode("utf-8", errors="replace")):
+            hits.append((path_of.get(sha, sha), sha))
     return hits
 
 
