@@ -547,7 +547,7 @@ class TestWhatCountsAsARealCredential(unittest.TestCase):
                 self.assertTrue(dc._is_real_credential(value), why)
 
     def test_a_key_with_no_inline_value_is_not_read_across_the_newline(self):
-        """The class nobody had named: `\s` matches newlines.
+        r"""The class nobody had named: `\s` matches newlines.
 
             TTYD_CREDENTIAL:
               valueFrom:
