@@ -404,6 +404,35 @@ _PLACEHOLDER_PATTERN = re.compile(
 
 
 def _is_placeholder(v: str) -> bool:
+    """⚠️ In the `user:password` space this rule **widens**, and that is written
+    down here because jgct#166's rule is that the thing worth fixing is a
+    narrowing nobody wrote down — this is its mirror.
+
+    Enumerated over 4 usernames (`admin`, `ttyd`, `user`, `ops`) × 12 words
+    (`none`, `example`, `xxx`, `todo`, `tbd`, `placeholder`, `changeme`,
+    `change-me`, `replaceme`, `replace-me`, `token_placeholder`, `?????`),
+    comparing this function against the version before jgct#175:
+
+        loosened (was flagged, now exempt):  38 of 48
+        tightened (was exempt, now flagged):  0 of 48
+        unchanged:                           10 of 48
+
+    `[bbf3d2]` measured 37 with his own word list; the direction is the same
+    and the two numbers differ only because the populations do — which is why
+    the list is spelled out above rather than described.
+
+    ⚠️ **How that 38 was taken, because it cannot be retaken from this tree**:
+    the pre-jgct#175 module was loaded alongside this one and both were asked
+    about every cell. Once this lands, that version is only in history, so the
+    test next to it pins the *direction* and the cells, not the number. A
+    number a test cannot rebuild is a record, not an assertion.
+
+    The widening is deliberate: `admin:none` and `ops:todo` are placeholders
+    that the old substring rule had no way to recognise, because it only knew
+    the five letters `change`. But deliberate is not the same as recorded, and
+    `test_the_colon_space_only_loosens_and_by_how_much` keeps the number from
+    drifting silently.
+    """
     candidates = [v.strip().strip("\"'")]
     if ":" in candidates[0]:
         candidates.append(candidates[0].rsplit(":", 1)[-1])

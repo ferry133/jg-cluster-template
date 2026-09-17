@@ -795,6 +795,42 @@ class TestThePlaceholderExemptionIsAnchored(unittest.TestCase):
                     dc._is_real_credential(usable),
                     f"a usable value built from {value!r} was exempted")
 
+    # 4 usernames x 12 placeholder words. Spelled out, not described: two
+    # people counting this space got 38 and 37 because their word lists
+    # differed, and a number nobody can rebuild is not a reading.
+    COLON_USERS = ["admin", "ttyd", "user", "ops"]
+    COLON_WORDS = ["none", "example", "xxx", "todo", "tbd", "placeholder",
+                   "changeme", "change-me", "replaceme", "replace-me",
+                   "token_placeholder", "?????"]
+
+    def test_the_colon_space_is_exempt_wholesale_and_that_is_the_widening(self):
+        """⚠️ This PR tightens overall and **loosens** inside `user:password`.
+
+        `[bbf3d2]` found it: applying the placeholder pattern to the part after
+        the colon exempts cells that were flagged before. Enumerated over the
+        grid below, **38 of 48 cells loosened and 0 tightened** — the mirror of
+        the rule jgct#166 set, since an unrecorded widening inside a PR whose
+        purpose is narrowing is the same shape as an unrecorded narrowing.
+
+        ⚠️ **That 38 cannot be recomputed here**, and saying so is the point:
+        it came from loading the pre-#175 module side by side with this one,
+        and once this lands that version is gone from the tree. What a test can
+        hold is the *direction* and the representative cells; the number lives
+        in the comment on `_is_placeholder` together with how it was taken.
+        **A number a test cannot rebuild is a record, not an assertion, and the
+        two should not be dressed the same.**
+        """
+        for user in self.COLON_USERS:
+            for word in self.COLON_WORDS:
+                with self.subTest(value=f"{user}:{word}"):
+                    self.assertTrue(dc._is_placeholder(f"{user}:{word}"))
+        # And the direction: none of this space became stricter. Asserted
+        # against the four cells that carry the old rule's own exemption, so
+        # "0 tightened" is not a count over an empty set.
+        for value in ["ops:changeme", "user:change-me", "xxxxxxxxxx", "admin:xxx"]:
+            with self.subTest(value=value):
+                self.assertFalse(dc._is_real_credential(value))
+
     def test_the_tracked_tree_keeps_exactly_the_shapes_it_has_today(self):
         """Condition 5, asserted rather than eyeballed once.
 
