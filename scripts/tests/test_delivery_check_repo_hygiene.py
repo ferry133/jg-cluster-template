@@ -564,5 +564,152 @@ class TestWhatCountsAsARealCredential(unittest.TestCase):
         self.assertTrue(dc._scan_blob_for_secrets(dc._SCAN_CONTROL))
 
 
+class TestTheScannedPopulationIsPartOfTheAnswer(unittest.TestCase):
+    """#171 — `--all` means "every ref this clone happens to have".
+
+    Two clones of the same repository scan different things and both print
+    "clean". Measured four ways, all on one repository:
+
+      two machines, same minute          127 hits vs 124
+      one machine, two hours apart        79 refs ->  77
+      one machine, one minute apart      179 refs -> 115   (a `fetch --prune`)
+      one machine's leftovers             92 local branches nobody else has
+
+    Written before the implementation, so that "the hit disappears" is a
+    property these cases demand rather than one the code happens to have.
+    """
+
+    @staticmethod
+    def _repo(d: pathlib.Path) -> None:
+        git(d, "init", "-q")
+        (d / "README.md").write_text("# nothing\n")
+        git(d, "add", "-fA")
+        git(d, "commit", "-qm", "root")
+
+    @staticmethod
+    def _on_branch(d: pathlib.Path, branch: str, name: str, body: str) -> None:
+        """Put a file on its own branch and go back — so the blob is reachable
+        only from that branch, which is the situation being modelled."""
+        git(d, "checkout", "-q", "-b", branch)
+        (d / name).write_text(body)
+        git(d, "add", "-fA")
+        git(d, "commit", "-qm", f"add {name}")
+        git(d, "checkout", "-q", "-")
+
+    def test_a_credential_only_on_a_side_branch_is_found(self):
+        """Condition 2. `--all` is what makes this pass today."""
+        with tempfile.TemporaryDirectory() as t:
+            d = pathlib.Path(t)
+            self._repo(d)
+            self._on_branch(d, "side", "leaked.yaml",
+                            f"cloudflare_token: {FAKE_TOKEN}\n")
+            hits = {path for path, _ in dc._scan_history_for_secrets(str(d))}
+        self.assertEqual({"leaked.yaml"}, hits)
+
+    def test_removing_that_branch_removes_the_finding(self):
+        """Condition 3 — the negative control's own positive control.
+
+        Deleting the branch is the only change; the blob is still in the object
+        database until gc runs. If the hit *stayed*, this test would be
+        measuring something other than the ref set, and the whole issue would
+        be misdiagnosed.
+        """
+        with tempfile.TemporaryDirectory() as t:
+            d = pathlib.Path(t)
+            self._repo(d)
+            self._on_branch(d, "side", "leaked.yaml",
+                            f"cloudflare_token: {FAKE_TOKEN}\n")
+            before = {path for path, _ in dc._scan_history_for_secrets(str(d))}
+            git(d, "branch", "-qD", "side")
+            after = {path for path, _ in dc._scan_history_for_secrets(str(d))}
+        self.assertEqual({"leaked.yaml"}, before, "setup failed, not a finding")
+        self.assertEqual(set(), after,
+                         "the scan still sees a blob no ref points at — then "
+                         "this test is not measuring the ref set")
+
+    def test_the_population_is_reported_and_matches_what_was_scanned(self):
+        """Condition 1, plus the thing that makes it trustworthy.
+
+        A population printed by a second code path could drift from the
+        population actually walked — the same "two copies diverge" failure this
+        repo keeps paying for. Both numbers come from `_history_objects`, and
+        this asserts they agree rather than trusting that they do.
+        """
+        with tempfile.TemporaryDirectory() as t:
+            d = pathlib.Path(t)
+            self._repo(d)
+            self._on_branch(d, "side", "extra.yaml", "harmless: yes\n")
+            pop = dc._history_population(str(d))
+            walked = len(dc._history_objects(str(d)))
+        self.assertEqual(walked, pop.objects)
+        self.assertGreater(pop.objects, 0)
+        self.assertGreaterEqual(pop.refs, 2)          # main + side
+
+    def test_the_population_count_moves_when_the_ref_set_moves(self):
+        """The population line's own control: a number that never changes
+        cannot tell anyone which clone they are reading about."""
+        with tempfile.TemporaryDirectory() as t:
+            d = pathlib.Path(t)
+            self._repo(d)
+            self._on_branch(d, "side", "extra.yaml", "harmless: yes\n")
+            with_branch = dc._history_population(str(d))
+            git(d, "branch", "-qD", "side")
+            without = dc._history_population(str(d))
+        self.assertGreater(with_branch.refs, without.refs)
+        self.assertGreater(with_branch.objects, without.objects)
+
+
+class TestTheCoverageOfTheScanIsAsked(unittest.TestCase):
+    """#171 conditions 4 and 5 — the narrowing is stated, not assumed.
+
+    Three outcomes, because "the server says we are current" and "the server
+    could not be asked" are the same silence otherwise, and only one of them
+    means the scan below was complete.
+    """
+
+    @staticmethod
+    def _fake_run(heads_rc=0, heads="", local="", pulls_rc=0, pulls=""):
+        def run(cmd, **kw):
+            if "ls-remote" in cmd and "--heads" in cmd:
+                return types.SimpleNamespace(returncode=heads_rc, stdout=heads, stderr="")
+            if "ls-remote" in cmd:
+                return types.SimpleNamespace(returncode=pulls_rc, stdout=pulls, stderr="")
+            if "for-each-ref" in cmd:
+                return types.SimpleNamespace(returncode=0, stdout=local, stderr="")
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+        return run
+
+    def test_a_clone_holding_every_remote_branch_reports_none_missing(self):
+        with mock.patch.object(dc, "run", side_effect=self._fake_run(
+                heads="aaa\trefs/heads/main\nbbb\trefs/heads/side\n",
+                local="refs/heads/main\nrefs/remotes/origin/side\n",
+                pulls="ccc\trefs/pull/1/head\n")):
+            cov = dc._remote_coverage(".")
+        self.assertEqual([], cov.missing_heads)
+        self.assertEqual(2, cov.remote_heads)
+        self.assertEqual(1, cov.pull_refs)
+
+    def test_a_stale_clone_names_the_branches_it_cannot_see(self):
+        """The finding this issue exists for: the scan reports clean about a
+        population that is missing a branch."""
+        with mock.patch.object(dc, "run", side_effect=self._fake_run(
+                heads="aaa\trefs/heads/main\nbbb\trefs/heads/side\n",
+                local="refs/heads/main\n")):
+            cov = dc._remote_coverage(".")
+        self.assertEqual(["side"], cov.missing_heads)
+
+    def test_an_unreachable_server_is_cannot_measure_not_current(self):
+        with mock.patch.object(dc, "run", side_effect=self._fake_run(heads_rc=128)):
+            self.assertIsNone(dc._remote_coverage("."))
+
+    def test_the_pull_ref_count_is_minus_one_when_that_query_fails(self):
+        """A ceiling nobody could measure must not print as zero — `0 refs/pull`
+        would read as "nothing is outside the scan", the opposite of the truth."""
+        with mock.patch.object(dc, "run", side_effect=self._fake_run(
+                heads="aaa\trefs/heads/main\n", local="refs/heads/main\n",
+                pulls_rc=128)):
+            self.assertEqual(-1, dc._remote_coverage(".").pull_refs)
+
+
 if __name__ == "__main__":
     unittest.main()

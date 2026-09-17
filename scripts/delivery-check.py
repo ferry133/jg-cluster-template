@@ -53,6 +53,7 @@ import shutil
 import subprocess
 import tempfile
 import sys
+import typing
 import urllib.parse
 import urllib.request
 
@@ -247,6 +248,33 @@ def check_repo_hygiene(args) -> int:
             huh("deep scan cannot recognise a credential in its own control "
                 "sample, so finding none in this history proves nothing")
             return UNKNOWN
+        pop = _history_population(d)
+        print(f"      population: {pop.objects} named objects from {pop.refs} refs "
+              f"({pop.local_branches} local branches, {pop.remote_tracking} "
+              f"remote-tracking). `--all` is what THIS clone can reach, so a "
+              f"clean result is only comparable next to this line.")
+        cov = _remote_coverage(d)
+        if cov is None:
+            print("      coverage: COULD NOT ASK the server (no remote, or no "
+                  "network). The line above is this clone only — which is not "
+                  "the same as the clone being current.")
+        else:
+            if cov.missing_heads:
+                bad(f"this clone is missing {len(cov.missing_heads)} of "
+                    f"{cov.remote_heads} branches on origin: "
+                    f"{', '.join(cov.missing_heads[:5])} — the scan below "
+                    f"cannot see them. Run `git fetch --all --prune` and rerun.")
+                failed = True
+            else:
+                print(f"      coverage: all {cov.remote_heads} branches on origin "
+                      f"are present locally.")
+            if cov.pull_refs >= 0:
+                print(f"      ceiling: {cov.pull_refs} `refs/pull/*` refs exist on "
+                      f"origin. GitHub keeps a merged PR's head forever, so "
+                      f"objects reachable only from those are fetchable by "
+                      f"anyone and are NOT in any clone's `--all`. This scan "
+                      f"does not cover them — deliberately, and this is the "
+                      f"line that says so.")
         found = _scan_history_for_secrets(d)
         if found:
             bad(f"credential-shaped content in {len(found)} historical blob(s)")
@@ -399,6 +427,110 @@ def _scan_blob_for_secrets(text: str) -> list[str]:
 _SCAN_CONTROL = "stringData:\n  cloudflare_token: 0123456789abcdef0123456789abcdef01234567\n"
 
 
+class _Population(typing.NamedTuple):
+    """What a deep scan actually looked at. Printed with the verdict — jgct#171.
+
+    `git rev-list --all` means "every ref **this clone happens to have**", and
+    that is not a property of the repository. Measured on one repository, four
+    ways:
+
+        two machines, same minute        127 hits      vs 124
+        one machine, two hours apart      79 refs      -> 77
+        one machine, one minute apart    179 refs      -> 115   (a fetch --prune)
+        one machine's own leftovers       92 local branches nobody else has
+
+    Two `--deep` runs both print "clean" while walking different object sets,
+    and nothing in either report says so. So the population travels with the
+    verdict: a clean result that does not say what it covered cannot be
+    compared with another one.
+    """
+    objects: int
+    refs: int
+    local_branches: int
+    remote_tracking: int
+
+
+def _history_objects(d: str) -> list[tuple[str, str]]:
+    """Every named object in `--all`, deduplicated by sha, first path wins.
+
+    One function, two callers — the scan and the population line. A count
+    produced by a second walk would be free to drift from the walk that
+    actually happened, which is the failure this repo has paid for repeatedly
+    (a second copy of a tracked fact always diverges).
+    """
+    listing = run(["git", "-C", d, "rev-list", "--all", "--objects"]).stdout
+    seen: set[str] = set()
+    out: list[tuple[str, str]] = []
+    for line in listing.splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2 or parts[0] in seen:
+            continue
+        seen.add(parts[0])
+        out.append((parts[0], parts[1]))
+    return out
+
+
+def _history_population(d: str) -> _Population:
+    refs = run(["git", "-C", d, "for-each-ref", "--format=%(refname)"]).stdout.splitlines()
+    return _Population(
+        objects=len(_history_objects(d)),
+        refs=len(refs),
+        local_branches=sum(1 for r in refs if r.startswith("refs/heads/")),
+        remote_tracking=sum(1 for r in refs if r.startswith("refs/remotes/")),
+    )
+
+
+class _RemoteCoverage(typing.NamedTuple):
+    """How much of the server this clone can currently see — jgct#171.
+
+    Two numbers, and the second is the one nobody had written down:
+
+    - `missing_heads`: branches on `origin` this clone does not have. A stale
+      clone scans less than the repository contains and still says "clean".
+    - `pull_refs`: `refs/pull/*` on the server. GitHub keeps a PR's head
+      forever, so deleting a merged branch does not delete its objects — it
+      removes them from every clone's `--all` while leaving them fetchable by
+      anyone. Measured 2026-09-17, hours after 53 merged branches were deleted
+      here: 107 such refs on origin, and 22 objects left this clone's
+      population that afternoon for that reason alone.
+
+    So the ceiling is stated rather than implied: **this scan covers what a
+    clone can reach, which is neither "all history" nor "everything a third
+    party can fetch".** Each call costs about 0.6s against GitHub.
+    """
+    remote_heads: int
+    missing_heads: list[str]
+    pull_refs: int
+
+
+def _remote_coverage(d: str) -> _RemoteCoverage | None:
+    """None when the server cannot be asked — that is a third outcome.
+
+    An unreachable remote must not read as "the clone is current": those two
+    produce the same silence, and only one of them means the scan was complete.
+    """
+    heads = run(["git", "-C", d, "ls-remote", "--heads", "origin"])
+    if heads.returncode != 0:
+        return None
+    remote = {l.split("\t")[1] for l in heads.stdout.splitlines() if "\t" in l}
+    local = set(run(["git", "-C", d, "for-each-ref", "--format=%(refname)"])
+                .stdout.splitlines())
+    # A remote head counts as present if any local ref points at that name,
+    # under refs/heads/ or refs/remotes/<remote>/.
+    missing = []
+    for ref in sorted(remote):
+        name = ref.removeprefix("refs/heads/")
+        if not any(r == f"refs/heads/{name}" or r.endswith(f"/{name}") for r in local):
+            missing.append(name)
+    pulls = run(["git", "-C", d, "ls-remote", "origin", "refs/pull/*/head"])
+    return _RemoteCoverage(
+        remote_heads=len(remote),
+        missing_heads=missing,
+        pull_refs=len([l for l in pulls.stdout.splitlines() if l.strip()])
+        if pulls.returncode == 0 else -1,
+    )
+
+
 def _scan_history_for_secrets(d: str) -> list[tuple[str, str]]:
     """Every named object in `--all` history, by content — not by filename.
 
@@ -430,15 +562,7 @@ def _scan_history_for_secrets(d: str) -> list[tuple[str, str]]:
       `test_a_credential_shaped_line_inside_a_binary_blob_is_not_a_leak`
       turns red without it, so the claim can be falsified rather than trusted.
     """
-    listing = run(["git", "-C", d, "rev-list", "--all", "--objects"]).stdout
-    order: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for line in listing.splitlines():
-        parts = line.split(maxsplit=1)
-        if len(parts) != 2 or parts[0] in seen:
-            continue
-        seen.add(parts[0])
-        order.append((parts[0], parts[1]))
+    order = _history_objects(d)
     if not order:
         return []
 
