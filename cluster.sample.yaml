@@ -449,9 +449,20 @@ cluster_name: "xxxxxx"
 # the database and the agent's accumulated context. Backups are encrypted with
 # this cluster's own age key before upload, so the destination operator cannot
 # read them — decryption travels with age.key at handover.
-# Create an R2 bucket + API token at dash.cloudflare.com → R2.
+#
+# The DESTINATION HOST is not a setting (jgct#180, ferry133's ruling): it is
+# fixed at https://minio.janncot.com by the template. There is no
+# backup_r2_endpoint field any more, and putting one here makes `task configure`
+# fail with `backup_r2_endpoint: field not allowed` rather than ignoring it.
+# ⚠️ That host answers only from inside the network the appliance sits in — it
+# does not resolve on a public resolver. A cluster whose network cannot reach it
+# has no off-site backup; raise that before delivery rather than after.
+#
+# The bucket name and the two credentials still vary per cluster. Ask whoever
+# operates that MinIO for them — they are not self-service, and the old line
+# here told you to create a Cloudflare R2 bucket, which this fleet has never
+# used for any cluster.
 # backup_r2_bucket: ""
-# backup_r2_endpoint: ""              # https://<account-id>.r2.cloudflarestorage.com
 # backup_r2_access_key_id: ""
 # backup_r2_secret_access_key: ""
 
