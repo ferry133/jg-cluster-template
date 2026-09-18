@@ -249,6 +249,38 @@ class TestHistoryLeakGuard(unittest.TestCase):
         d = self.make_repo(None)
         self.assertEqual(prov.ConfigurePushStep().observe({"dir": d}).state, prov.PRESENT)
 
+    def test_the_staged_tree_is_scanned_between_add_and_commit(self):
+        """#178 — the half of that issue that does not live in delivery-check.
+
+        Nothing under `templates/` or `.taskfiles/` invokes `repo-hygiene`
+        (measured on main 2026-09-18), so the `--staged` cell added there is
+        reachable only because this step calls it. **A PR that added the cell
+        and not this call would pass every test in the other file and change
+        nothing that runs.**
+
+        The order is the assertion, not the presence: scanning after `commit`
+        would be scanning something already in history, and scanning before
+        `add` is what the issue is about.
+        """
+        cmds = prov.ConfigurePushStep().create({"dir": "/tmp/x"})
+        joined = [" ".join(c) for c in cmds]
+        # `next(..., None)` and an explicit assert, not a bare `next()`:
+        # removing the call made this raise StopIteration, which is an
+        # *errored* test, not a failing one. A guard whose red says
+        # "StopIteration" names nothing — the reader has to open the file to
+        # learn what was being checked.
+        add = next((i for i, c in enumerate(joined)
+                    if c.startswith("git -C /tmp/x add")), None)
+        commit = next((i for i, c in enumerate(joined) if "commit" in c), None)
+        staged = next((i for i, c in enumerate(joined) if "--staged" in c), None)
+        self.assertIsNotNone(add, "the step must `git add` the rendered tree")
+        self.assertIsNotNone(commit, "the step must commit it")
+        self.assertIsNotNone(
+            staged, "the step must call `repo-hygiene --staged` — without it "
+                    "the cell in delivery-check.py is reachable by nobody")
+        self.assertLess(add, staged, "the scan must come after `git add`")
+        self.assertLess(staged, commit, "and before `git commit`")
+
     def test_the_path_that_actually_leaked_is_caught(self):
         # jcom and jg-jiahd leaked at config.gen/cluster.yaml while the ignore
         # rule and the check both named /cluster.yaml. The glob is the fix.

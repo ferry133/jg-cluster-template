@@ -288,6 +288,54 @@ def check_repo_hygiene(args) -> int:
         print("      (skipped the content scan; pass --deep. It is slow, and is")
         print("       a once-per-repo check rather than once-per-delivery.)")
 
+    # 5. The staged tree — jgct#178.
+    #
+    # Every cell above asks about a ref. `provision.py`'s ConfigurePushStep
+    # runs this check, then `git add`, then `commit`, then `push`: the tree
+    # that gets published is not on any ref when the cells above look, and is
+    # on one only after it has been sent. This cell is the only one whose
+    # population is "what the next commit will contain".
+    #
+    # **Why it lives here rather than inline in provision.py**, measured
+    # rather than preferred: nothing under `templates/` or `.taskfiles/` runs
+    # `repo-hygiene` (grepped on main 2026-09-18 — customer repos never invoke
+    # it), and `ci-checks.py` classifies `delivery-check.py` as not-run. So a
+    # cell here reaches nobody by itself. It is here because that is where it
+    # can be unit-tested and reused, and `provision.py` gains a second call
+    # **after** its `git add` — the two halves are both required, and a PR that
+    # did only one of them would look complete.
+    if args.staged:
+        staged = _scan_index_for_secrets(d)
+        if staged is None:
+            huh("could not read the index — this is not a measurement of a "
+                "clean staging area, it is the absence of one")
+            return UNKNOWN
+        print(f"      staged population: {staged.staged_paths} path(s) in the "
+              f"index, {staged.scanned} blob(s) read; skipped "
+              f"{staged.skipped_sops} `*.sops.*` (by path — see the note on "
+              f"_SOPS_PATH), {staged.skipped_binary} binary (NUL), "
+              f"{staged.skipped_deleted} deletion(s).")
+        if staged.staged_paths == 0:
+            # Not a pass. `provision.py` reaches this line only after
+            # `git add kubernetes`, so an empty index there means step 1
+            # rendered nothing — and this check has nothing to say about a tree
+            # that does not exist. Reporting PASS would answer a question
+            # nobody could ask. Cost, stated because it is real: a re-run that
+            # renders byte-identical output stages nothing and now reports
+            # UNKNOWN rather than green. That is the direction to be wrong in
+            # when the next command publishes to a public repo.
+            huh("nothing is staged — this is not a clean staging area, it is "
+                "the absence of one")
+            return UNKNOWN
+        if staged.hits:
+            bad(f"credential-shaped content staged for the next commit "
+                f"({len(staged.hits)} field(s))")
+            for path, field, sha in staged.hits[:10]:
+                print(f"      {path}  ({field}, {sha[:12]})")
+            failed = True
+        else:
+            ok("staged tree: no credential fields with real values")
+
     return FAIL if failed else PASS
 
 
@@ -598,6 +646,121 @@ def _remote_coverage(d: str) -> _RemoteCoverage | None:
         pull_refs=len([l for l in pulls.stdout.splitlines() if l.strip()])
         if pulls.returncode == 0 else -1,
     )
+
+
+# `*.sops.*` is excluded from the index scan by **path**, and the reason has to
+# be the path rather than the content — jgct#178. Encrypted files hold `ENC[…]`,
+# which `_is_real_credential` already waives, so relying on that would look like
+# it works. But this check runs in the window *before* `task configure`'s
+# encryption step has necessarily succeeded on a given file, and a `*.sops.*`
+# path that is still plaintext is exactly the case where the content rule stops
+# applying. `encrypt-secrets.sh` owns that window (`set -euo pipefail`, per-file);
+# duplicating its judgement here would be a second copy of one policy.
+_SOPS_PATH = re.compile(r"\.sops\.[^/]*$")
+
+
+class _IndexScan(typing.NamedTuple):
+    """What the staged scan looked at — jgct#178, second round.
+
+    The first version printed `len(hits)` under the label `population`, and
+    four different situations therefore printed the same line and the same
+    PASS: nothing staged at all; a clean file; a binary blob (skipped by the
+    NUL rule from jgct#166) that contained a credential; and a staging area
+    that was entirely `*.sops.*`. **Every one of those skips is correct, and
+    none of them said so** — "I read three blobs and they were clean" and "I
+    read nothing" were the same sentence.
+
+    That is the mistake jgct#171 exists to prevent, made with jgct#171's own
+    vocabulary: `population` is what was examined, never what was found.
+    """
+    hits: list[tuple[str, str, str]]
+    staged_paths: int
+    scanned: int
+    skipped_sops: int
+    skipped_binary: int
+    skipped_deleted: int
+
+
+def _scan_index_for_secrets(d: str) -> _IndexScan | None:
+    """Credential-shaped content in the **staged** tree. `None` = cannot measure.
+
+    jgct#178: `repo-hygiene`'s other cells all ask about refs — `ls-files`,
+    `show HEAD:…`, `log`, `rev-list`. None of them can see a tree that has been
+    `git add`-ed and not yet committed, and in `provision.py`'s ConfigurePushStep
+    that tree is what the next two commands publish. The gap is not that
+    something was forgotten: this subcommand was designed to answer about
+    history, and the ordering in `provision.py` put it before the tree existed.
+
+    Reads blobs out of the index rather than off disk, because those are two
+    different things — `git add` then editing the file leaves the index holding
+    what will actually be pushed, and the working copy is what a reader would
+    otherwise check. `--raw` gives the staged blob sha directly, and one
+    `cat-file --batch` fetches all of them (the shape jgct#166 measured at
+    0.39s against 45.9s for a process per object).
+
+    Three outcomes: `None` when git cannot answer (not a repo, unreadable
+    index), `[]` when the index is measurable and clean. Those two are the same
+    empty result everywhere else, and only one of them is a pass.
+    """
+    # `--abbrev=40`: without it `--raw` prints shortened shas while
+    # `cat-file --batch` echoes full ones, so the path lookup silently misses
+    # and every finding is reported against a sha instead of a filename. The
+    # scan still fires — only the name is lost — which is why the test asserts
+    # the path and not merely that something was found.
+    raw = run(["git", "-C", d, "diff", "--cached", "--raw", "--no-color",
+               "--abbrev=40"])
+    if raw.returncode != 0:
+        return None
+    staged: list[tuple[str, str]] = []
+    staged_paths = skipped_sops = skipped_deleted = skipped_binary = 0
+    for line in raw.stdout.splitlines():
+        if not line.startswith(":"):
+            continue
+        meta, _, path = line.partition("\t")
+        parts = meta.split()
+        if len(parts) < 5:
+            continue
+        new_sha = parts[3]
+        staged_paths += 1
+        if set(new_sha) == {"0"}:          # staged deletion — nothing to read
+            skipped_deleted += 1
+            continue
+        if _SOPS_PATH.search(path):
+            skipped_sops += 1
+            continue
+        staged.append((new_sha, path))
+    if not staged:
+        return _IndexScan([], staged_paths, 0, skipped_sops, 0, skipped_deleted)
+
+    batch = subprocess.run(
+        ["git", "-C", d, "cat-file", "--batch"],
+        input="\n".join(sha for sha, _ in staged).encode(),
+        capture_output=True, timeout=RUN_TIMEOUT,
+    )
+    if batch.returncode != 0:
+        return None
+    path_of = dict(staged)
+    hits: list[tuple[str, str, str]] = []
+    scanned = 0
+    buf, pos = batch.stdout, 0
+    while pos < len(buf):
+        nl = buf.find(b"\n", pos)
+        if nl == -1:
+            break
+        header = buf[pos:nl].split()
+        pos = nl + 1
+        if len(header) != 3:
+            continue
+        sha, otype, size = header[0].decode(), header[1], int(header[2])
+        payload, pos = buf[pos:pos + size], pos + size + 1
+        if otype != b"blob" or b"\0" in payload:
+            skipped_binary += 1
+            continue
+        scanned += 1
+        for field in _scan_blob_for_secrets(payload.decode("utf-8", errors="replace")):
+            hits.append((path_of.get(sha, sha), field, sha))
+    return _IndexScan(hits, staged_paths, scanned, skipped_sops, skipped_binary,
+                      skipped_deleted)
 
 
 def _scan_history_for_secrets(d: str) -> list[tuple[str, str]]:
@@ -2417,6 +2580,8 @@ def main() -> None:
     h = sub.add_parser("repo-hygiene")
     h.add_argument("--dir", default=".")
     h.add_argument("--deep", action="store_true", help="scan every blob's content")
+    h.add_argument("--staged", action="store_true",
+                   help="scan the staged tree (what the next commit will publish)")
     h.set_defaults(func=check_repo_hygiene)
 
     d = sub.add_parser("dns")

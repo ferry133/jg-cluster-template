@@ -121,8 +121,8 @@ def capture(fn, *a) -> tuple[int, str]:
     return rc, buf.getvalue()
 
 
-def args_for(p: pathlib.Path, deep: bool = False):
-    return types.SimpleNamespace(dir=str(p), deep=deep)
+def args_for(p: pathlib.Path, deep: bool = False, staged: bool = False):
+    return types.SimpleNamespace(dir=str(p), deep=deep, staged=staged)
 
 
 class TestRepoHygiene(unittest.TestCase):
@@ -848,6 +848,176 @@ class TestThePlaceholderExemptionIsAnchored(unittest.TestCase):
         for value in shapes:
             with self.subTest(value=value):
                 self.assertFalse(dc._is_real_credential(value))
+
+
+class TestTheStagedTreeIsScannedBeforeItIsPushed(unittest.TestCase):
+    """#178 — the population is history, and the thing being pushed is not yet in it.
+
+    `provision.py`'s ConfigurePushStep runs five commands in this order:
+
+        task configure --yes          # render
+        repo-hygiene --dir … --deep   # scans `--all` history
+        git add kubernetes
+        git commit
+        git push                      # -> a public repo
+
+    Step 2 asks about objects reachable from a ref. What steps 3-5 send is a
+    tree that **is not on any ref yet** — it joins the history one command
+    later, by which time it is already published. Measured on `main`: 23 files
+    under `templates/`, 19 of them not `*.sops.*`, **read 19, skipped 0, hits
+    0** — so this is "that cell is unmeasured", not "something leaked".
+
+    Written before the implementation.
+    """
+
+    @staticmethod
+    def _repo(d: pathlib.Path) -> None:
+        git(d, "init", "-q")
+        (d / "README.md").write_text("# nothing\n")
+        git(d, "add", "-fA")
+        git(d, "commit", "-qm", "root")
+
+    def test_a_credential_staged_but_not_committed_is_found(self):
+        """Condition 2 — and deliberately NOT in a `*.sops.*` path, which would
+        be caught by the encryption step instead and prove nothing here."""
+        with tempfile.TemporaryDirectory() as t:
+            d = pathlib.Path(t)
+            self._repo(d)
+            (d / "kubernetes").mkdir()
+            (d / "kubernetes" / "secret.yaml").write_text(
+                f"stringData:\n  cloudflare_token: {FAKE_TOKEN}\n")
+            git(d, "add", "-f", "kubernetes")
+            found = dc._scan_index_for_secrets(str(d))
+        self.assertIsNotNone(found, "should be measurable in a real repo")
+        self.assertEqual([("kubernetes/secret.yaml", "cloudflare_token")],
+                         [(p, f) for p, f, _ in found.hits])
+        # The population, not just the result: one path staged, one blob read.
+        self.assertEqual((1, 1), (found.staged_paths, found.scanned))
+
+    def test_a_clean_staged_tree_is_clean_and_that_green_can_be_falsified(self):
+        """Condition 3: not "red became green" — the count must differ by one.
+
+        A guard that goes from some failures to none has only shown that
+        something changed. Staging the same tree without the one credential and
+        asserting the hit count drops by exactly 1 shows that the thing which
+        changed is the thing under test.
+        """
+        with tempfile.TemporaryDirectory() as t:
+            d = pathlib.Path(t)
+            self._repo(d)
+            (d / "kubernetes").mkdir()
+            (d / "kubernetes" / "a.yaml").write_text("harmless: yes\n")
+            (d / "kubernetes" / "b.yaml").write_text(
+                f"stringData:\n  cloudflare_token: {FAKE_TOKEN}\n")
+            git(d, "add", "-f", "kubernetes")
+            with_secret = len(dc._scan_index_for_secrets(str(d)).hits)
+            (d / "kubernetes" / "b.yaml").write_text("harmless: also\n")
+            git(d, "add", "-f", "kubernetes")
+            after = dc._scan_index_for_secrets(str(d))
+            without = len(after.hits)
+        self.assertEqual(1, with_secret)
+        self.assertEqual(0, without)
+        self.assertEqual(1, with_secret - without, "the delta is the assertion")
+        # And the population is unchanged across the two runs — otherwise the
+        # delta could come from having scanned less, not from having found less.
+        self.assertEqual(2, after.scanned)
+
+    def test_a_sops_path_is_excluded_by_a_stated_rule(self):
+        """Condition 4 — excluded on purpose, not by happening not to match.
+
+        The file here is plaintext despite its name: if the exclusion were
+        relying on `ENC[` (which `_is_real_credential` already waives), this
+        case would fail. It asserts the *path* rule, which is the one that has
+        to hold when encryption has not run yet — which is exactly the window
+        this check sits in.
+        """
+        with tempfile.TemporaryDirectory() as t:
+            d = pathlib.Path(t)
+            self._repo(d)
+            (d / "kubernetes").mkdir()
+            (d / "kubernetes" / "cluster-secrets.sops.yaml").write_text(
+                f"stringData:\n  cloudflare_token: {FAKE_TOKEN}\n")
+            git(d, "add", "-f", "kubernetes")
+            found = dc._scan_index_for_secrets(str(d))
+        self.assertEqual([], found.hits)
+        # ⚠️ and the skip is *reported*: a silent zero here would be the exact
+        # failure this round of review caught — 0 found and 0 looked at print
+        # the same thing otherwise.
+        self.assertEqual((1, 0, 1), (found.staged_paths, found.scanned,
+                                     found.skipped_sops))
+
+    def test_four_different_reasons_do_not_report_the_same_thing(self):
+        """The review finding this round, pinned so it cannot come back.
+
+        The first version printed `len(hits)` under the name `population`, so
+        **nothing staged**, **a clean file**, **a binary blob holding a
+        credential** (skipped by the NUL rule) and **an all-`*.sops.*` index**
+        all printed `staged population: 0` and PASS. Every skip is correct;
+        none of them said so. "I read three blobs and they were clean" and "I
+        read nothing" were the same sentence.
+
+        Asserted as four distinct tuples: a change that collapses any two of
+        them fails here, not just one that breaks a single case.
+        """
+        def scan(build) -> tuple:
+            with tempfile.TemporaryDirectory() as t:
+                d = pathlib.Path(t)
+                self._repo(d)
+                build(d)
+                git(d, "add", "-fA")
+                r = dc._scan_index_for_secrets(str(d))
+            return (r.staged_paths, r.scanned, r.skipped_sops,
+                    r.skipped_binary, len(r.hits))
+
+        nothing = scan(lambda d: None)
+        clean = scan(lambda d: (d / "k.yaml").write_text("harmless: y\n"))
+        binary = scan(lambda d: (d / "b.bin").write_bytes(
+            b"\x00\x01\nttyd_credential: ops:hunter2xyz99\n\x00"))
+        sops = scan(lambda d: (d / "x.sops.yaml").write_text(
+            f"stringData:\n  cloudflare_token: {FAKE_TOKEN}\n"))
+
+        self.assertEqual(4, len({nothing, clean, binary, sops}),
+                         f"two are indistinguishable: {nothing=} {clean=} "
+                         f"{binary=} {sops=}")
+        self.assertEqual((0, 0, 0, 0, 0), nothing)
+        self.assertEqual((1, 1, 0, 0, 0), clean)
+        self.assertEqual((1, 0, 0, 1, 0), binary)
+        self.assertEqual((1, 0, 1, 0, 0), sops)
+
+    def test_nothing_staged_is_cannot_measure_at_the_cell_level(self):
+        """Nothing staged is not a clean staging area — it is the absence of
+        one, and `provision.py` only reaches this line after `git add`.
+
+        ⚠️ Cost, asserted rather than hidden: a re-run whose render is
+        byte-identical stages nothing and now reports UNKNOWN instead of green.
+        That is the direction to be wrong in when the next command publishes to
+        a public repository.
+        """
+        with tempfile.TemporaryDirectory() as t:
+            d = pathlib.Path(t)
+            self._repo(d)
+            rc, out = capture(dc.check_repo_hygiene, args_for(d, staged=True))
+        self.assertEqual(dc.UNKNOWN, rc, out)
+        self.assertIn("absence of one", out)
+
+    def test_a_directory_that_is_not_a_repo_is_cannot_measure(self):
+        """Condition 5 — `None`, never an empty list.
+
+        "Nothing staged is dirty" and "there is no index to read" produce the
+        same empty result otherwise, and only one of them is a pass.
+        """
+        with tempfile.TemporaryDirectory() as t:
+            self.assertIsNone(dc._scan_index_for_secrets(t))
+
+    def test_an_empty_index_is_measurable_and_empty(self):
+        """The other side of the three outcomes: a repo with nothing staged is
+        a measurement that found nothing, not a failure to measure."""
+        with tempfile.TemporaryDirectory() as t:
+            d = pathlib.Path(t)
+            self._repo(d)
+            empty = dc._scan_index_for_secrets(str(d))
+            self.assertEqual([], empty.hits)
+            self.assertEqual(0, empty.staged_paths)
 
 
 if __name__ == "__main__":
