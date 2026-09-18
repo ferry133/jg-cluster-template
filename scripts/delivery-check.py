@@ -370,6 +370,75 @@ _TYPE_EXPRESSION = re.compile(
     r'^(string|bytes|bool|int|number|null)\b|^!=|&\s*!=|=~\s*["\']|^\[|^\{'
 )
 
+# A placeholder, matched **whole** — jgct#175. The rule used to be
+# `"change" in v.lower()`, a substring test, so every value containing those
+# five letters anywhere was waved through:
+#
+#     ops:Exchange2026!                  exempt   <- a password, and `Exchange`
+#     exchange_rate_api_key_live_abc123  exempt   <- a live API key
+#
+# and both of those are what this scan exists to find. Anchoring is the whole
+# fix; the patterns are deliberately few, because a long list of shapes nobody
+# has seen is a second way to be silent.
+#
+# Applied to the value AND to the part after the last colon, because these
+# fields are written `user:password` (`ttyd_credential`) and only the password
+# half is ever the placeholder.
+#
+# Measured on `main` (dfa81b35) before changing anything: of the 10 values in
+# the tracked tree and the 15 distinct values in `--all` history that reach
+# this function, **zero are exempt because of the `change` substring** — they
+# are template syntax, CUE types, empty strings and `TOKEN_PLACEHOLDER`. So
+# tightening cannot change this repository's verdicts. That reading is what
+# made this safe to do, and `test_the_tracked_tree_keeps_exactly_the_shapes_it
+# _has_today` keeps it from going stale.
+_PLACEHOLDER_PATTERN = re.compile(
+    # `your[-_ ]…` was in the first draft and is not here: written as
+    # `your[-_ ][\w-]+` it exempts `your-real-password-abc123` too — the same
+    # unanchored-tail hole this issue is about, reintroduced one line below the
+    # fix. My own condition-3 case caught it. `<your-token>` stays exempt
+    # through the older `<` prefix rule, so nothing was lost by dropping it.
+    r"(?ix)^(?: change[-_ ]?me | replace[-_ ]?me | placeholder"
+    r" | token[-_ ]?placeholder | todo | tbd | none | example | x+ | \?+ )$"
+)
+
+
+def _is_placeholder(v: str) -> bool:
+    """⚠️ In the `user:password` space this rule **widens**, and that is written
+    down here because jgct#166's rule is that the thing worth fixing is a
+    narrowing nobody wrote down — this is its mirror.
+
+    Enumerated over 4 usernames (`admin`, `ttyd`, `user`, `ops`) × 12 words
+    (`none`, `example`, `xxx`, `todo`, `tbd`, `placeholder`, `changeme`,
+    `change-me`, `replaceme`, `replace-me`, `token_placeholder`, `?????`),
+    comparing this function against the version before jgct#175:
+
+        loosened (was flagged, now exempt):  38 of 48
+        tightened (was exempt, now flagged):  0 of 48
+        unchanged:                           10 of 48
+
+    `[bbf3d2]` measured 37 with his own word list; the direction is the same
+    and the two numbers differ only because the populations do — which is why
+    the list is spelled out above rather than described.
+
+    ⚠️ **How that 38 was taken, because it cannot be retaken from this tree**:
+    the pre-jgct#175 module was loaded alongside this one and both were asked
+    about every cell. Once this lands, that version is only in history, so the
+    test next to it pins the *direction* and the cells, not the number. A
+    number a test cannot rebuild is a record, not an assertion.
+
+    The widening is deliberate: `admin:none` and `ops:todo` are placeholders
+    that the old substring rule had no way to recognise, because it only knew
+    the five letters `change`. But deliberate is not the same as recorded, and
+    `test_the_colon_space_only_loosens_and_by_how_much` keeps the number from
+    drifting silently.
+    """
+    candidates = [v.strip().strip("\"'")]
+    if ":" in candidates[0]:
+        candidates.append(candidates[0].rsplit(":", 1)[-1])
+    return any(_PLACEHOLDER_PATTERN.match(c) for c in candidates)
+
+
 # makejinja (`#{…}#`, `#%…%#`), Jinja/Helm (`{{…}}`, `{%…%}`). `${…}` and `<…>`
 # are handled by _is_real_credential's older prefix rules.
 _TEMPLATE_SYNTAX = re.compile(r"#\{|\}#|\{\{|\}\}|\{%|%\}")
@@ -399,7 +468,7 @@ def _is_real_credential(value: str) -> bool:
         return False
     if v.startswith(("ENC[", "ENC(")):           # SOPS ciphertext — meant to be here
         return False
-    if "change" in v.lower() or set(v.lower()) == {"x"}:
+    if _is_placeholder(v):
         return False
     if _TEMPLATE_SYNTAX.search(v):               # rendered later, not a value
         return False
