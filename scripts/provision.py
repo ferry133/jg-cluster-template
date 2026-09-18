@@ -1072,9 +1072,14 @@ class ConfigurePushStep(Step):
             ["git", "-C", ctx["dir"], "add", "kubernetes"],
             # jgct#178 — between `add` and `commit`, because this is the only
             # moment the thing about to be published exists as an object git
-            # can be asked about. The `--deep` call above scans `--all`
-            # history; the tree staged here joins that history one command
-            # later, and by then `push` has already run.
+            # can be asked about while there is still a step left to stop at.
+            # The `--deep` call above scans `--all` history, and the tree
+            # staged here is not on any ref yet; `commit` puts it there and
+            # `push` is the very next command. **So a scan placed after
+            # `commit` would not be too late for `push` — it would be too late
+            # for the history**: the content is permanent by then, and
+            # untracking does not unpublish. That is why this sits here and not
+            # one line down.
             ["scripts/delivery-check.py", "repo-hygiene", "--dir", ctx["dir"],
              "--staged"],
             ["git", "-C", ctx["dir"], "commit", "-m", "chore: rendered cluster configuration"],

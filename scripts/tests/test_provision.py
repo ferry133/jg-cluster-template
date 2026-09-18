@@ -264,9 +264,20 @@ class TestHistoryLeakGuard(unittest.TestCase):
         """
         cmds = prov.ConfigurePushStep().create({"dir": "/tmp/x"})
         joined = [" ".join(c) for c in cmds]
-        add = next(i for i, c in enumerate(joined) if c.startswith("git -C /tmp/x add"))
-        commit = next(i for i, c in enumerate(joined) if "commit" in c)
-        staged = next(i for i, c in enumerate(joined) if "--staged" in c)
+        # `next(..., None)` and an explicit assert, not a bare `next()`:
+        # removing the call made this raise StopIteration, which is an
+        # *errored* test, not a failing one. A guard whose red says
+        # "StopIteration" names nothing — the reader has to open the file to
+        # learn what was being checked.
+        add = next((i for i, c in enumerate(joined)
+                    if c.startswith("git -C /tmp/x add")), None)
+        commit = next((i for i, c in enumerate(joined) if "commit" in c), None)
+        staged = next((i for i, c in enumerate(joined) if "--staged" in c), None)
+        self.assertIsNotNone(add, "the step must `git add` the rendered tree")
+        self.assertIsNotNone(commit, "the step must commit it")
+        self.assertIsNotNone(
+            staged, "the step must call `repo-hygiene --staged` — without it "
+                    "the cell in delivery-check.py is reachable by nobody")
         self.assertLess(add, staged, "the scan must come after `git add`")
         self.assertLess(staged, commit, "and before `git commit`")
 

@@ -310,13 +310,27 @@ def check_repo_hygiene(args) -> int:
             huh("could not read the index — this is not a measurement of a "
                 "clean staging area, it is the absence of one")
             return UNKNOWN
-        print(f"      staged population: {len(staged)} credential-shaped "
-              f"field(s) in the index (`*.sops.*` paths excluded by rule, not "
-              f"by their contents happening to be ciphertext)")
-        if staged:
+        print(f"      staged population: {staged.staged_paths} path(s) in the "
+              f"index, {staged.scanned} blob(s) read; skipped "
+              f"{staged.skipped_sops} `*.sops.*` (by path — see the note on "
+              f"_SOPS_PATH), {staged.skipped_binary} binary (NUL), "
+              f"{staged.skipped_deleted} deletion(s).")
+        if staged.staged_paths == 0:
+            # Not a pass. `provision.py` reaches this line only after
+            # `git add kubernetes`, so an empty index there means step 1
+            # rendered nothing — and this check has nothing to say about a tree
+            # that does not exist. Reporting PASS would answer a question
+            # nobody could ask. Cost, stated because it is real: a re-run that
+            # renders byte-identical output stages nothing and now reports
+            # UNKNOWN rather than green. That is the direction to be wrong in
+            # when the next command publishes to a public repo.
+            huh("nothing is staged — this is not a clean staging area, it is "
+                "the absence of one")
+            return UNKNOWN
+        if staged.hits:
             bad(f"credential-shaped content staged for the next commit "
-                f"({len(staged)} field(s))")
-            for path, field, sha in staged[:10]:
+                f"({len(staged.hits)} field(s))")
+            for path, field, sha in staged.hits[:10]:
                 print(f"      {path}  ({field}, {sha[:12]})")
             failed = True
         else:
@@ -645,7 +659,29 @@ def _remote_coverage(d: str) -> _RemoteCoverage | None:
 _SOPS_PATH = re.compile(r"\.sops\.[^/]*$")
 
 
-def _scan_index_for_secrets(d: str) -> list[tuple[str, str, str]] | None:
+class _IndexScan(typing.NamedTuple):
+    """What the staged scan looked at — jgct#178, second round.
+
+    The first version printed `len(hits)` under the label `population`, and
+    four different situations therefore printed the same line and the same
+    PASS: nothing staged at all; a clean file; a binary blob (skipped by the
+    NUL rule from jgct#166) that contained a credential; and a staging area
+    that was entirely `*.sops.*`. **Every one of those skips is correct, and
+    none of them said so** — "I read three blobs and they were clean" and "I
+    read nothing" were the same sentence.
+
+    That is the mistake jgct#171 exists to prevent, made with jgct#171's own
+    vocabulary: `population` is what was examined, never what was found.
+    """
+    hits: list[tuple[str, str, str]]
+    staged_paths: int
+    scanned: int
+    skipped_sops: int
+    skipped_binary: int
+    skipped_deleted: int
+
+
+def _scan_index_for_secrets(d: str) -> _IndexScan | None:
     """Credential-shaped content in the **staged** tree. `None` = cannot measure.
 
     jgct#178: `repo-hygiene`'s other cells all ask about refs — `ls-files`,
@@ -676,6 +712,7 @@ def _scan_index_for_secrets(d: str) -> list[tuple[str, str, str]] | None:
     if raw.returncode != 0:
         return None
     staged: list[tuple[str, str]] = []
+    staged_paths = skipped_sops = skipped_deleted = skipped_binary = 0
     for line in raw.stdout.splitlines():
         if not line.startswith(":"):
             continue
@@ -684,13 +721,16 @@ def _scan_index_for_secrets(d: str) -> list[tuple[str, str, str]] | None:
         if len(parts) < 5:
             continue
         new_sha = parts[3]
+        staged_paths += 1
         if set(new_sha) == {"0"}:          # staged deletion — nothing to read
+            skipped_deleted += 1
             continue
         if _SOPS_PATH.search(path):
+            skipped_sops += 1
             continue
         staged.append((new_sha, path))
     if not staged:
-        return []
+        return _IndexScan([], staged_paths, 0, skipped_sops, 0, skipped_deleted)
 
     batch = subprocess.run(
         ["git", "-C", d, "cat-file", "--batch"],
@@ -701,6 +741,7 @@ def _scan_index_for_secrets(d: str) -> list[tuple[str, str, str]] | None:
         return None
     path_of = dict(staged)
     hits: list[tuple[str, str, str]] = []
+    scanned = 0
     buf, pos = batch.stdout, 0
     while pos < len(buf):
         nl = buf.find(b"\n", pos)
@@ -713,10 +754,13 @@ def _scan_index_for_secrets(d: str) -> list[tuple[str, str, str]] | None:
         sha, otype, size = header[0].decode(), header[1], int(header[2])
         payload, pos = buf[pos:pos + size], pos + size + 1
         if otype != b"blob" or b"\0" in payload:
+            skipped_binary += 1
             continue
+        scanned += 1
         for field in _scan_blob_for_secrets(payload.decode("utf-8", errors="replace")):
             hits.append((path_of.get(sha, sha), field, sha))
-    return hits
+    return _IndexScan(hits, staged_paths, scanned, skipped_sops, skipped_binary,
+                      skipped_deleted)
 
 
 def _scan_history_for_secrets(d: str) -> list[tuple[str, str]]:
