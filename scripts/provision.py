@@ -1070,6 +1070,13 @@ class ConfigurePushStep(Step):
             ["task", "configure", "--yes"],
             ["scripts/delivery-check.py", "repo-hygiene", "--dir", ctx["dir"], "--deep"],
             ["git", "-C", ctx["dir"], "add", "kubernetes"],
+            # jgct#178 — between `add` and `commit`, because this is the only
+            # moment the thing about to be published exists as an object git
+            # can be asked about. The `--deep` call above scans `--all`
+            # history; the tree staged here joins that history one command
+            # later, and by then `push` has already run.
+            ["scripts/delivery-check.py", "repo-hygiene", "--dir", ctx["dir"],
+             "--staged"],
             ["git", "-C", ctx["dir"], "commit", "-m", "chore: rendered cluster configuration"],
             ["git", "-C", ctx["dir"], "push"],
         ]
