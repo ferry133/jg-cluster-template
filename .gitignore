@@ -66,7 +66,7 @@ __pycache__/
 # that matches a tracked file breaks nothing today — tracking wins — which is
 # exactly why it would have sat here until someone re-added the file.
 !*cluster.yaml.j2
-nodes.yaml*
+nodes.yaml
 
 # …and anything DERIVED from cluster.yaml carries cluster.yaml's credentials.
 # `.merged-config.yaml` is cluster.yaml unified with nodes.yaml, written by
