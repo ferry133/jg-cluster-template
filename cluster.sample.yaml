@@ -450,11 +450,17 @@ cluster_name: "xxxxxx"
 # this cluster's own age key before upload, so the destination operator cannot
 # read them — decryption travels with age.key at handover.
 #
-# ⚠️ DO NOT TYPE THESE FOUR BY HAND. All four values — including the endpoint —
-# come from fleet-ops' `backup-provision` step, which creates the bucket and the
-# service account and hands back what to paste. There is more than one store,
-# and which one this cluster gets is decided at provisioning time from whether
-# the cluster's own network can reach the first choice. Guessing a host here
+# ⚠️ DO NOT FILL THESE FOUR IN BY HAND — AND DO NOT COPY THEM FROM ANOTHER
+# CLUSTER. fleet-ops' `backup-provision` step creates the bucket and a
+# bucket-scoped service account and then WRITES all four lines into this file
+# itself, endpoint included; it prints the two non-secret values and never a
+# credential. So the operator's job here is to leave these four alone.
+#
+# Copying them from a predecessor is the failure this replaced: one cluster
+# inherited another's key (scoped to the wrong bucket) plus a LAN endpoint and
+# had zero working backups. There is more than one store, and which one a
+# cluster gets is decided during provisioning — by whether the cluster's own
+# network can resolve the first choice, not by geography. Guessing a host here
 # produces a cluster that renders, deploys, and never backs anything up:
 # `aws s3 cp` fails inside a CronJob whose failure nobody is watching.
 #
