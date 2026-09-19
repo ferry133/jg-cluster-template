@@ -450,19 +450,25 @@ cluster_name: "xxxxxx"
 # this cluster's own age key before upload, so the destination operator cannot
 # read them — decryption travels with age.key at handover.
 #
-# The DESTINATION HOST is not a setting (jgct#180, ferry133's ruling): it is
-# fixed at https://minio.janncot.com by the template. There is no
-# backup_r2_endpoint field any more, and putting one here makes `task configure`
-# fail with `backup_r2_endpoint: field not allowed` rather than ignoring it.
-# ⚠️ That host answers only from inside the network the appliance sits in — it
-# does not resolve on a public resolver. A cluster whose network cannot reach it
-# has no off-site backup; raise that before delivery rather than after.
+# ⚠️ DO NOT FILL THESE FOUR IN BY HAND — AND DO NOT COPY THEM FROM ANOTHER
+# CLUSTER. fleet-ops' `backup-provision` step creates the bucket and a
+# bucket-scoped service account and then WRITES all four lines into this file
+# itself, endpoint included; it prints the two non-secret values and never a
+# credential. So the operator's job here is to leave these four alone.
 #
-# The bucket name and the two credentials still vary per cluster. Ask whoever
-# operates that MinIO for them — they are not self-service, and the old line
-# here told you to create a Cloudflare R2 bucket, which this fleet has never
-# used for any cluster.
+# Copying them from a predecessor is the failure this replaced: one cluster
+# inherited another's key (scoped to the wrong bucket) plus a LAN endpoint and
+# had zero working backups. There is more than one store, and which one a
+# cluster gets is decided during provisioning — by whether the cluster's own
+# network can resolve the first choice, not by geography. Guessing a host here
+# produces a cluster that renders, deploys, and never backs anything up:
+# `aws s3 cp` fails inside a CronJob whose failure nobody is watching.
+#
+# (The line that used to sit here told you to create a Cloudflare R2 bucket at
+# dash.cloudflare.com. This fleet has never used R2 for any cluster; removed in
+# jgct#180 and not coming back.)
 # backup_r2_bucket: ""
+# backup_r2_endpoint: ""
 # backup_r2_access_key_id: ""
 # backup_r2_secret_access_key: ""
 

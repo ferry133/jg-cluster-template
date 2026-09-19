@@ -409,12 +409,13 @@ import (
 	// so losing the disk loses the database and the agent's accumulated context.
 	// Required there rather than opt-in: rendering a cluster whose data is
 	// unprotected should not be possible.
-	// No `backup_r2_endpoint` here: fixed in the template since jgct#180, so
-	// the field is not merely optional — it is rejected. `#Config` is closed, so
-	// a cluster.yaml that still carries it fails with `field not allowed` and
-	// names itself, rather than being silently ignored. That is the point: an
-	// ignored setting reads exactly like an honoured one.
+	// `backup_r2_endpoint` is declared again (jgct#182). jgct#180 made it a
+	// constant in the template and this block rejected it with `field not
+	// allowed`; that lasted two hours. There are two stores, and which one a
+	// cluster uses is decided per site — so the host cannot live in the
+	// template, and this field is where it arrives.
 	backup_r2_bucket?: string & !=""
+	backup_r2_endpoint?: string & !=""
 	backup_r2_access_key_id?: string & !=""
 	backup_r2_secret_access_key?: string & !=""
 
@@ -436,6 +437,7 @@ import (
 		// `true` nor `bool` plus `if … == false { _|_ }` (jgct#162).
 		age_key_escrowed: bool & matchN(1, [true])
 		backup_r2_bucket: string & !=""
+		backup_r2_endpoint: string & !=""
 		backup_r2_access_key_id: string & !=""
 		backup_r2_secret_access_key: string & !=""
 	}
