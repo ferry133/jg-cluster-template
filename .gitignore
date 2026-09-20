@@ -51,8 +51,21 @@ __pycache__/
 # exposure is not this customer's — it is every cluster's.
 # See docs/operations/provision-customer-cluster.md step 3 — in ferry133/fleet-ops
 # since 2026-08-23, not in this repo.
-cluster.yaml
-*cluster.yaml
+#
+# Trailing `*` on both, because `*cluster.yaml` covered only PREFIX variants:
+# `cluster.yaml.bak`, `.orig` and `cluster.yaml.20260919` were all committable,
+# and a suffix is what a hand-made backup actually looks like (`cp` to `.bak`,
+# an editor's `.orig`, a date appended). Measured on jgct#184 with
+# `_ignore_text_covers`, not with bare `check-ignore` — that one answers about
+# the workstation running it, which is also the workstation doing the checking.
+*cluster.yaml*
+# …except the Talos patch TEMPLATE, which is tracked and holds no values.
+# ⚠️ This negation exists because the wide rule above caught it: asking every
+# one of the 89 tracked files (not a hand-picked list) turned up exactly one
+# collision, and a hand-picked list of seven had missed it. A gitignore rule
+# that matches a tracked file breaks nothing today — tracking wins — which is
+# exactly why it would have sat here until someone re-added the file.
+!*cluster.yaml.j2
 nodes.yaml
 
 # …and anything DERIVED from cluster.yaml carries cluster.yaml's credentials.
