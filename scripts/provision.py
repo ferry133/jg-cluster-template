@@ -1352,8 +1352,15 @@ def cmd_derive(args) -> int:
     else:
         print()
         print("Remaining LB/VIP addresses are a choice about the customer's LAN,")
-        print("not a fact Omni reports. Pick four unused addresses in the CIDR")
-        print("above and record which, on the ticket.")
+        print("not a fact Omni reports. Pick THREE unused addresses in the CIDR")
+        print("above -- cluster_gateway_addr, cluster_dns_gateway_addr and")
+        print("cloudflare_gateway_addr -- and record which, on the ticket.")
+        print()
+        print("NOT cluster_api_addr (jgct#188): this command only speaks to")
+        print("Omni, so the cluster it is describing is on provisioning_path")
+        print("omni, where the API is reached through the Omni proxy and that")
+        print("field has no consumer. The schema stopped requiring it there.")
+        print("It is still accepted if your cluster.yaml already has one.")
     return DONE
 
 

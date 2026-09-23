@@ -1057,6 +1057,48 @@ class TestDeriveGatewayKey(unittest.TestCase):
 
     NET = {"addresses": ["10.9.9.62/24"]}
 
+    def test_the_address_guidance_asks_for_three_not_four(self):
+        """#188 condition 4 — the sentence the operator acts on.
+
+        `cmd_derive` speaks to Omni and nothing else, so the cluster it is
+        describing is always on `provisioning_path: omni` — where, since #188,
+        `cluster_api_addr` has no consumer and the schema no longer asks for
+        it. The text still said "Pick four unused addresses".
+
+        ⚠️ Asserted here rather than left to review because of the 2026-09-16
+        ruling: **when the words are what an operator acts from, they are the
+        product**. A defect that moves from the schema onto the operator's
+        screen has not been fixed — it has been relocated to where it looks
+        more authoritative, since the schema would at least have refused.
+        """
+        rc, out = self._derive({**self.NET, "defaultgateways": ["10.9.9.1"]})
+        self.assertNotIn("four unused addresses", out)
+        self.assertIn("THREE unused addresses", out)
+        # And it names which three, so "three" is not a number to guess at.
+        for field in ("cluster_gateway_addr", "cluster_dns_gateway_addr",
+                      "cloudflare_gateway_addr"):
+            with self.subTest(field=field):
+                self.assertIn(field, out)
+        # The one that is no longer asked for is named too, with its reason —
+        # otherwise the next operator re-adds it from an older ticket.
+        self.assertIn("NOT cluster_api_addr", out)
+
+    def test_the_appliance_branch_is_untouched_by_that(self):
+        """Positive control for the case above: the appliance text still
+        rejects all four, so the change is scoped to the non-appliance branch
+        and not a global rewrite of this command's output."""
+        args = dict(self.ARGS, profile="appliance")
+        out = io.StringIO()
+        with mock.patch.object(prov, "omnictl_json",
+                               return_value=([{"spec": {"network": {
+                                   **self.NET, "defaultgateways": ["10.9.9.1"]}}}], "")), \
+             contextlib.redirect_stdout(out):
+            prov.cmd_derive(types.SimpleNamespace(**args))
+        text = out.getvalue()
+        self.assertIn("profile=appliance", text)
+        self.assertIn("cluster_api_addr", text)
+        self.assertNotIn("THREE unused addresses", text)
+
     def test_reads_the_lower_case_key_omnictl_actually_emits(self):
         rc, out = self._derive({**self.NET, "defaultgateways": ["10.9.9.1"]})
         self.assertIn("node_default_gateway: 10.9.9.1", out)

@@ -35,6 +35,10 @@ ROOT = Path(__file__).resolve().parents[2]
 
 # Exit 0 in a bare checkout. Measured, not assumed.
 RUN = [
+    # Needs only `cue`, which mise installs for this job — jgct#188. It builds
+    # its fixtures in a temp dir and never reads a real cluster.yaml, because
+    # `cue vet` echoes the values it rejects.
+    "check-api-addr-scope.py",
     "check-claude-config-storage-default.py",
     "check-claudecode-postgres-derive.py",
     "check-claudecode-factory-auth.py",
