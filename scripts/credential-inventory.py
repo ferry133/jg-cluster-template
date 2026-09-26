@@ -160,6 +160,101 @@ KNOWN: dict[str, tuple[str, str, str, str]] = {
         "Read of the fleet's machine and cluster state",
         "`omnictl serviceaccount` — destroy and recreate, update the value",
     ),
+    # ── classified 2026-09-26 (`FO-runbook [5fe39a]`). Consumers were MEASURED by
+    # grepping jg-base `origin/main` for each rendered variable — two of them have
+    # none, and that is recorded rather than smoothed over. Where a third-party
+    # console path is not something this fleet has measured, the row says so
+    # instead of inventing a menu path.
+    "postgres_password": (
+        "The `claudecode/postgres` base app's DB password (the agent's explicit memory)",
+        "That one cluster's postgres — base/claudecode/postgres deployment.yaml, migration.yaml, secret.yaml",
+        "Read/write the agent's explicit memory (episodes, knowledge, working_memory) and anything later put in that database",
+        "⚠️ Not a value swap: the password is applied by initdb on the PVC's FIRST start, so changing it alone does not take. Dump, change, recreate, restore (`fleet-ops docs/operations/backup-restore.md`). Fleet side: put the new value in cluster.yaml, `task configure --yes`, commit, push, `task reconcile`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop",
+    ),
+    "claudecode_oauth2_cookie_secret": (
+        "oauth2-proxy's cookie signing/encryption key in front of every terminal",
+        "Every claude-code instance on the cluster, plus `factory` where selected — base/claudecode/claude-code/app/secret.yaml, extras/factory/factory",
+        "Forge a session cookie and reach an authenticated terminal WITHOUT completing the OIDC flow — the Auth0 client secret's blast radius, reached more cheaply",
+        "Generate a fresh 32-byte value; every live session is invalidated, which is the point. Fleet side: put the new value in cluster.yaml, `task configure --yes`, commit, push, `task reconcile`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop",
+    ),
+    "line_channel_access_token": (
+        "LINE Messaging API — the bot posts and replies with this",
+        "One LINE channel — extras/default/linebot, extras/default/trello-notifier",
+        "Send messages as the customer's bot to everyone who added it, and read inbound webhook content",
+        "Reissue in the LINE Developers console for that channel. ⚠️ This fleet has NOT measured that console's current menu path — do not follow a remembered one. Fleet side: put the new value in cluster.yaml, `task configure --yes`, commit, push, `task reconcile`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop",
+    ),
+    "line_channel_secret": (
+        "LINE Messaging API — verifies X-Line-Signature on inbound webhooks",
+        "The same LINE channel — extras/default/linebot",
+        "Forge webhook calls the bot accepts as coming from LINE",
+        "Reissue alongside the access token — ⚠️ they are a pair, and rotating one alone leaves inbound verification on the old value. Fleet side: put the new value in cluster.yaml, `task configure --yes`, commit, push, `task reconcile`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop",
+    ),
+    "trello_api_key": (
+        "Trello REST API key for the board-sync and notifier jobs",
+        "⚠️ The Trello ACCOUNT the key belongs to, not one board — extras/default/linebot, extras/default/trello-notifier",
+        "With the token below: read and write every board that account can see",
+        "Regenerate at Trello's developer API-key page. ⚠️ The token below is issued against this key and stops working when it changes — rotate both together. Fleet side: put the new value in cluster.yaml, `task configure --yes`, commit, push, `task reconcile`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop",
+    ),
+    "trello_api_token": (
+        "Trello REST API token authorising the key above against one account",
+        "Whatever scope was granted at issue time — read it from Trello, not from this row",
+        "Act as that Trello account within the granted scope",
+        "Revoke in Trello account settings, issue a new one against the current key, rotate with the key. Fleet side: put the new value in cluster.yaml, `task configure --yes`, commit, push, `task reconcile`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop",
+    ),
+    "synophoto_flask_secret_key": (
+        "Flask session signing key for the synophoto extra",
+        "That one app — extras/default/synophoto/app/secret.yaml",
+        "Forge a signed session cookie for synophoto",
+        "Generate a fresh random value; live sessions are invalidated. Fleet side: put the new value in cluster.yaml, `task configure --yes`, commit, push, `task reconcile`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop",
+    ),
+    "synophoto_auth0_client_secret": (
+        "⚠️ NO CONSUMER FOUND (measured 2026-09-26): this name appears nowhere in jg-base `origin/main` in any case, while the sibling `synophoto_flask_secret_key` IS found by the same query in README.md and the app's secret.yaml (positive control)",
+        "Unknown — nothing renders it, so it addresses nothing in this fleet",
+        "Whatever the Auth0 application it came from still permits. ⚠️ A credential with no consumer cannot be needed; it can only be leaked",
+        "⛔ REMOVAL, not rotation, and in this order: confirm nothing outside jg-base reads it, revoke it at Auth0, THEN delete the line — deleting first leaves a live secret nobody tracks. Fleet side after deleting: put the new value in cluster.yaml, `task configure --yes`, commit, push, `task reconcile`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop",
+    ),
+    "synophoto_nas_password": (
+        "⚠️ NO CONSUMER FOUND — same measurement and same positive control as `synophoto_auth0_client_secret`",
+        "Unknown; the name suggests a Synology NAS account, but nothing renders it",
+        "If it is a live NAS account: that account's share access. Unverified",
+        "⛔ REMOVAL, not rotation: identify the account, change that account's password at the NAS, then delete the line. Fleet side after deleting: put the new value in cluster.yaml, `task configure --yes`, commit, push, `task reconcile`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop",
+    ),
+    "freepbx_mysql_password": (
+        "FreePBX's application DB user password",
+        "The freepbx extra's MariaDB on that cluster — extras/freepbx/freepbx/app/secret.yaml",
+        "Read/write the PBX's configuration and call records: extensions, trunks, voicemail, CDR",
+        "⚠️ Same initdb shape as `postgres_password` — a value change alone does not take. Change it inside MariaDB and in cluster.yaml together. Fleet side: put the new value in cluster.yaml, `task configure --yes`, commit, push, `task reconcile`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop",
+    ),
+    "freepbx_mysql_root_password": (
+        "MariaDB root password for the freepbx extra",
+        "⚠️ That MariaDB server entirely, not just the PBX schema",
+        "Full control of the database server, every schema in it, and the ability to grant new users",
+        "As above, and ⛔ rotate it WITH the application password, never alone — a root rotation that leaves the app password stale takes the PBX down without making anything safer. Fleet side: put the new value in cluster.yaml, `task configure --yes`, commit, push, `task reconcile`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop",
+    ),
+    "factory_github_token": (
+        "The factory app's GitHub PAT — it creates customer repos from the template",
+        "⚠️ Every repo the PAT's account can reach, not one customer — extras/factory/factory credentials-secret.yaml, helmrelease.yaml",
+        "Create, read and modify repositories as that account — including the TEMPLATE, from which every future customer cluster is built",
+        "Revoke and reissue in GitHub developer settings, scoped to what `jg-base .../extras/factory/factory/README.md` states it needs. Fleet side: put the new value in cluster.yaml, `task configure --yes`, commit, push, `task reconcile`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop",
+    ),
+    "factory_omni_sa_key": (
+        "The factory app's Omni service-account key",
+        "⚠️ The whole Omni instance — every cluster it manages, not one",
+        "Create, modify and DESTROY any Omni-managed cluster in the fleet",
+        "Mint a replacement with `omnictl serviceaccount create`, put it in cluster.yaml, THEN `omnictl serviceaccount destroy` the old one — ⛔ a rotation that only adds leaves the old key live. Fleet side: put the new value in cluster.yaml, `task configure --yes`, commit, push, `task reconcile`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop",
+    ),
+    "factory_fleet_ops_deploy_key": (
+        "Deploy key the factory app uses against the fleet-ops repo",
+        "`ferry133/fleet-ops` (private), at whatever access the key was added with",
+        "Read — and if it was added with write access, modify — the fleet's routing decisions, runbooks and skills",
+        "Remove it in that repo's Settings → Deploy keys and add a fresh pair. ⚠️ Set the write checkbox deliberately rather than copying the old key's setting. Fleet side: put the new value in cluster.yaml, `task configure --yes`, commit, push, `task reconcile`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop",
+    ),
+    "omni_gpg_key": (
+        "Omni's own GPG key, used by the Omni deployment on the factory cluster",
+        "The Omni instance's stored secrets — extras/omni/omni helmrelease.yaml and secret.yaml, extras/factory/factory",
+        "Decrypt what Omni encrypted with it: cluster secrets and machine configuration Omni holds",
+        "⛔ Not an ordinary rotation. Omni re-encrypts with the new key while the old one is still needed to read existing data, so this is a migration with a restore path, not a swap — do not attempt it from this row alone. Fleet side once the Omni-side procedure exists: put the new value in cluster.yaml, `task configure --yes`, commit, push, `task reconcile`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop",
+    ),
 }
 
 # Credential-bearing material that is NOT a cluster.yaml field. Listed because
