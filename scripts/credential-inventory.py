@@ -160,6 +160,12 @@ KNOWN: dict[str, tuple[str, str, str, str]] = {
         "Read of the fleet's machine and cluster state",
         "`omnictl serviceaccount` — destroy and recreate, update the value",
     ),
+    "talos_operator_config": (
+        "The talos-mcp sidecar's os:operator credential (jg-base im-onsite-operator-tools): direct-LAN reads when SideroLink is down, and the gated graceful `reboot_node`",
+        "This one cluster's Talos API at role ceiling os:operator — reboot and shutdown; reset, apply-config, upgrade and certificate minting are refused by the nodes themselves",
+        "Graceful reboot or shutdown of any node of this cluster from anywhere on its LAN, for a year. No data read beyond what the os:reader credential already gives",
+        "⚠️ Omni cannot revoke it: deleting the value, the file or the pod leaves it live. `fleet-ops talos-operator-credential rotate` — `omnictl cluster -n <cluster> secret rotate talos-ca`, prove the old one is rejected, re-mint, `task configure --yes`, commit, push, restart `im`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop. Expiry (one year) is read from the certificate by the sidecar and by `verify`, not recorded here",
+    ),
     # ── classified 2026-09-26 (`FO-runbook [5fe39a]`). Consumers were MEASURED by
     # grepping jg-base `origin/main` for each rendered variable — two of them have
     # none, and that is recorded rather than smoothed over. Where a third-party
@@ -308,9 +314,13 @@ EXCLUDED = [
      "Held by factory, not by any cluster. It is in "
      "`jg-base .../factory/factory/README.md`, and a second copy here would be "
      "the copy that goes stale"),
-    ("Talos client certificate / talosconfig",
-     "Not issued per delivery today. The node-level handover path is "
-     "`factory-agent` 6.1d, which is still a sentence rather than a procedure"),
+    ("Talos client certificate / talosconfig at os:admin",
+     "Never issued: Omni grants no identity os:admin (insideman, measured). "
+     "The two talosconfigs a cluster DOES hold are rows above — "
+     "`talos_mcp_sa_key` (the os:reader one carries no key of its own) and "
+     "`talos_operator_config` (os:operator, since im-onsite-operator-tools). "
+     "Before 2026-10-13 this row read 'not issued per delivery today'; the "
+     "node-level handover path (`factory-agent` 6.1d) is still a sentence"),
 ]
 
 CLASSIFIED_ELSEWHERE = {c[0] for c in EXCLUDED}

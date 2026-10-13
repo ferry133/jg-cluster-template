@@ -67,7 +67,8 @@ def main() -> int:
                  token_env="NO_TOKEN_HERE", tunnel_credentials="t.json",
                  auth0_json="auth0.json", resolver=None, trigger=False,
                  expect_addr=None, machine_uuid=None, node_token_json=None,
-                 join_token_list=None, expect_usecounts=None)
+                 join_token_list=None, expect_usecounts=None,
+                 cluster_json=None)
         d.update(kw)
         return types.SimpleNamespace(**d)
 

@@ -717,6 +717,28 @@ cluster_name: "xxxxxx"
 #                                 # with talos_mcp_sa_key -- the render refuses one
 #                                 # without the other. jg-base daily-check warns 30
 #                                 # days before it (row 24, fleet-ops#11)
+#
+# Optional SECOND credential for the same sidecar: an os:operator talosconfig
+# that reaches the nodes DIRECTLY on the LAN (jg-base im-onsite-operator-tools).
+# With it the agent can still read a node whose SideroLink to Omni is down, and
+# can graceful-reboot a node of THIS cluster -- after the person at the
+# terminal confirms, every time. Without it the sidecar stays read-only,
+# exactly as above. Nothing else changes either way.
+#
+# ⚠️ Do NOT paste a value here by hand, and do not run omnictl for it yourself.
+# It is minted by the operator company's skill (fleet-ops
+# `talos-operator-credential mint`), which writes the value into this file
+# directly, prints only the roles / endpoints / expiry, and refuses to mint a
+# second one while the current one is still valid. What you should know about
+# the one it mints: it is an Omni "break-glass" credential, so Omni marks this
+# cluster `tainted-by-break-glass` (expected on every delivered cluster, not a
+# fault); it is valid for ONE YEAR and the sidecar warns 30 days out; and Omni
+# cannot revoke it -- the only revocation is a Talos CA rotation, which the
+# same skill performs (`rotate`) before minting the replacement.
+# talos_operator_config: |
+#   context: ...
+#   contexts:
+#     ...
 
 
 # ── extras/factory/factory — provisioning credentials (one cluster only) ──────
