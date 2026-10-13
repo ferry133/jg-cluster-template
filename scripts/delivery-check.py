@@ -43,6 +43,7 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import datetime
 import importlib.util
 import io
 import json
@@ -2467,6 +2468,164 @@ def cell_arrived_on_own_identity(args) -> tuple[int, str, str | None]:
         f"call"), NEED_HUMAN
 
 
+# ---- cell 14: the os:operator credential (jg-base im-onsite-operator-tools)
+
+TAINT_LABEL = "omni.sidero.dev/tainted-by-break-glass"
+_CRT_LINE = re.compile(r"^\s*crt:\s*([A-Za-z0-9+/=]+)\s*$", re.M)
+_X509_DATE = "%b %d %H:%M:%S %Y GMT"
+
+
+def _utcnow() -> datetime.datetime:
+    """The one clock cell 14 reads; the tests replace it."""
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _operator_cert_facts(root: pathlib.Path):
+    """(facts, reason, kind) for cluster.yaml's `talos_operator_config`.
+
+    facts is {"roles": [...], "not_before": datetime, "not_after": datetime};
+    (None, None, None) means the field is absent, which is a state and not an
+    error. reason with a kind is "could not read"; reason without one is "the
+    value is not a talosconfig".
+
+    Reads the client CERTIFICATE only, through `openssl x509` -- public
+    material. The `key:` beside it is never decoded, and nothing here returns
+    the config, the cert or the key: the same rule `_cert_binding` follows for
+    cloudflared's cert (parse, keep two fields, drop the object), because this
+    output gets pasted into handover notes.
+    """
+    raw, err = _merged_config(root)
+    if err:
+        return None, err, NEED_TOOL
+    cfg = raw.get("talos_operator_config")
+    if cfg in (None, ""):
+        return None, None, None
+    if not isinstance(cfg, str):
+        return None, "talos_operator_config is not a string — not a talosconfig", None
+    crts = _CRT_LINE.findall(cfg)
+    if not crts:
+        return None, ("talos_operator_config has no `crt:` line — not a talosconfig "
+                      "(the skill writes the file omnictl produced, verbatim)"), None
+    if not shutil.which("openssl"):
+        return None, "openssl is not on PATH — cannot read the certificate's dates", NEED_TOOL
+    try:
+        pem = base64.b64decode(crts[0], validate=True).decode("ascii")
+    except Exception:  # noqa: BLE001 — not a finding about the cluster
+        return None, "the `crt:` value did not decode to a PEM certificate", None
+    r = run(["openssl", "x509", "-noout", "-subject", "-nameopt", "RFC2253",
+             "-startdate", "-enddate"], input=pem)
+    if r.returncode != 0:
+        return None, f"openssl could not parse the certificate: {r.stderr.strip()[:120]}", None
+    fields = dict(ln.split("=", 1) for ln in r.stdout.splitlines() if "=" in ln)
+    try:
+        nb = datetime.datetime.strptime(fields["notBefore"].strip(), _X509_DATE)
+        na = datetime.datetime.strptime(fields["notAfter"].strip(), _X509_DATE)
+    except (KeyError, ValueError) as e:
+        return None, (f"could not read the certificate's dates ({type(e).__name__}: {e}) "
+                      f"— the openssl output shape changed"), NEED_TOOL
+    utc = datetime.timezone.utc
+    roles = [part[2:] for part in fields.get("subject", "").split(",")
+             if part.strip().startswith("O=")]
+    return ({"roles": roles, "not_before": nb.replace(tzinfo=utc),
+             "not_after": na.replace(tzinfo=utc)}, None, None)
+
+
+def _omni_taint(args, cluster: str) -> tuple[bool | None, str]:
+    """(tainted, sentence). tainted is None when Omni could not be read here.
+
+    Read for context only -- see cell_operator_credential for why the label
+    never decides the verdict. Fed from `--cluster-json` (a captured
+    `omnictl get clusters <name> -o json`) when given, the way cell 1 reads
+    its captures.
+    """
+    if not cluster:
+        return None, "Omni not asked: no cluster_name in cluster.yaml"
+    data, err, _kind = _omni_json(args, "cluster-json", getattr(args, "cluster_json", None),
+                                  "get", "clusters", cluster, "-o", "json")
+    if data is None:
+        return None, f"Omni not read here ({err})"
+    labels = ((data.get("metadata") or {}).get("labels") or {}) if isinstance(data, dict) else {}
+    if TAINT_LABEL in labels:
+        return True, f"Omni labels {cluster} {TAINT_LABEL}"
+    return False, f"Omni has no {TAINT_LABEL} label on {cluster}"
+
+
+def cell_operator_credential(args) -> tuple[int, str, str | None]:
+    """14. The os:operator credential, if any, is valid — and Omni's taint is information.
+
+    jg-base im-onsite-operator-tools (2026-10-13): a delivered cluster MAY carry
+    a direct-LAN `os:operator` talosconfig for its talos-mcp sidecar, minted
+    once by `fleet-ops talos-operator-credential mint` as an Omni break-glass.
+    Two things this cell must get right, and the second is why it exists:
+
+      * The credential lives one year and Omni cannot revoke it. Expired, the
+        sidecar reads it as absent -- reboot_node silently gone, every signal
+        still green. So expiry IS a failing condition, the mint date
+        (notBefore) is printed so the reader can see its age, and under 30
+        days the note leads with it.
+      * Minting it labels the cluster `tainted-by-break-glass` in Omni. On this
+        fleet that is the EXPECTED state of a delivered cluster, not a defect
+        (root spec operator-credential-lifecycle, "Tainted is an expected
+        state"). The label is read and printed, and it never decides the
+        verdict. ⚠️ What the taint means for Omni's own operations and whether
+        `rotate talos-ca` clears it are UNMEASURED (root tasks 1.2/1.3); this
+        cell claims nothing about either.
+
+    The one combination handed to a person: Omni says tainted and the repo
+    carries no credential. That is either a break-glass minted outside the
+    pipeline (2026-10-11's shape: live, tracked nowhere) or a label that
+    outlived a rotation; the two need different actions and this cannot tell
+    them apart.
+
+    Output discipline as cell 3: roles, dates and a label name. Never the
+    config, the cert or the key.
+    """
+    d = pathlib.Path(args.dir)
+    if not _is_cluster_repo(d):
+        return UNKNOWN, (f"{d} is not a cluster repo (no cluster.yaml) — run this "
+                         f"in the cluster's directory"), NEED_PLACE
+    facts, err, kind = _operator_cert_facts(d)
+    if err:
+        if kind:
+            return UNKNOWN, err, kind
+        return FAIL, f"talos_operator_config is set but unusable: {err}", None
+    raw, _ = _merged_config(d)
+    tainted, omni = _omni_taint(args, (raw or {}).get("cluster_name") or "")
+
+    if facts is None:
+        if tainted:
+            return UNKNOWN, (
+                f"cluster.yaml carries no talos_operator_config, yet {omni} — a "
+                f"break-glass credential was minted outside the pipeline (the "
+                f"2026-10-11 shape: live, and tracked nowhere) or the label outlived "
+                f"a talos-ca rotation (unmeasured, root task 1.3). Those need "
+                f"different actions; a person decides which"), NEED_HUMAN
+        return PASS, (f"no talos_operator_config: reader-only sidecar, no reboot_node, "
+                      f"no direct-LAN fallback — the pre-2026-10 shape, by choice. {omni}"), None
+
+    now = _utcnow()
+    roles, nb, na = facts["roles"], facts["not_before"], facts["not_after"]
+    when = f"minted {nb:%Y-%m-%d}, expires {na:%Y-%m-%d}"
+    if "os:operator" not in roles:
+        return FAIL, (f"talos_operator_config's certificate carries roles "
+                      f"{roles or ['(none)']}, not os:operator — reboot_node needs "
+                      f"os:operator, and anything higher is more than this design "
+                      f"grants ({when})"), None
+    if na <= now:
+        return FAIL, (f"talos_operator_config EXPIRED on {na:%Y-%m-%d} ({when}) — the "
+                      f"sidecar reads it as absent, so reboot_node and the direct-LAN "
+                      f"fallback are silently gone; rotate through "
+                      f"`fleet-ops talos-operator-credential`"), None
+    left = (na - now).days
+    note = f"os:operator, {when} ({left} days left). {omni}"
+    if left < 30:
+        note = f"EXPIRES IN {left} DAYS — rotate now. " + note
+    if tainted is False:
+        note += (" — unexpected for a credential minted through Omni (a cluster "
+                 "outside Omni mints from its own PKI and is never labelled)")
+    return PASS, note, None
+
+
 def _not_implemented(cell: int, needs: str):
     """A cell nobody has written yet, which is NOT the same as one that cannot
     reach its subject from here. The phase number deliberately does not appear:
@@ -2502,6 +2661,9 @@ HANDOVER_CELLS = [
     (11, "the dead-man switch has a ping URL", cell_dead_man_switch),
     (12, "health-check recipients read back from a real run", cell_recipients_readback),
     (13, "backup_r2_endpoint read back off the cluster", cell_r2_endpoint),
+    # 14 is im-onsite-operator-tools (2026-10-13), after the thirteen the runbook
+    # numbers -- the runbook's Step 5 table gains the row from fleet-ops's side.
+    (14, "operator credential valid; Omni's taint read as information", cell_operator_credential),
 ]
 
 
@@ -2637,6 +2799,9 @@ def main() -> None:
     hv.add_argument("--node-token-json",
                     help="cell 1: a captured `omnictl get nodeuniquetokenstatus"
                          " <uuid> -o json`, instead of asking Omni here")
+    hv.add_argument("--cluster-json",
+                    help="cell 14: a captured `omnictl get clusters <name> -o json`, "
+                         "instead of asking Omni here; read for the taint label only")
     hv.set_defaults(func=check_handover)
 
     t = sub.add_parser("tunnel-cert")

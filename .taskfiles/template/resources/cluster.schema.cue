@@ -643,6 +643,16 @@ import (
 	// constraint here cannot print anything sensitive. plugin.py refuses a key
 	// without a date, and a date without a key.
 	talos_mcp_sa_key_expires?: =~"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+	// The same sidecar's OPTIONAL second credential (jg-base
+	// im-onsite-operator-tools): a direct-LAN talosconfig with role ceiling
+	// os:operator, minted ONCE per cluster by fleet-ops's
+	// `talos-operator-credential mint` (an Omni break-glass) and written here
+	// file-to-file -- never typed by hand. Unlike talos_mcp_config it carries
+	// its own client cert AND key, so it IS a credential. No constraint beyond
+	// non-empty: cue vet echoes the value it rejects, and this value holds a
+	// private key. No *_expires twin: the expiry is in the certificate, and
+	// both the sidecar and the skill's `verify` read it from there.
+	talos_operator_config?: string & !=""
 	// factory provisioning credentials (extras/factory/factory in jg-base).
 	// Only the cluster that hosts factory sets these -- jcom today. Every one is
 	// optional and renders empty elsewhere, which is what the consuming Secret
