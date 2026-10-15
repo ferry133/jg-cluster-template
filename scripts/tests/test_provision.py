@@ -477,6 +477,119 @@ class TestStepInputsAreCheckedOnlyWhenActing(unittest.TestCase):
         self.assertEqual(after.observed, 0, "and it stopped the steps after it")
 
 
+class TestOmniTemplateBindsLocalPath(unittest.TestCase):
+    """jgct#207 (jg-base#150): the Omni template must bind
+    /var/local-path-provisioner into kubelet, or a local-path PVC mounted by
+    subPath lands on kubelet's own rootfs. The talhelper path gets it from
+    jgct#206; the Omni path only from the hand-written template, so 4.3 checks
+    the file at the moment it is about to hand it to omnictl."""
+
+    INLINE = (
+        "  patches:\n"
+        "    - idOverride: 400-x-kubelet-local-path\n"
+        "      inline: |\n"
+        "        machine:\n"
+        "          kubelet:\n"
+        "            extraMounts:\n"
+        "              - destination: /var/local-path-provisioner\n"
+        "                type: bind\n"
+        "                source: /var/local-path-provisioner\n"
+        "                options: [bind, rshared, rw]\n"
+    )
+
+    def write(self, d, text, name="omni-cluster.yaml"):
+        p = os.path.join(d, name)
+        open(p, "w").write(text)
+        return p
+
+    def check(self, text, extra=None):
+        with tempfile.TemporaryDirectory() as d:
+            for name, body in (extra or {}).items():
+                self.write(d, body, name)
+            return prov.template_local_path_mount(self.write(d, text))
+
+    def test_cluster_level_patch_passes(self):
+        self.assertEqual(self.check("kind: Cluster\nname: jg-a\n" + self.INLINE), (True, ""))
+
+    def test_a_template_without_it_is_refused_and_says_what_to_add(self):
+        ok_, why = self.check("kind: Cluster\nname: jg-a\n---\nkind: ControlPlane\nmachines: [m]\n")
+        self.assertIs(ok_, False)
+        for needle in ("/var/local-path-provisioner", "extraMounts", "jgct#207", "kind: Cluster"):
+            self.assertIn(needle, why)
+
+    def test_a_commented_out_patch_does_not_pass(self):
+        commented = "".join("#" + l + "\n" for l in self.INLINE.splitlines())
+        self.assertIs(self.check("kind: Cluster\nname: jg-a\n" + commented)[0], False)
+
+    def test_every_machine_set_carrying_it_passes(self):
+        cp = "kind: ControlPlane\nmachines: [a]\n" + self.INLINE
+        w = "kind: Workers\nmachines: [b]\n" + self.INLINE
+        self.assertIs(self.check(f"kind: Cluster\nname: jg-a\n---\n{cp}---\n{w}")[0], True)
+
+    def test_one_machine_set_without_it_fails(self):
+        cp = "kind: ControlPlane\nmachines: [a]\n" + self.INLINE
+        w = "kind: Workers\nmachines: [b]\n"
+        self.assertIs(self.check(f"kind: Cluster\nname: jg-a\n---\n{cp}---\n{w}")[0], False)
+
+    def test_two_worker_sets_need_it_on_both(self):
+        cp = "kind: ControlPlane\nmachines: [a]\n" + self.INLINE
+        w1 = "kind: Workers\nname: w1\nmachines: [b]\n" + self.INLINE
+        w2 = "kind: Workers\nname: w2\nmachines: [c]\n"
+        self.assertIs(self.check(f"kind: Cluster\nname: jg-a\n---\n{cp}---\n{w1}---\n{w2}")[0], False)
+
+    def test_a_machine_level_patch_alone_does_not_count(self):
+        m = "kind: Machine\nname: uuid-1\n" + self.INLINE
+        self.assertIs(self.check(f"kind: Cluster\nname: jg-a\n---\n{m}")[0], False)
+
+    def test_a_patch_given_as_file_is_read(self):
+        body = "machine:\n  kubelet:\n    extraMounts:\n      - destination: /var/local-path-provisioner\n"
+        tmpl = "kind: Cluster\nname: jg-a\npatches:\n  - file: patches/lp.yaml\n"
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "patches"))
+            self.write(d, body, "patches/lp.yaml")
+            self.assertEqual(prov.template_local_path_mount(self.write(d, tmpl)), (True, ""))
+
+    def test_an_unreadable_patch_file_is_not_a_pass(self):
+        tmpl = "kind: Cluster\nname: jg-a\npatches:\n  - file: patches/missing.yaml\n"
+        ok_, why = self.check(tmpl)
+        self.assertIsNone(ok_)
+        self.assertIn("patches/missing.yaml", why)
+
+    # --- wired into the real step and the driver --------------------------
+
+    def drive(self, path, apply_):
+        import contextlib
+        import io
+
+        class Absent(prov.OmniClusterStep):
+            def observe(self, ctx):
+                return prov.Observation(prov.ABSENT, "no such cluster")
+
+        out = io.StringIO()
+        old, prov.STEPS = prov.STEPS, [Absent()]
+        old_run, prov.run = prov.run, lambda c, **k: self.fail(f"executed {c}")
+        try:
+            with contextlib.redirect_stdout(out):
+                rc = prov.drive({"omni_template": path, "dir": os.path.dirname(path)}, apply_=apply_)
+        finally:
+            prov.STEPS, prov.run = old, old_run
+        return rc, out.getvalue()
+
+    def test_applying_a_template_without_it_refuses_before_omnictl(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, out = self.drive(self.write(d, "kind: Cluster\nname: jg-a\n"), apply_=True)
+        self.assertEqual(rc, prov.REFUSED)
+        self.assertIn("/var/local-path-provisioner", out)
+        self.assertNotIn("$ ", out, "omnictl must not have been run")
+
+    def test_plan_is_unchanged_by_the_check(self):
+        # Negative condition, as for inputs(): plan does not read the file.
+        with tempfile.TemporaryDirectory() as d:
+            rc, out = self.drive(self.write(d, "kind: Cluster\nname: jg-a\n"), apply_=False)
+        self.assertEqual(rc, prov.DONE)
+        self.assertIn("WOULD", out)
+
+
 class TestOmniClusterIdentity(unittest.TestCase):
     """4.3 + #128. `PRESENT` is documented as "it is there, and it is the one
     this ticket says". Matching the name alone cannot say the second half, and
