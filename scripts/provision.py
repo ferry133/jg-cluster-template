@@ -370,6 +370,15 @@ class Step:
         """
         return []
 
+    def input_problems(self, ctx: dict) -> list[str]:
+        """What is wrong INSIDE the files `inputs()` names, checked at the same
+        moment and for the same reason: only when about to act. Empty means
+        nothing found. A file that is there but would build the wrong thing is
+        a refusal, not a warning — after `create()` the mistake is in a running
+        cluster (jgct#207).
+        """
+        return []
+
     def create(self, ctx: dict) -> list[list[str]]:  # pragma: no cover - interface
         """Commands that would create the resource. Returned, not run."""
         raise NotImplementedError
@@ -490,6 +499,89 @@ def template_cluster_name(path: str) -> tuple[str | None, str]:
     if not name:
         return None, f"{path} has a `kind: Cluster` document with no `name`"
     return name, ""
+
+
+LOCAL_PATH_DIR = "/var/local-path-provisioner"
+LOCAL_PATH_MOUNT_PATCH = f"""  patches:
+    - idOverride: 400-<cluster>-kubelet-local-path
+      inline: |
+        machine:
+          kubelet:
+            extraMounts:
+              - destination: {LOCAL_PATH_DIR}
+                type: bind
+                source: {LOCAL_PATH_DIR}
+                options: [bind, rshared, rw]"""
+
+
+def template_local_path_mount(path: str) -> tuple[bool | None, str]:
+    """Does the Omni template at `path` bind LOCAL_PATH_DIR into kubelet?
+
+    jg-base#150 / jgct#207: kubelet runs in its own container on Talos and
+    resolves a volumeMount's `subPath` there. Without this bind, a local-path
+    PVC's subPath lands on kubelet's own rootfs and is lost on every kubelet
+    restart, silently (measured on jcom; red-then-green on an Omni throwaway,
+    fleet-ops `56abf48`). The talhelper path carries the bind in
+    `templates/config/talos/patches/global/machine-kubelet.yaml.j2` (jgct#206);
+    the Omni path applies none of those patches, and its template is written
+    by hand (runbook Step 3b) — so this is the only place the repo can see it.
+
+    Returns (True, "") / (False, why) / (None, why it could not be read).
+    Satisfied by the `kind: Cluster` document, or by EVERY `ControlPlane` and
+    `Workers` document; a `Machine`-level patch covers one machine and does not
+    count. Patches given as `file:` are read relative to the template. Comment
+    lines are ignored, so a commented-out patch does not pass. Read as text,
+    with the standard library, for the reason `template_cluster_name` gives.
+    """
+    try:
+        text = open(path).read()
+    except OSError as e:
+        return None, f"cannot read {path}: {e}"
+    base = os.path.dirname(os.path.abspath(path))
+    top = re.compile(r"^([A-Za-z_][A-Za-z0-9_.-]*):\s*(.*?)\s*$")
+    filere = re.compile(r"^\s*-?\s*file:\s*['\"]?([^'\"#\s]+)")
+
+    docs: list[list[str]] = [[]]
+    for line in text.splitlines():
+        if line.strip() == "---":
+            docs.append([])
+        else:
+            docs[-1].append(line)
+
+    by_kind: dict[str, list[bool]] = {}
+    for doc in docs:
+        kind = ""
+        body: list[str] = []
+        for line in doc:
+            if line.lstrip().startswith("#"):
+                continue
+            m = top.match(line)
+            if m and m.group(1) == "kind" and not kind:
+                kind = m.group(2).strip().strip('"').strip("'")
+            body.append(line)
+            f = filere.match(line)
+            if f:
+                ref = os.path.join(base, f.group(1))
+                try:
+                    body.extend(l for l in open(ref).read().splitlines()
+                                if not l.lstrip().startswith("#"))
+                except OSError as e:
+                    return None, f"{path}: patch file {f.group(1)} cannot be read: {e}"
+        joined = "\n".join(body)
+        has = "extraMounts" in joined and LOCAL_PATH_DIR in joined
+        by_kind.setdefault(kind, []).append(has)
+
+    if any(by_kind.get("Cluster", [])):
+        return True, ""
+    cp, workers = by_kind.get("ControlPlane", []), by_kind.get("Workers", [])
+    if cp and all(cp) and all(workers):
+        return True, ""
+    return False, (f"{path} does not bind {LOCAL_PATH_DIR} into kubelet "
+                   f"(no `extraMounts` for it on the Cluster, nor on every "
+                   f"ControlPlane/Workers set). A local-path PVC mounted by "
+                   f"subPath — im's keyrings — would land on kubelet's own "
+                   f"rootfs (jg-base#150, jgct#207). Add to the `kind: Cluster` "
+                   f"document:\n{LOCAL_PATH_MOUNT_PATCH}")
 
 
 class OmniClusterStep(Step):
@@ -688,6 +780,10 @@ class OmniClusterStep(Step):
         # is always absent and the operator has to produce it first — the
         # runbook's Step 3b says how.
         return [ctx["omni_template"]]
+
+    def input_problems(self, ctx: dict) -> list[str]:
+        ok_, why = template_local_path_mount(ctx["omni_template"])
+        return [] if ok_ else [why]
 
     def create(self, ctx: dict) -> list[list[str]]:
         return [["omnictl", "cluster", "template", "sync", "-f", ctx["omni_template"]]]
@@ -1477,6 +1573,16 @@ def drive(ctx: dict, apply_: bool) -> int:
                   "so acting would be acting on a world nobody described.")
             print("      (The runbook's Step 3b says where this file comes from.)")
             return UNKNOWN
+
+        # The file is here; what it says can still be wrong in a way only a
+        # running cluster would show (jgct#207). Same moment, same reason.
+        problems = step.input_problems(ctx)
+        if problems:
+            bad(f"{head}: its input would build the wrong thing")
+            for p in problems:
+                print("      " + p.replace("\n", "\n      "))
+            print("      Stopping before acting: after the create, this is in a running cluster.")
+            return REFUSED
 
         print(f"DO    {head}: {obs.detail}")
         for c in cmds:
