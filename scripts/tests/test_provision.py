@@ -226,7 +226,12 @@ class TestHistoryLeakGuard(unittest.TestCase):
     def make_repo(self, commit_path: str | None):
         d = tempfile.mkdtemp()
         env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+               # No detached auto-maintenance outliving the temp dir (#209; see
+               # the git() docstring in test_delivery_check_repo_hygiene.py).
+               "GIT_CONFIG_COUNT": "2",
+               "GIT_CONFIG_KEY_0": "maintenance.auto", "GIT_CONFIG_VALUE_0": "false",
+               "GIT_CONFIG_KEY_1": "gc.auto", "GIT_CONFIG_VALUE_1": "0"}
         subprocess.run(["git", "-C", d, "init", "-q"], check=True, env=env)
         (pathlib.Path(d) / "README").write_text("x")
         subprocess.run(["git", "-C", d, "add", "README"], check=True, env=env)
@@ -801,7 +806,12 @@ class TestTemplateResidue(unittest.TestCase):
         import subprocess
         d = tempfile.mkdtemp()
         env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+               # No detached auto-maintenance outliving the temp dir (#209; see
+               # the git() docstring in test_delivery_check_repo_hygiene.py).
+               "GIT_CONFIG_COUNT": "2",
+               "GIT_CONFIG_KEY_0": "maintenance.auto", "GIT_CONFIG_VALUE_0": "false",
+               "GIT_CONFIG_KEY_1": "gc.auto", "GIT_CONFIG_VALUE_1": "0"}
         subprocess.run(["git", "-C", d, "init", "-q"], check=True, env=env)
         # A root-level file so the no-subdirectory case still has a commit —
         # otherwise that test measures `git commit` refusing an empty tree
