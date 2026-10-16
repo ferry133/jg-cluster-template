@@ -2567,15 +2567,30 @@ def cell_operator_credential(args) -> tuple[int, str, str | None]:
         fleet that is the EXPECTED state of a delivered cluster, not a defect
         (root spec operator-credential-lifecycle, "Tainted is an expected
         state"). The label is read and printed, and it never decides the
-        verdict. ⚠️ What the taint means for Omni's own operations and whether
-        `rotate talos-ca` clears it are UNMEASURED (root tasks 1.2/1.3); this
-        cell claims nothing about either.
+        verdict. Measured on throwaway clusters by fleet-ops-77 [af719f]
+        (fleet-ops `.claude/skills/talos-operator-credential/SKILL.md`
+        §Readings; `dbcef0b` 2026-10-13, `9a63c2a` 2026-10-14):
+          - the taint restricts none of template sync, cluster lock/unlock,
+            manifest-sync or a Talos upgrade (v1.13.2 -> v1.13.3);
+          - `omnictl cluster secret rotate talos-ca` completes in about a
+            second with no reboot, and the old break-glass is then refused
+            (`x509: certificate signed by unknown authority`) -- rotation
+            REVOKES the credential;
+          - rotation does NOT clear the label: its timestamp is unchanged, and
+            a re-mint moves it to the last mint. So the label says "a
+            break-glass was minted at some point", never "one is live now".
 
     The one combination handed to a person: Omni says tainted and the repo
-    carries no credential. That is either a break-glass minted outside the
-    pipeline (2026-10-11's shape: live, tracked nowhere) or a label that
-    outlived a rotation; the two need different actions and this cannot tell
-    them apart.
+    carries no credential. Three histories produce it, and this cell cannot
+    tell them apart (cluster.yaml cannot say whether a credential that is not
+    in it is still live):
+      (a) a break-glass minted outside the pipeline -- live, tracked nowhere
+          (2026-10-11's shape). Action: rotate talos-ca.
+      (b) the field was removed from cluster.yaml without a rotation -- still
+          live. Action: rotate talos-ca.
+      (c) rotated AND removed -- no live credential; the label stays forever
+          because rotation does not clear it. Action: none.
+    (a)/(b) and (c) need opposite actions, which is why it stays `?`.
 
     Output discipline as cell 3: roles, dates and a label name. Never the
     config, the cert or the key.
@@ -2595,11 +2610,14 @@ def cell_operator_credential(args) -> tuple[int, str, str | None]:
     if facts is None:
         if tainted:
             return UNKNOWN, (
-                f"cluster.yaml carries no talos_operator_config, yet {omni} — a "
-                f"break-glass credential was minted outside the pipeline (the "
-                f"2026-10-11 shape: live, and tracked nowhere) or the label outlived "
-                f"a talos-ca rotation (unmeasured, root task 1.3). Those need "
-                f"different actions; a person decides which"), NEED_HUMAN
+                f"cluster.yaml carries no talos_operator_config, yet {omni}. "
+                f"Three histories look like this: (a) a break-glass minted outside "
+                f"the pipeline (the 2026-10-11 shape: live, tracked nowhere), (b) "
+                f"the field removed without a rotation (still live), or (c) rotated "
+                f"and removed (no live credential — `rotate talos-ca` revokes the "
+                f"credential but never clears this label, measured 2026-10-13). "
+                f"(a) and (b) need `omnictl cluster secret rotate talos-ca`; (c) "
+                f"needs nothing. A person decides which"), NEED_HUMAN
         return PASS, (f"no talos_operator_config: reader-only sidecar, no reboot_node, "
                       f"no direct-LAN fallback — the pre-2026-10 shape, by choice. {omni}"), None
 

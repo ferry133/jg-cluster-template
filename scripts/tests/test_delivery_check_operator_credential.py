@@ -148,6 +148,13 @@ class OperatorCredentialCell(unittest.TestCase):
         rc, note, why = self._run({"cluster_name": "bench"}, tainted=True)
         self.assertEqual((rc, why), (dc.UNKNOWN, dc.NEED_HUMAN), note)
         self.assertIn("2026-10-11", note)
+        # Three histories, not two (#205): the third -- rotated and removed --
+        # needs NO action, the opposite of the other two, and is the one a
+        # reader would otherwise "fix" by rotating a cluster that is clean.
+        self.assertIn("(c) rotated and removed", note)
+        self.assertIn("(c) needs nothing", note)
+        self.assertIn("rotate talos-ca", note)
+        self.assertNotIn("unmeasured", note)
         # The clean label with no credential is NOT that question.
         rc, note, why = self._run({"cluster_name": "bench"}, tainted=False)
         self.assertEqual((rc, why), (dc.PASS, None), note)
