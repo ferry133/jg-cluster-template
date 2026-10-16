@@ -83,10 +83,20 @@ def git(d: pathlib.Path, *args: str) -> subprocess.CompletedProcess:
     the voice of a measurement. The list is still worth neutralising — a future
     case that drops `-f` would depend on it — but the claim had to match what was
     measured.
+
+    `maintenance.auto=false` / `gc.auto=0` (jg-cluster-template#209): since git
+    2.47 every `commit` here spawns a DETACHED `git maintenance run --auto`
+    (measured with GIT_TRACE2_EVENT on git 2.52: one spawn per commit without
+    these, zero with them). That child can still be writing under `.git` when
+    `TemporaryDirectory` removes the tree, which is the shape of the one CI
+    error on record: `OSError: [Errno 39] Directory not empty: '…/.git'`.
+    ⚠️ The mechanism is measured; the CAUSATION is not -- 280 local runs of
+    this class did not reproduce the error with or without the fix.
     """
     return subprocess.run(
         ["git", "-C", str(d), "-c", "user.name=t", "-c", "user.email=t@t",
-         "-c", "commit.gpgsign=false", "-c", "core.excludesFile=/dev/null", *args],
+         "-c", "commit.gpgsign=false", "-c", "core.excludesFile=/dev/null",
+         "-c", "maintenance.auto=false", "-c", "gc.auto=0", *args],
         capture_output=True, text=True, timeout=60,
     )
 

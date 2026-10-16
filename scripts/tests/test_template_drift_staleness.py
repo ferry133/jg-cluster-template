@@ -50,7 +50,10 @@ NEVER = "bytes that were never committed anywhere\n"
 def git(d: pathlib.Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", "-C", str(d), "-c", "user.name=t", "-c", "user.email=t@t",
-         "-c", "commit.gpgsign=false", *args],
+         "-c", "commit.gpgsign=false",
+         # No detached auto-maintenance outliving the temp dir (#209; see the
+         # git() docstring in test_delivery_check_repo_hygiene.py).
+         "-c", "maintenance.auto=false", "-c", "gc.auto=0", *args],
         capture_output=True, text=True, timeout=60)
 
 
