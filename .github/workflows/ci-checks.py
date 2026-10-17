@@ -53,6 +53,10 @@ RUN = [
     "check-node-dns-path.py",
     "check-credential-expiry-pairing.py",
     "check-template-integrity.py",
+    # Needs makejinja, cue and age-keygen (all from mise). Renders four
+    # fixtures in temp dirs with placeholder credentials and a throwaway key;
+    # the `--against <ref>` mode is not run here, see its docstring (jgct#214).
+    "check-tenant-render.py",
 ]
 
 # Cannot see their subject from a bare template checkout. The reason is the
