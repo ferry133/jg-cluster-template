@@ -59,6 +59,12 @@ import urllib.parse
 import urllib.request
 
 PASS, FAIL, UNKNOWN = 0, 1, 2
+# A handover cell whose subject this cluster does not have (cell 15 with no
+# tenants declared). Printed as `skip` and counted on its own line: never as a
+# pass, and not as "could not measure" either, because nothing is missing —
+# a cell that is UNKNOWN on every cluster without tenants would be read past
+# until it was ignored, which is how a check gets switched off.
+SKIP = 3
 
 # Reused verbatim from the runbook's history scan, and from
 # delivery-ticket.py's comment guard. One list, three call sites: three
@@ -2644,6 +2650,143 @@ def cell_operator_credential(args) -> tuple[int, str, str | None]:
     return PASS, note, None
 
 
+def _declared_tenants(args) -> tuple[list[dict] | None, str | None, str | None]:
+    """`app_repos` from <dir>/cluster.yaml: name, repository, kind, namespaces.
+
+    Only those four fields are extracted, by yq, so nothing else in
+    cluster.yaml (it holds every credential the cluster has) reaches this
+    process's output.
+    """
+    path = pathlib.Path(args.dir) / "cluster.yaml"
+    if not path.is_file():
+        return None, f"{path} not here — run this in the cluster's directory", NEED_PLACE
+    if not shutil.which("yq"):
+        return None, "yq is not on PATH", NEED_TOOL
+    expr = ('[(.app_repos // [])[] | {"name": .name, "repository": .repository, '
+            '"kind": .kind, "namespaces": (.namespaces // [.name])}]')
+    r = run(["yq", "-o=json", expr, str(path)])
+    if r.returncode != 0:
+        return None, f"yq could not read {path.name}: {r.stderr.strip()[:120]}", NEED_TOOL
+    try:
+        return json.loads(r.stdout), None, None
+    except json.JSONDecodeError as e:
+        return None, f"yq output was not JSON: {e}", NEED_TOOL
+
+
+def _registered_keys(repo: str) -> tuple[list[dict] | None, str | None]:
+    """GitHub's deploy keys for a repo: [{key: "<type> <b64>", read_only}]."""
+    if not shutil.which("gh"):
+        return None, "gh is not on PATH"
+    r, terr = _run_bounded(["gh", "api", f"repos/{repo}/keys", "--jq",
+                            "[.[] | {key, read_only}]"], REMOTE_TIMEOUT,
+                           "gh api repos/…/keys")
+    if r is None:
+        return None, terr
+    if r.returncode != 0:
+        return None, f"gh api repos/{repo}/keys: {r.stderr.strip()[:120]}"
+    try:
+        return [{"key": " ".join(k["key"].split()[:2]), "read_only": k["read_only"]}
+                for k in json.loads(r.stdout or "[]")], None
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        return None, f"unexpected gh output: {e}"
+
+
+def _public_half(private: pathlib.Path) -> tuple[str | None, str | None]:
+    """`<type> <b64>` of a tenant key: the `.pub` beside it, else ssh-keygen -y.
+    Only the public half is ever returned or printed."""
+    pub = private.with_name(private.name + ".pub")
+    if pub.is_file():
+        return " ".join(pub.read_text().split()[:2]), None
+    if not private.is_file():
+        return None, f"{private} not here"
+    if not shutil.which("ssh-keygen"):
+        return None, "ssh-keygen is not on PATH"
+    r = run(["ssh-keygen", "-y", "-f", str(private)])
+    if r.returncode != 0:
+        return None, f"ssh-keygen -y could not read {private.name}"
+    return " ".join(r.stdout.split()[:2]), None
+
+
+def cell_tenants(args) -> tuple[int, str, str | None]:
+    """Every declared tenant is live and wired; nothing undeclared is.
+
+    jgct#214 task 3.8 (fleet-ops root `standalone-app-repos`). Per tenant in
+    cluster.yaml: Kustomization `tenant-<name>` Ready, its read-only deploy key
+    registered on the repo AS read-only, the agent's write key registered AS
+    writable, and `tenant-ingress` present in each declared namespace; plus
+    `cluster-tenants` Ready. In the other direction, a live `tenant-*`
+    Kustomization that cluster.yaml does not declare fails: it is either a
+    tenant that was removed without its revoke, or a cluster.yaml that is not
+    this cluster's.
+
+    No tenants declared and none live: SKIP, not PASS. Positive control for
+    the live listing: it must contain `cluster-secrets`, which every cluster
+    has, or an empty answer is the wrong cluster or the wrong question.
+    """
+    declared, err, why = _declared_tenants(args)
+    if declared is None:
+        return UNKNOWN, err, why
+    okc, out, err = _kubectl(args, "-n", "flux-system", "get",
+                             "kustomizations.kustomize.toolkit.fluxcd.io", "-o", "json")
+    if not okc:
+        return UNKNOWN, err, NEED_PLACE
+    items = {it["metadata"]["name"]: it for it in json.loads(out).get("items", [])}
+    if "cluster-secrets" not in items:
+        return UNKNOWN, ("flux-system has no Kustomization cluster-secrets — not a "
+                         "cluster from this template, or the query is wrong; an empty "
+                         "tenant list here would mean nothing"), NEED_PLACE
+    live = sorted(n for n in items if n.startswith("tenant-"))
+    want = sorted(f"tenant-{t['name']}" for t in declared)
+    if not declared and not live and "cluster-tenants" not in items:
+        return SKIP, ("no app_repos declared and no tenant Kustomization live "
+                      f"({len(items)} Kustomizations read)"), None
+
+    def ready(name: str) -> bool:
+        conds = items.get(name, {}).get("status", {}).get("conditions", [])
+        return any(c.get("type") == "Ready" and c.get("status") == "True" for c in conds)
+
+    fails, unknowns = [], []
+    for name in sorted(set(live) - set(want)):
+        fails.append(f"{name} is live but not declared in cluster.yaml")
+    if declared and not ready("cluster-tenants"):
+        fails.append("cluster-tenants is not Ready" if "cluster-tenants" in items
+                     else "cluster-tenants does not exist")
+    for t in declared:
+        n = f"tenant-{t['name']}"
+        if n not in items:
+            fails.append(f"{n}: declared, no Kustomization")
+        elif not ready(n):
+            fails.append(f"{n}: not Ready")
+        for ns in t["namespaces"]:
+            okp, _, perr = _kubectl(args, "-n", ns, "get",
+                                    "ciliumnetworkpolicies.cilium.io", "tenant-ingress",
+                                    "-o", "name")
+            if not okp:
+                fails.append(f"{ns}: no CiliumNetworkPolicy tenant-ingress ({perr[:60]})")
+        keys, kerr = _registered_keys(t["repository"])
+        if keys is None:
+            unknowns.append(f"{t['name']}: deploy keys not readable — {kerr}")
+            continue
+        wants = [("deploy", True)] + ([("write", False)] if t["kind"] == "agent" else [])
+        for kind, read_only in wants:
+            pub, perr = _public_half(pathlib.Path(args.dir) / "tenants" / f"{t['name']}.{kind}.key")
+            if pub is None:
+                unknowns.append(f"{t['name']}: {kind} key — {perr}")
+                continue
+            match = [k for k in keys if k["key"] == pub]
+            if not match:
+                fails.append(f"{t['repository']}: {kind} key not registered")
+            elif match[0]["read_only"] is not read_only:
+                fails.append(f"{t['repository']}: {kind} key registered with "
+                             f"read_only={match[0]['read_only']}, expected {read_only}")
+    summary = f"{len(declared)} tenant(s) declared, {len(live)} live"
+    if fails:
+        return FAIL, summary + ": " + "; ".join(fails), None
+    if unknowns:
+        return UNKNOWN, summary + ": " + "; ".join(unknowns), NEED_TOOL
+    return PASS, summary + ": every Kustomization Ready, keys registered as declared, policies present", None
+
+
 def _not_implemented(cell: int, needs: str):
     """A cell nobody has written yet, which is NOT the same as one that cannot
     reach its subject from here. The phase number deliberately does not appear:
@@ -2682,6 +2825,9 @@ HANDOVER_CELLS = [
     # 14 is im-onsite-operator-tools (2026-10-13), after the thirteen the runbook
     # numbers -- the runbook's Step 5 table gains the row from fleet-ops's side.
     (14, "operator credential valid; Omni's taint read as information", cell_operator_credential),
+    # 15 is standalone-app-repos (jgct#214 task 3.8): the runbook's Step 5 table
+    # gains the row from fleet-ops's side, as with 14.
+    (15, "tenants: Ready, deploy keys registered as declared, policies present", cell_tenants),
 ]
 
 
@@ -2705,7 +2851,7 @@ def check_handover(args) -> int:
         one = {why} if isinstance(why, str) else set(why)
         return [k for k in order if k in one]
 
-    mark = {PASS: "PASS ", FAIL: "FAIL ", UNKNOWN: "?    "}
+    mark = {PASS: "PASS ", FAIL: "FAIL ", UNKNOWN: "?    ", SKIP: "skip "}
     for num, title, rc, note, why in results:
         # A kind on a PASS is shown too. Cell 12 passes its machine half and
         # still leaves a person's half open ("are these the people who would
@@ -2721,8 +2867,14 @@ def check_handover(args) -> int:
     unknown = [(n, kinds_of(why)) for n, _, rc, _, why in results if rc == UNKNOWN]
     passed_human = [n for n, _, rc, _, why in results
                     if rc == PASS and NEED_HUMAN in kinds_of(why)]
+    skipped = [n for n, _, rc, _, _ in results if rc == SKIP]
     print()
-    print(f"{len(results) - len(fails) - len(unknown)}/{len(results)} cells pass.")
+    print(f"{len([r for r in results if r[2] == PASS])}/{len(results) - len(skipped)} "
+          f"applicable cells pass.")
+    if skipped:
+        word = "cell" if len(skipped) == 1 else "cells"
+        print(f"{len(skipped)} {word} not applicable to this cluster (not a pass): "
+              f"{', '.join(str(n) for n in skipped)}")
 
     if unknown:
         word = "cell" if len(unknown) == 1 else "cells"
