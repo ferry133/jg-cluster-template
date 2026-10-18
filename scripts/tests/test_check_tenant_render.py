@@ -139,6 +139,65 @@ class TenantRenderGuard(unittest.TestCase):
         self.assertEqual(rc, 2, out)
         self.assertIn("COULD NOT MEASURE", out)
 
+    # 7-12: part 3, the shape of a render that HAS tenants (task 3.3). Each
+    # mutation is one way the tenant loop could stop isolating the tenant
+    # while still rendering something that looks like a tenant.
+
+    # 7 ---------------------------------------------------------------------
+    def test_7_tenant_kustomization_with_substitution_fails(self):
+        # cluster-secrets is every credential the cluster has.
+        self.edit(KS, "  path: ./\n  prune: true\n",
+                  "  path: ./\n  prune: true\n  postBuild:\n    substituteFrom:\n"
+                  "      - name: cluster-secrets\n        kind: Secret\n")
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("Kustomization/tenant-acme has spec.postBuild", out)
+
+    # 8 ---------------------------------------------------------------------
+    def test_8_tenant_kustomization_without_its_service_account_fails(self):
+        # Without it, kustomize-controller applies as itself: cluster-admin.
+        self.edit(KS, "  serviceAccountName: tenant-#{ repo.name }#\n", "")
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("Kustomization/tenant-acme .spec.serviceAccountName = None", out)
+
+    # 9 ---------------------------------------------------------------------
+    def test_9_tenant_decrypting_with_the_cluster_key_fails(self):
+        self.edit(KS, "    secretRef:\n      name: tenant-#{ repo.name }#-sops-age\n", "")
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("Kustomization/tenant-acme .spec.decryption", out)
+
+    # 10 --------------------------------------------------------------------
+    def test_10_a_tenant_loop_that_renders_nothing_fails(self):
+        # The shape part 3 exists for: parts 1 and 2 pass on it.
+        self.edit(KS, "#% for repo in app_repos %#", "#% for repo in [] %#")
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("ServiceAccount/tenant-acme: 0 rendered, expected 1", out)
+        self.assertIn("ok  [full-omni-extras]", out)
+
+    # 11 --------------------------------------------------------------------
+    def test_11_tenants_changing_a_non_tenant_object_fails(self):
+        self.edit(KS, "  path: ./kubernetes/apps/base/claudecode/claude-code/instances\n",
+                  "  path: ./kubernetes/apps/base/claudecode/claude-code/instances"
+                  "#{ '-t' if app_repos else '' }#\n")
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("the non-tenant documents differ from the tenant-free render", out)
+
+    # 12 --------------------------------------------------------------------
+    def test_12_cluster_role_binding_for_a_tenant_fails(self):
+        self.edit(KS, "    - name: cluster-tenants\n#% endfor %#\n",
+                  "    - name: cluster-tenants\n---\napiVersion: rbac.authorization.k8s.io/v1\n"
+                  "kind: ClusterRoleBinding\nmetadata:\n  name: tenant-#{ repo.name }#-oops\n"
+                  "roleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: ClusterRole\n"
+                  "  name: view\nsubjects:\n  - kind: ServiceAccount\n"
+                  "    name: tenant-#{ repo.name }#\n    namespace: flux-system\n#% endfor %#\n")
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("ClusterRoleBinding/tenant-acme-oops names tenant-acme", out)
+
 
 if __name__ == "__main__":
     unittest.main()
