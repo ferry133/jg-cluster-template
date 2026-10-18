@@ -31,7 +31,7 @@ KS = Path("templates/config/kubernetes/flux/cluster/ks.yaml.j2")
 SCHEMA = Path(".taskfiles/template/resources/cluster.schema.cue")
 PLUGIN = Path("templates/scripts/plugin.py")
 COPY = ["templates", "makejinja.toml", "trello-notifier.sample.yaml",
-        ".taskfiles/template/resources"]
+        ".taskfiles/template/resources", "cluster.sample.yaml"]
 
 
 class TenantRenderGuard(unittest.TestCase):
@@ -280,6 +280,44 @@ class TenantRenderGuard(unittest.TestCase):
         rc, out = self.run_guard()
         self.assertEqual(rc, 1, out)
         self.assertIn("pool tenant-im-apps selector", out)
+
+    # 21-24: root task 3.7 follow-ups.
+
+    # 21 --------------------------------------------------------------------
+    def test_21_tenant_known_hosts_drifting_from_bootstrap_fails(self):
+        path = self.tree / self.T / "tenant-git-auth.sops.yaml.j2"
+        lines = path.read_text().splitlines(keepends=True)
+        kept = [l for l in lines if not l.lstrip().startswith("github.com ssh-rsa ")]
+        self.assertEqual(len(kept), len(lines) - 1, "mutation did not remove one line")
+        path.write_text("".join(kept))
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("known_hosts differs from", out)
+
+    # 22 --------------------------------------------------------------------
+    def test_22_agent_objects_on_a_vendor_only_cluster_fail(self):
+        self.edit(self.T / "kustomization.yaml.j2",
+                  "#% if app_repos | selectattr('kind', 'equalto', 'agent') | list %#\n"
+                  "  - im-apps-write-key.sops.yaml\n#% endif %#\n",
+                  "  - im-apps-write-key.sops.yaml\n")
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("[vendor-only]", out)
+        self.assertIn("resources do not list exactly the rendered files", out)
+
+    # 23 --------------------------------------------------------------------
+    def test_23_host_network_without_its_label_fails(self):
+        self.edit(self.T / "namespaces.yaml.j2", "    jg.tenant-privileged: granted\n", "")
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("Namespace/edge labels", out)
+
+    # 24 --------------------------------------------------------------------
+    def test_24_a_sample_example_the_schema_refuses_fails(self):
+        self.edit(Path("cluster.sample.yaml"), "#   - name: im-apps\n", "#   - name: shop\n")
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("[sample-example] the example operators copy fails cue vet", out)
 
 
 if __name__ == "__main__":

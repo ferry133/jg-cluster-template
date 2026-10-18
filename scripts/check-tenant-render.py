@@ -32,7 +32,13 @@ That is asserted two ways, because the useful one cannot run in CI:
    render, so adding a tenant cannot change anything that is not the tenant.
    No ClusterRoleBinding anywhere may name a tenant ServiceAccount. Without
    this part, "identical when absent" would also be what a tenant loop that
-   never renders looks like.
+   never renders looks like. Three scenarios (root task 3.7): the main one
+   (a vendor, the `im-apps` agent with two namespaces and a LAN grant, a
+   host_network vendor), vendors only (no agent object may appear), and the
+   commented example in cluster.sample.yaml — operators copy it, so it must
+   pass cue vet and render. Every tenant's known_hosts must equal the root
+   sync's (bootstrap/github-deploy-key), so a host-key rotation cannot update
+   one copy.
 
 The fixtures are four complete, `cue vet`-valid inputs chosen to walk different
 branches (profile, provisioning path, storage, extras, claude instances, auth0,
@@ -158,16 +164,6 @@ _PLACEHOLDERS = {
     "auth0.json": json.dumps({
         "domain": "example.invalid", "client_id": "placeholder",
         "client_secret": "placeholder", "allowed_emails": ["ops@example.invalid"]}),
-    # Tenant key files for part 3 (plugin.py tenant_key()). Fakes that carry
-    # only the marker line tenant_key() checks for; never real keys.
-    "tenants/acme.age.key": "# placeholder\nAGE-SECRET-KEY-1PLACEHOLDERACME\n",
-    "tenants/acme.deploy.key": "-----BEGIN OPENSSH PRIVATE KEY-----\nplaceholder-acme-ro\n"
-                               "-----END OPENSSH PRIVATE KEY-----\n",
-    "tenants/im-apps.age.key": "# placeholder\nAGE-SECRET-KEY-1PLACEHOLDERIM-APPS\n",
-    "tenants/im-apps.deploy.key": "-----BEGIN OPENSSH PRIVATE KEY-----\nplaceholder-im-apps-ro\n"
-                               "-----END OPENSSH PRIVATE KEY-----\n",
-    "tenants/im-apps.write.key": "-----BEGIN OPENSSH PRIVATE KEY-----\nplaceholder-im-apps-rw\n"
-                              "-----END OPENSSH PRIVATE KEY-----\n",
 }
 
 
@@ -201,6 +197,21 @@ def stage(tree: Path, work: Path, fixture: dict, nodes: list, age_key: Path) -> 
     for name, body in _PLACEHOLDERS.items():
         (work / name).parent.mkdir(parents=True, exist_ok=True)
         (work / name).write_text(body)
+    # Tenant key files for part 3 (plugin.py tenant_key()), one set per
+    # declared tenant so any scenario renders. Fakes carrying only the marker
+    # line tenant_key() checks for, plus a per-name token tenant_objects()
+    # uses to tell which file landed in which Secret. Never real keys.
+    for repo in fixture.get("app_repos") or []:
+        n = repo["name"]
+        keys = {"age": f"# placeholder\nAGE-SECRET-KEY-1PLACEHOLDER{n.upper()}\n",
+                "deploy": f"-----BEGIN OPENSSH PRIVATE KEY-----\nplaceholder-{n}-ro\n"
+                          f"-----END OPENSSH PRIVATE KEY-----\n"}
+        if repo.get("kind") == "agent":
+            keys["write"] = (f"-----BEGIN OPENSSH PRIVATE KEY-----\nplaceholder-{n}-rw\n"
+                             f"-----END OPENSSH PRIVATE KEY-----\n")
+        (work / "tenants").mkdir(exist_ok=True)
+        for kind, body in keys.items():
+            (work / "tenants" / f"{n}.{kind}.key").write_text(body)
 
 
 def render(tree: Path, fixture: dict, nodes: list, age_key: Path) -> dict[str, bytes]:
@@ -274,7 +285,45 @@ TENANTS = [
          namespaces=["im-apps", "im-apps-db"], branch="prod",
          grants=dict(baseline=True, lan_ip=1),
          lan_ip_range=dict(start="192.0.2.200", stop="192.0.2.200")),
+    # host_network: PSA privileged, the granted label, no `world` (root 3.7).
+    dict(name="edge", repository="fixture/edge-app", kind="vendor",
+         grants=dict(host_network=True)),
 ]
+# A cluster with vendors only renders no agent objects at all: no
+# im-apps-write-key file, no IM_APPS_REPO (root 3.7).
+VENDOR_ONLY = [TENANTS[0]]
+SAMPLE = "cluster.sample.yaml"
+BOOTSTRAP_KEY = "templates/config/bootstrap/github-deploy-key.sops.yaml.j2"
+
+
+def sample_example(tree: Path) -> list[dict]:
+    """The commented `app_repos:` example in cluster.sample.yaml, uncommented.
+
+    Operators copy it, so it must be a config the schema accepts and the
+    template renders. Its `10.9.x.` placeholders become TEST-NET-1.
+    """
+    lines = (tree / SAMPLE).read_text().splitlines()
+    if "# app_repos:" not in lines:
+        raise RuntimeError(f"{SAMPLE} has no `# app_repos:` example")
+    start = lines.index("# app_repos:")
+    block = []
+    for line in lines[start:]:
+        if not line.startswith("#"):
+            break
+        block.append(line[2:])
+    text = "\n".join(block).replace("10.9.x.", "192.0.2.")
+    proc = subprocess.run([tool("yq"), "-o=json", "."], input=text.encode(),
+                          capture_output=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"{SAMPLE} example does not parse: {proc.stderr.decode().strip()}")
+    return json.loads(proc.stdout)["app_repos"]
+
+
+def bootstrap_known_hosts(tree: Path) -> list[str]:
+    """known_hosts as the root sync's deploy key carries it — the copy the
+    tenant Secrets must equal, or a GitHub host-key rotation updates one."""
+    text = (tree / BOOTSTRAP_KEY).read_text()
+    return [l.strip() for l in text.splitlines() if l.strip().startswith("github.com ")]
 KS = "kubernetes/flux/cluster/ks.yaml"
 CS = "kubernetes/components/sops/cluster-secrets.sops.yaml"
 TD = "kubernetes/tenants/"
@@ -294,12 +343,13 @@ def ident(d: dict) -> tuple[str, str]:
     return d.get("kind", ""), d.get("metadata", {}).get("name", "")
 
 
-def tenant_objects(files: dict[str, bytes]) -> list[str]:
+def tenant_objects(files: dict[str, bytes], tenants: list[dict],
+                   known_hosts: list[str]) -> list[str]:
     """What cluster-tenants applies (task 3.4), asserted per object."""
     bad: list[str] = []
     rendered = {p[len(TD):]: b for p, b in files.items() if p.startswith(TD)}
-    lan = [t for t in TENANTS if (t.get("grants") or {}).get("lan_ip")]
-    agents = [t for t in TENANTS if t["kind"] == "agent"]
+    lan = [t for t in tenants if (t.get("grants") or {}).get("lan_ip")]
+    agents = [t for t in tenants if t["kind"] == "agent"]
     want_files = {"kustomization.yaml", "namespaces.yaml", "rbac.yaml", "quota.yaml",
                   "networkpolicy.yaml", "tenant-git-auth.sops.yaml",
                   "tenant-sops-age.sops.yaml"}
@@ -335,7 +385,7 @@ def tenant_objects(files: dict[str, bytes]) -> list[str]:
             bad.append(f"{label} = {got!r}, expected {want!r}")
 
     q_default = {"cpu": "4", "memory": "8Gi", "pods": 50}
-    for t in TENANTS:
+    for t in tenants:
         g = t.get("grants") or {}
         level = ("privileged" if g.get("host_network") else
                  "baseline" if g.get("baseline") else "restricted")
@@ -376,6 +426,9 @@ def tenant_objects(files: dict[str, bytes]) -> list[str]:
                 bad.append(f"CiliumNetworkPolicy {ns}: restricts egress (spec says it must not)")
         sa = get("Secret", "flux-system", f"tenant-{t['name']}-git-auth").get("stringData", {})
         eq(f"tenant-{t['name']}-git-auth keys", sorted(sa), ["identity", "known_hosts"])
+        got_hosts = [l.strip() for l in sa.get("known_hosts", "").splitlines() if l.strip()]
+        if got_hosts != known_hosts:
+            bad.append(f"tenant-{t['name']}-git-auth known_hosts differs from {BOOTSTRAP_KEY}")
         if f"placeholder-{t['name']}-ro" not in sa.get("identity", ""):
             bad.append(f"tenant-{t['name']}-git-auth identity is not tenants/{t['name']}.deploy.key")
         age = get("Secret", "flux-system", f"tenant-{t['name']}-sops-age").get("stringData", {})
@@ -403,7 +456,8 @@ def tenant_objects(files: dict[str, bytes]) -> list[str]:
     return bad
 
 
-def tenant_shape(with_t: dict[str, bytes], without: dict[str, bytes]) -> list[str]:
+def tenant_shape(with_t: dict[str, bytes], without: dict[str, bytes],
+                 tenants: list[dict], known_hosts: list[str]) -> list[str]:
     bad: list[str] = []
     if KS not in with_t:
         return [f"{KS} not rendered"]
@@ -419,7 +473,7 @@ def tenant_shape(with_t: dict[str, bytes], without: dict[str, bytes]) -> list[st
     else:
         added = {k: v for k, v in cs_with[0].get("stringData", {}).items()
                  if k not in cs_without[0].get("stringData", {})}
-        agents = [t for t in TENANTS if t["kind"] == "agent"]
+        agents = [t for t in tenants if t["kind"] == "agent"]
         want_added = {"IM_APPS_REPO": agents[0]["repository"]} if agents else {}
         if added != want_added:
             bad.append(f"{CS}: keys added by tenants = {added}, expected {want_added}")
@@ -427,10 +481,10 @@ def tenant_shape(with_t: dict[str, bytes], without: dict[str, bytes]) -> list[st
                                              if k not in added})
         if rest != cs_without[0]:
             bad.append(f"{CS}: tenants changed something other than the added key")
-    bad += tenant_objects(with_t)
+    bad += tenant_objects(with_t, tenants, known_hosts)
     got = docs(with_t[KS])
     base = docs(without[KS])
-    tenant_names = {f"tenant-{t['name']}" for t in TENANTS} | {"cluster-tenants"}
+    tenant_names = {f"tenant-{t['name']}" for t in tenants} | {"cluster-tenants"}
     rest = [d for d in got if ident(d)[1] not in tenant_names]
     if rest != base:
         bad.append(f"{KS}: the non-tenant documents differ from the tenant-free render "
@@ -464,7 +518,7 @@ def tenant_shape(with_t: dict[str, bytes], without: dict[str, bytes]) -> list[st
         want(ct, ["spec", "dependsOn"], [{"name": "cluster-apps-base"}], lbl)
         # The cluster key decrypts the platform's own tenant Secrets.
         want(ct, ["spec", "decryption"], {"provider": "sops"}, lbl)
-    for t in TENANTS:
+    for t in tenants:
         n = f"tenant-{t['name']}"
         one("ServiceAccount", n)
         g = one("GitRepository", n)
@@ -562,30 +616,46 @@ def main() -> int:
                     print("ok  " + line)
 
             # Part 3: the shape of a render that HAS tenants.
-            for name, fixture, nodes in FIXTURES:
-                if name != TENANT_BASE:
-                    continue
-                with_t = dict(copy.deepcopy(fixture), app_repos=copy.deepcopy(TENANTS))
-                problem = vet(args.tree, with_t, nodes)
-                if problem:
-                    failures.append(f"[with-tenants] fixture fails cue vet (guard defect):\n{problem}")
-                    break
-                try:
-                    got = render(args.tree, with_t, nodes, key)
-                    without = render(args.tree, fixture, nodes, key)
-                except RuntimeError as e:
-                    failures.append(f"[with-tenants] render failed: {e}")
-                    break
-                bad = tenant_shape(got, without)
-                if bad:
-                    failures.append("[with-tenants] " + "\n  ".join(bad))
-                else:
-                    print(f"ok  [with-tenants] {len(TENANTS)} tenants on {TENANT_BASE}: "
-                          f"cluster-tenants + SA/GitRepository/Kustomization each, "
-                          f"no postBuild, no tenant ClusterRoleBinding, nothing else changed")
-                break
-            else:
+            base = next((f for f in FIXTURES if f[0] == TENANT_BASE), None)
+            if base is None:
                 failures.append(f"[with-tenants] base fixture {TENANT_BASE} not found (guard defect)")
+            else:
+                _, fixture, nodes = base
+                hosts = bootstrap_known_hosts(args.tree)
+                if len(hosts) < 3:
+                    failures.append(f"[with-tenants] {BOOTSTRAP_KEY}: {len(hosts)} known_hosts "
+                                    f"lines found, expected 3 (guard defect)")
+                try:
+                    example = sample_example(args.tree)
+                except RuntimeError as e:
+                    failures.append(f"[sample-example] {e}")
+                    example = None
+                scenarios = [("with-tenants", TENANTS), ("vendor-only", VENDOR_ONLY)]
+                if example is not None:
+                    scenarios.append(("sample-example", example))
+                without = None
+                for label, tenants in scenarios:
+                    with_t = dict(copy.deepcopy(fixture), app_repos=copy.deepcopy(tenants))
+                    problem = vet(args.tree, with_t, nodes)
+                    if problem:
+                        what = ("the example operators copy fails cue vet"
+                                if label == "sample-example" else
+                                "fixture fails cue vet (guard defect)")
+                        failures.append(f"[{label}] {what}:\n{problem}")
+                        continue
+                    try:
+                        got = render(args.tree, with_t, nodes, key)
+                        if without is None:
+                            without = render(args.tree, fixture, nodes, key)
+                    except RuntimeError as e:
+                        failures.append(f"[{label}] render failed: {e}")
+                        continue
+                    bad = tenant_shape(got, without, tenants, hosts)
+                    if bad:
+                        failures.append(f"[{label}] " + "\n  ".join(bad))
+                    else:
+                        print(f"ok  [{label}] {len(tenants)} tenant(s) on {TENANT_BASE}: "
+                              f"every tenant object as declared, nothing else changed")
     except CannotMeasure as e:
         if failures:
             print("\n".join("FAIL " + f for f in failures))
