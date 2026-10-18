@@ -1,0 +1,24 @@
+#% if app_repos | selectattr('grants.lan_ip') | list %#
+#| A tenant's own LoadBalancer pool (D9). plugin.py has already refused a range
+   that overlaps lb_pool_blocks or another tenant's, because overlapping pools
+   report PoolConflict and the narrower one never allocates. The selector is a
+   SERVICE label (Cilium matches Service labels, not namespace labels — measured
+   on jg-jcc2, root 3b.1); jg-base's admission policy makes that label
+   trustworthy, and its shared pool selects `jg.tenant DoesNotExist`. #|
+#% for repo in app_repos if repo.grants.lan_ip %#
+---
+apiVersion: cilium.io/v2
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: tenant-#{ repo.name }#
+  labels:
+    jg.tenant: #{ repo.name }#
+spec:
+  blocks:
+    - start: "#{ repo.lan_ip_range.start }#"
+      stop: "#{ repo.lan_ip_range.stop }#"
+  serviceSelector:
+    matchLabels:
+      jg.tenant: #{ repo.name }#
+#% endfor %#
+#% endif %#

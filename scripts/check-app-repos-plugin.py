@@ -228,6 +228,41 @@ def run_cases() -> int:
             {"app_repos": [vendor(grants={"devices": ["/dev/ttyUSB0"]})]},
             "grants.devices", "task 8.2")
 
+    # tenant_key(): the file-name contract with the provisioning skill.
+    def key_case(label, files, kind, must, forbid=""):
+        import tempfile as _t
+        with _t.TemporaryDirectory() as d:
+            for name, body in files.items():
+                (Path(d) / name).write_text(body)
+            try:
+                load_plugin().tenant_key("acme", kind, directory=d)
+            except Exception as e:  # noqa: BLE001
+                msg = str(e)
+                ok = must in msg and not (forbid and forbid in msg)
+                report(label, ok, f"message: {msg}")
+                return
+            report(label, False, "returned; expected a refusal")
+
+    key_case("tenant_key: a missing file is refused, naming the path",
+             {}, "deploy", "acme.deploy.key not found")
+    key_case("tenant_key: a public half under the private name is refused, "
+             "without echoing it",
+             {"acme.deploy.key": "ssh-ed25519 AAAAC3NzaFAKEPUBLIC acme\n"},
+             "deploy", "does not look like a private deploy key", forbid="AAAAC3NzaFAKEPUBLIC")
+    key_case("tenant_key: an age public key is refused",
+             {"acme.age.key": "age1fakepublicrecipient\n"}, "age",
+             "does not look like a private age key", forbid="age1fakepublic")
+    try:
+        import tempfile as _t
+        with _t.TemporaryDirectory() as d:
+            (Path(d) / "acme.write.key").write_text(
+                "-----BEGIN OPENSSH PRIVATE KEY-----\nx\n-----END OPENSSH PRIVATE KEY-----\n")
+            got = load_plugin().tenant_key("acme", "write", directory=d)
+        report("tenant_key: a well-formed write key is returned stripped",
+               got.startswith("-----BEGIN") and got.endswith("-----"), f"got {got!r}")
+    except Exception as e:  # noqa: BLE001
+        report("tenant_key: a well-formed write key is returned stripped", False, str(e))
+
     passed = sum(results)
     print(f"ok — {passed}/{len(results)} app_repos plugin cases as expected"
           if all(results) else
