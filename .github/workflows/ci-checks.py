@@ -59,8 +59,9 @@ RUN = [
     "check-node-dns-path.py",
     "check-credential-expiry-pairing.py",
     "check-template-integrity.py",
-    # Needs makejinja, cue and age-keygen (all from mise). Renders four
-    # fixtures in temp dirs with placeholder credentials and a throwaway key;
+    # Needs makejinja, cue, age-keygen and yq (all from mise). Renders four
+    # fixtures, plus one of them with two tenants, in temp dirs with
+    # placeholder credentials and a throwaway key;
     # the `--against <ref>` mode is not run here, see its docstring (jgct#214).
     "check-tenant-render.py",
 ]

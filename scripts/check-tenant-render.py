@@ -22,6 +22,18 @@ That is asserted two ways, because the useful one cannot run in CI:
    pastes it. It is NOT in CI: an unrelated template change is *supposed* to
    change the render, and a guard that fires on correct input gets switched off.
 
+3. **Always (CI), from task 3.3:** one fixture rendered WITH two tenants
+   (a vendor and a multi-namespace agent), and the Flux objects in `ks.yaml`
+   asserted field by field: one `cluster-tenants`; per tenant a ServiceAccount,
+   a GitRepository on its own deploy key, and a Kustomization that runs as
+   `tenant-<name>`, decrypts with `tenant-<name>-sops-age` and has **no**
+   `postBuild` (cluster-secrets is every credential the cluster has). Every
+   other document in `ks.yaml` and every other file must equal the tenant-free
+   render, so adding a tenant cannot change anything that is not the tenant.
+   No ClusterRoleBinding anywhere may name a tenant ServiceAccount. Without
+   this part, "identical when absent" would also be what a tenant loop that
+   never renders looks like.
+
 The fixtures are four complete, `cue vet`-valid inputs chosen to walk different
 branches (profile, provisioning path, storage, extras, claude instances, auth0,
 repository visibility). A fixture that fails `cue vet` is a defect in this
@@ -240,6 +252,113 @@ def checkout(ref: str, dest: Path) -> None:
     subprocess.run(["tar", "-x", "-C", str(dest)], input=archive.stdout, check=True)
 
 
+# Part 3. Built on full-omni-extras: a narrowed shared pool (three declared
+# gateway addresses) so a lan_ip grant is legal, and `full` so it is not
+# refused as an appliance.
+TENANT_BASE = "full-omni-extras"
+TENANTS = [
+    dict(name="acme", repository="fixture/acme-app", kind="vendor"),
+    dict(name="shop", repository="fixture/shop-app", kind="agent",
+         namespaces=["shop", "shop-db"], branch="prod",
+         grants=dict(baseline=True, lan_ip=1),
+         lan_ip_range=dict(start="192.0.2.200", stop="192.0.2.200")),
+]
+KS = "kubernetes/flux/cluster/ks.yaml"
+
+
+def docs(body: bytes) -> list[dict]:
+    """Every YAML document as a dict, via yq (CI's python has no PyYAML)."""
+    proc = subprocess.run([tool("yq"), "-o=json", "-I=0", "."], input=body,
+                          capture_output=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"yq could not parse: {proc.stderr.decode().strip()}")
+    out = [json.loads(l) for l in proc.stdout.decode().splitlines() if l.strip()]
+    return [d for d in out if isinstance(d, dict)]
+
+
+def ident(d: dict) -> tuple[str, str]:
+    return d.get("kind", ""), d.get("metadata", {}).get("name", "")
+
+
+def tenant_shape(with_t: dict[str, bytes], without: dict[str, bytes]) -> list[str]:
+    bad: list[str] = []
+    if KS not in with_t:
+        return [f"{KS} not rendered"]
+    # Nothing but ks.yaml (and, from task 3.4, kubernetes/tenants/) may differ.
+    for d in diff_names(without, with_t):
+        path = d.split(": ", 1)[1]
+        if path != KS and not path.startswith("kubernetes/tenants/"):
+            bad.append(f"adding tenants changed a non-tenant file: {d}")
+    got = docs(with_t[KS])
+    base = docs(without[KS])
+    tenant_names = {f"tenant-{t['name']}" for t in TENANTS} | {"cluster-tenants"}
+    rest = [d for d in got if ident(d)[1] not in tenant_names]
+    if rest != base:
+        bad.append(f"{KS}: the non-tenant documents differ from the tenant-free render "
+                   f"({len(rest)} vs {len(base)} documents)")
+    by = {}
+    for d in got:
+        by.setdefault(ident(d), []).append(d)
+
+    def one(kind, name):
+        found = by.get((kind, name), [])
+        if len(found) != 1:
+            bad.append(f"{kind}/{name}: {len(found)} rendered, expected 1")
+            return {}
+        if found[0].get("metadata", {}).get("namespace") != "flux-system":
+            bad.append(f"{kind}/{name}: not in flux-system")
+        return found[0]
+
+    def want(obj, path, expected, label):
+        cur = obj
+        for k in path:
+            cur = cur.get(k) if isinstance(cur, dict) else None
+        if cur != expected:
+            bad.append(f"{label} .{'.'.join(path)} = {cur!r}, expected {expected!r}")
+
+    ct = one("Kustomization", "cluster-tenants")
+    if ct:
+        lbl = "Kustomization/cluster-tenants"
+        want(ct, ["spec", "path"], "./kubernetes/tenants", lbl)
+        want(ct, ["spec", "prune"], True, lbl)
+        want(ct, ["spec", "sourceRef", "name"], "flux-system", lbl)
+        want(ct, ["spec", "dependsOn"], [{"name": "cluster-apps-base"}], lbl)
+        # The cluster key decrypts the platform's own tenant Secrets.
+        want(ct, ["spec", "decryption"], {"provider": "sops"}, lbl)
+    for t in TENANTS:
+        n = f"tenant-{t['name']}"
+        one("ServiceAccount", n)
+        g = one("GitRepository", n)
+        if g:
+            lbl = f"GitRepository/{n}"
+            want(g, ["spec", "url"], f"ssh://git@github.com/{t['repository']}.git", lbl)
+            want(g, ["spec", "ref"], {"branch": t.get("branch", "main")}, lbl)
+            want(g, ["spec", "secretRef", "name"], f"{n}-git-auth", lbl)
+        k = one("Kustomization", n)
+        if k:
+            lbl = f"Kustomization/{n}"
+            want(k, ["spec", "serviceAccountName"], n, lbl)
+            want(k, ["spec", "decryption"],
+                 {"provider": "sops", "secretRef": {"name": f"{n}-sops-age"}}, lbl)
+            want(k, ["spec", "sourceRef"],
+                 {"kind": "GitRepository", "name": n, "namespace": "flux-system"}, lbl)
+            want(k, ["spec", "prune"], True, lbl)
+            want(k, ["spec", "dependsOn"], [{"name": "cluster-tenants"}], lbl)
+            for forbidden in ("postBuild", "targetNamespace", "kubeConfig"):
+                if forbidden in k.get("spec", {}):
+                    bad.append(f"{lbl} has spec.{forbidden}")
+    # No ClusterRoleBinding, in any rendered file, may name a tenant SA.
+    for path, body in with_t.items():
+        if not path.endswith((".yaml", ".yml")):
+            continue
+        for d in docs(body):
+            if d.get("kind") == "ClusterRoleBinding":
+                for s in d.get("subjects") or []:
+                    if str(s.get("name", "")).startswith("tenant-"):
+                        bad.append(f"{path}: ClusterRoleBinding/{ident(d)[1]} names {s.get('name')}")
+    return bad
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--tree", type=Path, default=ROOT,
@@ -299,6 +418,32 @@ def main() -> int:
                         line += f"; identical to {args.against} ({len(before)} files)"
                 if not any(f.startswith(f"[{name}]") for f in failures):
                     print("ok  " + line)
+
+            # Part 3: the shape of a render that HAS tenants.
+            for name, fixture, nodes in FIXTURES:
+                if name != TENANT_BASE:
+                    continue
+                with_t = dict(copy.deepcopy(fixture), app_repos=copy.deepcopy(TENANTS))
+                problem = vet(args.tree, with_t, nodes)
+                if problem:
+                    failures.append(f"[with-tenants] fixture fails cue vet (guard defect):\n{problem}")
+                    break
+                try:
+                    got = render(args.tree, with_t, nodes, key)
+                    without = render(args.tree, fixture, nodes, key)
+                except RuntimeError as e:
+                    failures.append(f"[with-tenants] render failed: {e}")
+                    break
+                bad = tenant_shape(got, without)
+                if bad:
+                    failures.append("[with-tenants] " + "\n  ".join(bad))
+                else:
+                    print(f"ok  [with-tenants] {len(TENANTS)} tenants on {TENANT_BASE}: "
+                          f"cluster-tenants + SA/GitRepository/Kustomization each, "
+                          f"no postBuild, no tenant ClusterRoleBinding, nothing else changed")
+                break
+            else:
+                failures.append(f"[with-tenants] base fixture {TENANT_BASE} not found (guard defect)")
     except CannotMeasure as e:
         if failures:
             print("\n".join("FAIL " + f for f in failures))
@@ -314,7 +459,7 @@ def main() -> int:
         print("\n".join("FAIL " + f for f in failures))
         return 1
     print(f"PASS -- {len(FIXTURES)} fixtures: no tenant object and no byte change "
-          f"when `app_repos` is absent or empty"
+          f"when `app_repos` is absent or empty; with tenants, only tenant objects"
           + (f"; each render identical to {args.against}" if args.against else ""))
     return 0
 

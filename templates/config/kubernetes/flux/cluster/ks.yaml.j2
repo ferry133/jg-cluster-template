@@ -591,3 +591,96 @@ spec:
   dependsOn:
     - name: cluster-apps-base
 #% endfor %#
+#| ── Standalone app repos (tenants) ──────────────────────────────────────────
+   jgct#214 task 3.3, fleet-ops root `standalone-app-repos` design D1/D5.
+   Rendered only when app_repos is non-empty: with none declared this file must
+   be byte-identical to what it was before tenants existed, and
+   check-tenant-render.py asserts exactly that.
+
+   Everything Flux needs for a tenant lives in flux-system (D1); the tenant only
+   gets namespaces. What isolates it is that its Kustomization runs as
+   `tenant-<name>`, a ServiceAccount bound (by cluster-tenants, task 3.4) to
+   `tenant-admin` in its declared namespaces and nowhere else. So, deliberately:
+
+     - NO postBuild.substituteFrom: cluster-secrets is every credential the
+       cluster has, and substitution would hand it to whatever the tenant
+       writes as `${VAR}`.
+     - decryption.secretRef: the tenant's OWN age key. The cluster key never
+       decrypts a tenant file (D2), and secretRef does not fall back to it
+       (root spike 1.1).
+     - no targetNamespace: a tenant may declare several namespaces, and an
+       object that names none is applied in flux-system, where the SA has no
+       verbs — it fails loudly instead of landing somewhere.
+
+   cluster-tenants applies ./kubernetes/tenants (namespaces, RoleBindings,
+   quotas, policies and the sops Secrets these objects reference), so every
+   tenant Kustomization depends on it. #|
+#% if app_repos %#
+---
+# ── cluster-tenants — namespace-level objects and Secrets for every tenant ──
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster-tenants
+  namespace: flux-system
+spec:
+  decryption:
+    provider: sops
+  deletionPolicy: WaitForTermination
+  interval: 1h
+  path: ./kubernetes/tenants
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+  dependsOn:
+    - name: cluster-apps-base
+#% for repo in app_repos %#
+---
+# ── tenant #{ repo.name }# (#{ repo.kind }#: #{ repo.repository }#) ──
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tenant-#{ repo.name }#
+  namespace: flux-system
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: tenant-#{ repo.name }#
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: "ssh://git@github.com/#{ repo.repository }#.git"
+  ref:
+    # Quoted for the reason the jg-base GitRepository above gives.
+    branch: "#{ repo.branch }#"
+  # Read-only deploy key, rendered by cluster-tenants (task 3.4), same keys as
+  # the root sync's github-deploy-key: identity, known_hosts.
+  secretRef:
+    name: tenant-#{ repo.name }#-git-auth
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: tenant-#{ repo.name }#
+  namespace: flux-system
+spec:
+  serviceAccountName: tenant-#{ repo.name }#
+  decryption:
+    provider: sops
+    secretRef:
+      name: tenant-#{ repo.name }#-sops-age
+  deletionPolicy: WaitForTermination
+  interval: 1h
+  path: ./
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: tenant-#{ repo.name }#
+    namespace: flux-system
+  dependsOn:
+    - name: cluster-tenants
+#% endfor %#
+#% endif %#
