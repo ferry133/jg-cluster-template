@@ -952,9 +952,11 @@ cluster_name: "xxxxxx"
 #   - jg-base ships the ClusterRole `tenant-admin`. Without it the tenant's
 #     RoleBindings grant nothing and its Kustomization fails (closed, not open).
 #     Check: `kubectl get clusterrole tenant-admin`.
-#   - The entry is created by fleet-ops' tenant provisioning skill, not by
-#     hand. It creates the repo, writes the keys below, registers the deploy
-#     key, adds the entry, runs `task configure` and refreshes escrow.
+#   - The entry is created by fleet-ops' `tenant-repo-provision` skill, not
+#     by hand. It creates the repo, writes the keys below, registers the
+#     deploy key, adds the entry and runs `task configure`; THEN run
+#     `escrow-refresh` yourself — the skill tells you to, it does not do it,
+#     and until you do the tenant keys are not in escrow.
 #   - The keys exist in this directory under `tenants/`, which is git-ignored
 #     and travels in the escrow bundle. `task configure` stops, naming the
 #     file, if one is missing or is a public key:
@@ -969,8 +971,11 @@ cluster_name: "xxxxxx"
 #   repository    owner/repo — company-held and private.
 #   kind          vendor  a third party, added to the repo as a collaborator
 #                 agent   written by this cluster's own im. At most ONE per
-#                         cluster: im gets this repo's write key and its name
-#                         (IM_APPS_REPO). After the first apply, restart im
+#                         cluster, and its name must be `im-apps`: im's own
+#                         instructions (k8scc im-policy.md) refer to the
+#                         Kustomization `tenant-im-apps`. im gets this repo's
+#                         write key and its name (IM_APPS_REPO). After the
+#                         first apply, restart im
 #                         (`kubectl -n claudecode rollout restart deploy/im`) —
 #                         a running im does not see a Secret created later.
 #   namespaces    default [<name>]. Unique across all entries; none of the
@@ -998,18 +1003,18 @@ cluster_name: "xxxxxx"
 #                 `task configure` refuses an overlap, naming both ranges.
 #
 # ⚠️ Removing an entry is destructive: Flux prunes the tenant's namespaces and
-# everything in them, PVCs included. Use the revoke skill, which lists the PVCs
-# and asks first.
+# everything in them, PVCs included. Use fleet-ops' `tenant-repo-revoke`
+# skill, which lists the PVCs and asks first.
 #
 # app_repos:
 #   - name: acme
 #     repository: your-org/acme-app
 #     kind: vendor
-#   - name: shop
-#     repository: your-org/shop-app
-#     kind: agent
-#     namespaces: [shop, shop-db]
+#     namespaces: [acme, acme-db]
 #     grants:
 #       baseline: true
 #       lan_ip: 1
 #     lan_ip_range: {start: "10.9.x.200", stop: "10.9.x.200"}
+#   - name: im-apps
+#     repository: your-org/your-cluster-im-apps
+#     kind: agent
