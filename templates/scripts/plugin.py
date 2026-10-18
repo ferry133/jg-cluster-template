@@ -168,6 +168,37 @@ def github_deploy_key(file_path: str = 'github-deploy.key') -> str:
         raise RuntimeError(f"Unexpected error while reading {file_path}: {e}")
 
 
+# A tenant's key material, from the git-ignored `tenants/` directory the
+# provisioning skill writes (jgct#214 task 3.4; `.gitignore` `/tenants*/`,
+# task 3.5). The file names ARE the contract with that skill:
+#   tenants/<name>.age.key     the tenant's age identity (design D2)
+#   tenants/<name>.deploy.key  read-only deploy key Flux pulls with
+#   tenants/<name>.write.key   kind: agent only — im's write deploy key (D5)
+# The shape check catches the likeliest mistake, a public half under the
+# private name, without ever putting the content into the message.
+TENANT_KEY_FILES = {
+    'age': ('{}.age.key', 'AGE-SECRET-KEY-'),
+    'deploy': ('{}.deploy.key', 'PRIVATE KEY-----'),
+    'write': ('{}.write.key', 'PRIVATE KEY-----'),
+}
+
+
+def tenant_key(name: str, kind: str, directory: str = 'tenants') -> str:
+    pattern, marker = TENANT_KEY_FILES[kind]
+    path = Path(directory) / pattern.format(name)
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"{path} not found: app_repos[{name}] needs its {kind} key there. "
+            f"The tenant provisioning skill (fleet-ops) writes it; this "
+            f"directory is git-ignored and travels in the escrow bundle.")
+    text = path.read_text().strip()
+    if marker not in text:
+        raise ValueError(
+            f"{path} does not look like a private {kind} key (no "
+            f"{marker!r} line) — a public half under the private name?")
+    return text
+
+
 # Return the Flux / GitHub push token from github-push-token.txt
 def github_push_token(file_path: str = 'github-push-token.txt') -> str:
     try:
@@ -1138,4 +1169,5 @@ class Plugin(makejinja.plugin.Plugin):
             github_deploy_key,
             github_push_token,
             talos_patches,
+            tenant_key,
         ]

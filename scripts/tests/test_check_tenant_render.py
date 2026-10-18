@@ -198,6 +198,89 @@ class TenantRenderGuard(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertIn("ClusterRoleBinding/tenant-acme-oops names tenant-acme", out)
 
+    # 12b -------------------------------------------------------------------
+    def test_12b_tenant_kustomization_on_another_path_fails(self):
+        # fleet-ops-96 [cde990]'s finding on #220: this mutation stayed green.
+        self.edit(KS, "  path: ./\n  prune: true\n", "  path: ./kubernetes\n  prune: true\n")
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("Kustomization/tenant-acme .spec.path = './kubernetes'", out)
+
+    # 13-19: task 3.4, the objects cluster-tenants applies.
+    T = Path("templates/config/kubernetes/tenants")
+
+    # 13 --------------------------------------------------------------------
+    def test_13_binding_to_admin_fails(self):
+        # The spec's own negative control: a tenant bound to `admin`.
+        self.edit(self.T / "rbac.yaml.j2", "  name: tenant-admin\n", "  name: admin\n")
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("'name': 'admin'", out)
+
+    # 14 --------------------------------------------------------------------
+    def test_14_a_declared_psa_level_fails(self):
+        self.edit(self.T / "namespaces.yaml.j2",
+                  "pod-security.kubernetes.io/enforce: #{ repo.psa_level }#",
+                  "pod-security.kubernetes.io/enforce: privileged")
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("Namespace/acme labels", out)
+
+    # 15 --------------------------------------------------------------------
+    def test_15_quota_without_the_nodeport_cap_fails(self):
+        self.edit(self.T / "quota.yaml.j2", '    services.nodeports: "0"\n', "")
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("ResourceQuota acme", out)
+
+    # 16 --------------------------------------------------------------------
+    def test_16_policy_restricting_egress_fails(self):
+        self.edit(self.T / "networkpolicy.yaml.j2", "  endpointSelector: {}\n",
+                  "  endpointSelector: {}\n  egress:\n    - toEntities:\n        - cluster\n")
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("restricts egress", out)
+
+    # 17 --------------------------------------------------------------------
+    def test_17_im_writing_with_the_read_only_key_fails(self):
+        self.edit(self.T / "im-apps-write-key.sops.yaml.j2",
+                  "tenant_key(repo.name, 'write')", "tenant_key(repo.name, 'deploy')")
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("im-apps-write-key identity is not the agent's write key", out)
+
+    # 18 --------------------------------------------------------------------
+    def test_18_an_extra_object_fails(self):
+        # How a ClusterRole or a second binding would arrive.
+        self.append(self.T / "rbac.yaml.j2",
+                    "#% if app_repos %#\n---\napiVersion: rbac.authorization.k8s.io/v1\n"
+                    "kind: ClusterRole\nmetadata:\n  name: tenant-extra\nrules: []\n#% endif %#\n")
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("unexpected object ('ClusterRole', '', 'tenant-extra')", out)
+
+    # 19 --------------------------------------------------------------------
+    def test_19_unconditional_im_apps_repo_fails(self):
+        # Part 1, not part 3: a cluster with no tenants must not gain the key.
+        self.append(Path("templates/config/kubernetes/components/sops/cluster-secrets.sops.yaml.j2"),
+                    '  IM_APPS_REPO: ""\n')
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("contains `IM_APPS_REPO`", out)
+
+    # 20 --------------------------------------------------------------------
+    def test_20_pool_selecting_on_the_label_alone_fails(self):
+        # fleet-ops-96 [cde990] on #221: a Service label is tenant-writable.
+        path = self.tree / self.T / "lb-pools.yaml.j2"
+        text = path.read_text()
+        start = text.index("    matchExpressions:\n")
+        end = text.index("#% endfor %#\n", start) + len("#% endfor %#\n")
+        path.write_text(text[:start] + text[end:])
+        self.assertNotIn("io.kubernetes.service.namespace\n", path.read_text())
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("pool tenant-shop selector", out)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -158,6 +158,16 @@ _PLACEHOLDERS = {
     "auth0.json": json.dumps({
         "domain": "example.invalid", "client_id": "placeholder",
         "client_secret": "placeholder", "allowed_emails": ["ops@example.invalid"]}),
+    # Tenant key files for part 3 (plugin.py tenant_key()). Fakes that carry
+    # only the marker line tenant_key() checks for; never real keys.
+    "tenants/acme.age.key": "# placeholder\nAGE-SECRET-KEY-1PLACEHOLDERACME\n",
+    "tenants/acme.deploy.key": "-----BEGIN OPENSSH PRIVATE KEY-----\nplaceholder-acme-ro\n"
+                               "-----END OPENSSH PRIVATE KEY-----\n",
+    "tenants/shop.age.key": "# placeholder\nAGE-SECRET-KEY-1PLACEHOLDERSHOP\n",
+    "tenants/shop.deploy.key": "-----BEGIN OPENSSH PRIVATE KEY-----\nplaceholder-shop-ro\n"
+                               "-----END OPENSSH PRIVATE KEY-----\n",
+    "tenants/shop.write.key": "-----BEGIN OPENSSH PRIVATE KEY-----\nplaceholder-shop-rw\n"
+                              "-----END OPENSSH PRIVATE KEY-----\n",
 }
 
 
@@ -189,6 +199,7 @@ def stage(tree: Path, work: Path, fixture: dict, nodes: list, age_key: Path) -> 
     (work / "nodes.yaml").write_text(dump_yaml({"nodes": nodes}))
     shutil.copy2(age_key, work / "age.key")
     for name, body in _PLACEHOLDERS.items():
+        (work / name).parent.mkdir(parents=True, exist_ok=True)
         (work / name).write_text(body)
 
 
@@ -230,7 +241,8 @@ def tenant_traces(files: dict[str, bytes]) -> list[str]:
             found.append(f"{path}: a tenants/ path")
             continue
         text = body.decode("utf-8", "replace")
-        for needle in ("name: cluster-tenants", "name: tenant-", "jg.tenant"):
+        for needle in ("name: cluster-tenants", "name: tenant-", "jg.tenant",
+                       "IM_APPS_REPO", "im-apps-write-key"):
             if needle in text:
                 found.append(f"{path}: contains `{needle}`")
     return found
@@ -264,6 +276,8 @@ TENANTS = [
          lan_ip_range=dict(start="192.0.2.200", stop="192.0.2.200")),
 ]
 KS = "kubernetes/flux/cluster/ks.yaml"
+CS = "kubernetes/components/sops/cluster-secrets.sops.yaml"
+TD = "kubernetes/tenants/"
 
 
 def docs(body: bytes) -> list[dict]:
@@ -280,6 +294,115 @@ def ident(d: dict) -> tuple[str, str]:
     return d.get("kind", ""), d.get("metadata", {}).get("name", "")
 
 
+def tenant_objects(files: dict[str, bytes]) -> list[str]:
+    """What cluster-tenants applies (task 3.4), asserted per object."""
+    bad: list[str] = []
+    rendered = {p[len(TD):]: b for p, b in files.items() if p.startswith(TD)}
+    lan = [t for t in TENANTS if (t.get("grants") or {}).get("lan_ip")]
+    agents = [t for t in TENANTS if t["kind"] == "agent"]
+    want_files = {"kustomization.yaml", "namespaces.yaml", "rbac.yaml", "quota.yaml",
+                  "networkpolicy.yaml", "tenant-git-auth.sops.yaml",
+                  "tenant-sops-age.sops.yaml"}
+    if lan:
+        want_files.add("lb-pools.yaml")
+    if agents:
+        want_files.add("im-apps-write-key.sops.yaml")
+    if set(rendered) != want_files:
+        bad.append(f"{TD}: files {sorted(rendered)}, expected {sorted(want_files)}")
+        return bad
+    kz = docs(rendered["kustomization.yaml"])
+    if len(kz) != 1 or sorted(kz[0].get("resources", [])) != sorted(want_files - {"kustomization.yaml"}):
+        bad.append(f"{TD}kustomization.yaml: resources do not list exactly the rendered files")
+    objs: dict[tuple[str, str, str], dict] = {}
+    for f, body in rendered.items():
+        if f == "kustomization.yaml":
+            continue
+        for d in docs(body):
+            key = (d.get("kind", ""), d.get("metadata", {}).get("namespace", ""),
+                   d.get("metadata", {}).get("name", ""))
+            if key in objs:
+                bad.append(f"{TD}{f}: duplicate {key}")
+            objs[key] = d
+
+    def get(kind, ns, name):
+        o = objs.pop((kind, ns, name), None)
+        if o is None:
+            bad.append(f"{kind} {ns}/{name}: not rendered")
+        return o or {}
+
+    def eq(label, got, want):
+        if got != want:
+            bad.append(f"{label} = {got!r}, expected {want!r}")
+
+    q_default = {"cpu": "4", "memory": "8Gi", "pods": 50}
+    for t in TENANTS:
+        g = t.get("grants") or {}
+        level = ("privileged" if g.get("host_network") else
+                 "baseline" if g.get("baseline") else "restricted")
+        nss = t.get("namespaces", [t["name"]])
+        q = dict(q_default, **(t.get("quota") or {}))
+        for ns in nss:
+            labels = get("Namespace", "", ns).get("metadata", {}).get("labels", {})
+            want = {"pod-security.kubernetes.io/enforce": level, "jg.tenant": t["name"]}
+            if g.get("host_network"):
+                want["jg.tenant-privileged"] = "granted"
+            if g.get("lan_ip"):
+                want["jg.tenant-lan-ip"] = "granted"
+            eq(f"Namespace/{ns} labels", labels, want)
+            rb = get("RoleBinding", ns, f"tenant-{t['name']}")
+            eq(f"RoleBinding {ns} roleRef", rb.get("roleRef"),
+               {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole",
+                "name": "tenant-admin"})
+            eq(f"RoleBinding {ns} subjects", rb.get("subjects"),
+               [{"kind": "ServiceAccount", "name": f"tenant-{t['name']}",
+                 "namespace": "flux-system"}])
+            eq(f"ResourceQuota {ns}", get("ResourceQuota", ns, "tenant-quota").get("spec"),
+               {"hard": {"requests.cpu": str(q["cpu"]), "requests.memory": str(q["memory"]),
+                         "pods": str(q["pods"]),
+                         "services.loadbalancers": str(g.get("lan_ip", 0)),
+                         "services.nodeports": "0"}})
+            lr = get("LimitRange", ns, "tenant-defaults")
+            eq(f"LimitRange {ns} type", [l.get("type") for l in lr.get("spec", {}).get("limits", [])],
+               ["Container"])
+            np = get("CiliumNetworkPolicy", ns, "tenant-ingress").get("spec", {})
+            eq(f"CiliumNetworkPolicy {ns} endpointSelector", np.get("endpointSelector"), {})
+            ing = np.get("ingress") or [{}, {}]
+            eq(f"CiliumNetworkPolicy {ns} namespaces",
+               sorted(ing[0].get("fromEndpoints", [{}])[0].get("matchExpressions", [{}])[0]
+                      .get("values", [])), sorted(nss + ["network"]))
+            eq(f"CiliumNetworkPolicy {ns} entities", ing[1].get("fromEntities") if len(ing) > 1 else None,
+               ["host", "world"] if g.get("lan_ip") else ["host"])
+            if "egress" in np or "egressDeny" in np:
+                bad.append(f"CiliumNetworkPolicy {ns}: restricts egress (spec says it must not)")
+        sa = get("Secret", "flux-system", f"tenant-{t['name']}-git-auth").get("stringData", {})
+        eq(f"tenant-{t['name']}-git-auth keys", sorted(sa), ["identity", "known_hosts"])
+        if f"placeholder-{t['name']}-ro" not in sa.get("identity", ""):
+            bad.append(f"tenant-{t['name']}-git-auth identity is not tenants/{t['name']}.deploy.key")
+        age = get("Secret", "flux-system", f"tenant-{t['name']}-sops-age").get("stringData", {})
+        eq(f"tenant-{t['name']}-sops-age keys", sorted(age), ["age.agekey"])
+        if f"PLACEHOLDER{t['name'].upper()}" not in age.get("age.agekey", ""):
+            bad.append(f"tenant-{t['name']}-sops-age is not tenants/{t['name']}.age.key")
+        if g.get("lan_ip"):
+            pool = get("CiliumLoadBalancerIPPool", "", f"tenant-{t['name']}").get("spec", {})
+            eq(f"pool tenant-{t['name']} blocks", pool.get("blocks"), [t["lan_ip_range"]])
+            # The namespace half is what a tenant cannot forge (fleet-ops-96's
+            # finding on #221): the label alone lets another tenant draw here.
+            eq(f"pool tenant-{t['name']} selector", pool.get("serviceSelector"),
+               {"matchLabels": {"jg.tenant": t["name"]},
+                "matchExpressions": [{"key": "io.kubernetes.service.namespace",
+                                      "operator": "In", "values": nss}]})
+        if t["kind"] == "agent":
+            wk = get("Secret", "claudecode", "im-apps-write-key").get("stringData", {})
+            eq("im-apps-write-key keys", sorted(wk), ["identity"])
+            if f"placeholder-{t['name']}-rw" not in wk.get("identity", ""):
+                bad.append("im-apps-write-key identity is not the agent's write key")
+    # Anything left over was not asked for: an extra object is how a
+    # ClusterRole or a second binding would arrive.
+    for k, o in objs.items():
+        bad.append(f"{TD}: unexpected object {k}")
+    return bad
+
+
 def tenant_shape(with_t: dict[str, bytes], without: dict[str, bytes]) -> list[str]:
     bad: list[str] = []
     if KS not in with_t:
@@ -287,8 +410,24 @@ def tenant_shape(with_t: dict[str, bytes], without: dict[str, bytes]) -> list[st
     # Nothing but ks.yaml (and, from task 3.4, kubernetes/tenants/) may differ.
     for d in diff_names(without, with_t):
         path = d.split(": ", 1)[1]
-        if path != KS and not path.startswith("kubernetes/tenants/"):
+        if path not in (KS, CS) and not path.startswith("kubernetes/tenants/"):
             bad.append(f"adding tenants changed a non-tenant file: {d}")
+    # cluster-secrets may gain exactly one key, IM_APPS_REPO, for the agent.
+    cs_with, cs_without = docs(with_t[CS]), docs(without[CS])
+    if len(cs_with) != 1 or len(cs_without) != 1:
+        bad.append(f"{CS}: expected one document on each side")
+    else:
+        added = {k: v for k, v in cs_with[0].get("stringData", {}).items()
+                 if k not in cs_without[0].get("stringData", {})}
+        agents = [t for t in TENANTS if t["kind"] == "agent"]
+        want_added = {"IM_APPS_REPO": agents[0]["repository"]} if agents else {}
+        if added != want_added:
+            bad.append(f"{CS}: keys added by tenants = {added}, expected {want_added}")
+        rest = dict(cs_with[0], stringData={k: v for k, v in cs_with[0]["stringData"].items()
+                                             if k not in added})
+        if rest != cs_without[0]:
+            bad.append(f"{CS}: tenants changed something other than the added key")
+    bad += tenant_objects(with_t)
     got = docs(with_t[KS])
     base = docs(without[KS])
     tenant_names = {f"tenant-{t['name']}" for t in TENANTS} | {"cluster-tenants"}
@@ -338,6 +477,9 @@ def tenant_shape(with_t: dict[str, bytes], without: dict[str, bytes]) -> list[st
         if k:
             lbl = f"Kustomization/{n}"
             want(k, ["spec", "serviceAccountName"], n, lbl)
+            # The seed kustomization.yaml sits at the tenant repo root (root
+            # task 5.1); a deeper path would apply nothing and stay Ready.
+            want(k, ["spec", "path"], "./", lbl)
             want(k, ["spec", "decryption"],
                  {"provider": "sops", "secretRef": {"name": f"{n}-sops-age"}}, lbl)
             want(k, ["spec", "sourceRef"],
