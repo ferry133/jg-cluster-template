@@ -327,9 +327,9 @@ APP_REPO_QUOTA_DEFAULTS = {'cpu': '4', 'memory': '8Gi', 'pods': 50}
 # schema rejection would read as a typo.
 APP_REPO_UNSERVED_GRANTS = {
     'l2': "an L2 discovery component (mDNS reflector or Multus+macvlan) — "
-          "fleet-ops root `standalone-app-repos` task 8.1",
+          "ferry133/jg-base#187 (fleet-ops root `standalone-app-repos` task 8.1)",
     'devices': "a device plugin exposing /dev/* as extended resources — "
-               "fleet-ops root `standalone-app-repos` task 8.2",
+               "ferry133/jg-base#188 (fleet-ops root `standalone-app-repos` task 8.2)",
 }
 
 
