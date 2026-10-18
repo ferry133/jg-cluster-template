@@ -66,7 +66,7 @@ SECRET_BASES = (
     "age.key", "x.agekey", "agex.txt",
     "github-deploy.key", "github-deploy.key.pub", "github-push-token.txt",
     "cloudflare-tunnel.json", "auth0.json",
-    "kubeconfigx", "talosconfigx", "omniconfigx",
+    "kubeconfigx", "talosconfigx", "omniconfigx", "acme.age.key",
     "talsecretx.yaml", "secrets.yaml", ".sops.yaml",
     "trello-notifier.yaml", "cluster.yaml", "nodes.yaml",
     ".merged-config.yaml",
@@ -175,6 +175,54 @@ class TestTheDeliberateExceptionsStillHold(unittest.TestCase):
         self.assertIs(_covers("cluster.yaml.bak"), True)
 
 
+class TestTenantCredentialsAreIgnored(unittest.TestCase):
+    """jgct#214 task 3.5: `/tenants*/` and `*.age.key*`.
+
+    The population is what the provisioning skill could write (design D2/D5),
+    including names no extension rule would match, and the tracked side is
+    what the templates render: `kubernetes/tenants/` must stay committable or
+    Flux never sees the tenant Secrets — the shape root task 1.2 hit when a
+    sops file named `secrets.yaml` was ignored and Flux answered `no such file`.
+    """
+
+    KEYS = (
+        "tenants/acme.age.key",       # the design's own name (D2)
+        "tenants/acme.agekey",
+        "tenants/acme.key",
+        "tenants/acme-deploy",        # `ssh-keygen -f tenants/acme-deploy`
+        "tenants/acme-deploy.pub",
+        "tenants/im-apps-write",      # the agent's write key, any name
+        "tenants/sub/dir/anything",
+    )
+
+    def test_every_tenant_credential_name_is_ignored(self):
+        for path in self.KEYS:
+            for suffix in ("",) + SUFFIXES:
+                with self.subTest(path=path + suffix):
+                    self.assertIs(_covers(path + suffix), True,
+                                  f"{path}{suffix} is committable")
+
+    def test_a_backup_copy_of_the_directory_is_ignored(self):
+        self.assertIs(_covers("tenants.bak/acme.age.key"), True)
+        self.assertIs(_covers("tenants-20261018/acme-deploy"), True)
+
+    def test_an_age_key_by_that_name_outside_tenants_is_ignored(self):
+        """`*.age.key*` is not tied to the directory: the same file copied to
+        the repo root is the same credential."""
+        self.assertIs(_covers("acme.age.key"), True)
+        self.assertIs(_covers("config.gen/acme.age.key.bak"), True)
+
+    def test_the_rendered_tenant_objects_stay_committable(self):
+        """The anchor. An unanchored `tenants/` would ignore all of these, and
+        a directory rule cannot be negated back."""
+        for path in ("kubernetes/tenants/im-apps-write-key.sops.yaml",
+                     "kubernetes/tenants/tenant-sops-age.sops.yaml",
+                     "kubernetes/tenants/acme/namespace.yaml",
+                     "templates/config/kubernetes/tenants/namespace.yaml.j2"):
+            with self.subTest(path=path):
+                self.assertIs(_covers(path), False, f"{path} would not be committed")
+
+
 class TestEveryRuleInTheFileIsChecked(unittest.TestCase):
     """The half that notices a rule added later in the OLD shape.
 
@@ -185,8 +233,11 @@ class TestEveryRuleInTheFileIsChecked(unittest.TestCase):
 
     # Rules that are legitimately not globs: directories, negations, and the
     # non-secret build outputs. Everything else must end in `*`.
+    # `/tenants*/` is a directory rule whose glob is in the name; see
+    # TestTenantCredentialsAreIgnored.
     ALLOWED_NON_GLOB = {"/bootstrap/", "/talos/", ".venv/", ".claude/",
-                        "__pycache__/", "dist/", ".merged-config.yaml"}
+                        "__pycache__/", "dist/", ".merged-config.yaml",
+                        "/tenants*/"}
 
     def test_every_secret_rule_ends_in_a_glob(self):
         rules = [l.strip() for l in _text().splitlines()
