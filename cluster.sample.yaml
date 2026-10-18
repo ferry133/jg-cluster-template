@@ -8,6 +8,7 @@
 #   §1 Base — required for this profile (network, cloudflare API, repo)
 #   §2 Extras — only required when listed in `extras:`. Each subsection
 #               states which extras it's needed for.
+#   §3 App repos — optional; apps that live in their own repos (tenants)
 #
 # Fields marked (appliance: n/a) are rejected by validation under that profile —
 # they configure things an appliance either discovers at runtime or does not run.
@@ -934,3 +935,81 @@ cluster_name: "xxxxxx"
 #   -----BEGIN PGP PRIVATE KEY BLOCK-----
 #   ...
 #   -----END PGP PRIVATE KEY BLOCK-----
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# §3. APP REPOS — apps that live in their own private repo (tenants)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Leave this out unless the cluster runs an app that is NOT in jg-base: one a
+# vendor writes, or one the cluster's own `im` agent writes. Each entry is a
+# tenant: its own private GitHub repo, reconciled by Flux into its own
+# namespaces, as its own ServiceAccount, decrypting with its own age key. It
+# can read nothing else on the cluster and cannot widen its own rights.
+#
+# Absent or `app_repos: []` renders exactly what a cluster without tenants
+# renders — nothing changes until an entry is added.
+#
+# ⚠️ Before the first entry, all of these must hold:
+#   - jg-base ships the ClusterRole `tenant-admin`. Without it the tenant's
+#     RoleBindings grant nothing and its Kustomization fails (closed, not open).
+#     Check: `kubectl get clusterrole tenant-admin`.
+#   - The entry is created by fleet-ops' tenant provisioning skill, not by
+#     hand. It creates the repo, writes the keys below, registers the deploy
+#     key, adds the entry, runs `task configure` and refreshes escrow.
+#   - The keys exist in this directory under `tenants/`, which is git-ignored
+#     and travels in the escrow bundle. `task configure` stops, naming the
+#     file, if one is missing or is a public key:
+#       tenants/<name>.age.key      the tenant's own age identity
+#       tenants/<name>.deploy.key   read-only deploy key, for Flux
+#       tenants/<name>.write.key    kind: agent only — im's write deploy key
+#
+# Fields (only name, repository and kind are required):
+#   name          DNS label. Also the namespace when `namespaces` is left out,
+#                 and the suffix of every tenant-<name> object. Cannot be a
+#                 namespace the platform uses (claudecode, flux-system, …).
+#   repository    owner/repo — company-held and private.
+#   kind          vendor  a third party, added to the repo as a collaborator
+#                 agent   written by this cluster's own im. At most ONE per
+#                         cluster: im gets this repo's write key and its name
+#                         (IM_APPS_REPO). After the first apply, restart im
+#                         (`kubectl -n claudecode rollout restart deploy/im`) —
+#                         a running im does not see a Secret created later.
+#   namespaces    default [<name>]. Unique across all entries; none of the
+#                 platform's.
+#   branch        default "main".
+#   quota         cpu / memory / pods per namespace; defaults "4" / "8Gi" / 50.
+#   grants        privileges, ALL OFF by default. There is no pod-security
+#                 field: the level follows from the grants.
+#     baseline      PSA baseline instead of restricted.
+#     host_network  PSA privileged. ⚠️ A host_network tenant is NOT isolated:
+#                   network policy does not apply to it and it can bind any
+#                   port on the node. Grant only to a vendor you would give a
+#                   node to.
+#     lan_ip        N LoadBalancer addresses on the LAN, from the tenant's own
+#                   pool, set with `lan_ip_range` below. Requires a narrowed
+#                   shared pool (the gateway addresses in §1 declared) and is
+#                   refused on an appliance. The tenant's LoadBalancer Services
+#                   must carry the label `jg.tenant: <name>` and set
+#                   `allocateLoadBalancerNodePorts: false` (NodePorts are
+#                   capped at 0).
+#     l2, devices   refused for now: the platform components are not shipped
+#                   (ferry133/jg-base#187, #188).
+#   lan_ip_range  {start, stop}: at least `lan_ip` addresses, outside the
+#                 shared LoadBalancer pool and every other tenant's range.
+#                 `task configure` refuses an overlap, naming both ranges.
+#
+# ⚠️ Removing an entry is destructive: Flux prunes the tenant's namespaces and
+# everything in them, PVCs included. Use the revoke skill, which lists the PVCs
+# and asks first.
+#
+# app_repos:
+#   - name: acme
+#     repository: your-org/acme-app
+#     kind: vendor
+#   - name: shop
+#     repository: your-org/shop-app
+#     kind: agent
+#     namespaces: [shop, shop-db]
+#     grants:
+#       baseline: true
+#       lan_ip: 1
+#     lan_ip_range: {start: "10.9.x.200", stop: "10.9.x.200"}
