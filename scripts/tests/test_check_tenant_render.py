@@ -268,6 +268,19 @@ class TenantRenderGuard(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertIn("contains `IM_APPS_REPO`", out)
 
+    # 20 --------------------------------------------------------------------
+    def test_20_pool_selecting_on_the_label_alone_fails(self):
+        # fleet-ops-96 [cde990] on #221: a Service label is tenant-writable.
+        path = self.tree / self.T / "lb-pools.yaml.j2"
+        text = path.read_text()
+        start = text.index("    matchExpressions:\n")
+        end = text.index("#% endfor %#\n", start) + len("#% endfor %#\n")
+        path.write_text(text[:start] + text[end:])
+        self.assertNotIn("io.kubernetes.service.namespace\n", path.read_text())
+        rc, out = self.run_guard()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("pool tenant-shop selector", out)
+
 
 if __name__ == "__main__":
     unittest.main()

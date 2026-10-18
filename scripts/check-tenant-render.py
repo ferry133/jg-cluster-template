@@ -385,8 +385,12 @@ def tenant_objects(files: dict[str, bytes]) -> list[str]:
         if g.get("lan_ip"):
             pool = get("CiliumLoadBalancerIPPool", "", f"tenant-{t['name']}").get("spec", {})
             eq(f"pool tenant-{t['name']} blocks", pool.get("blocks"), [t["lan_ip_range"]])
+            # The namespace half is what a tenant cannot forge (fleet-ops-96's
+            # finding on #221): the label alone lets another tenant draw here.
             eq(f"pool tenant-{t['name']} selector", pool.get("serviceSelector"),
-               {"matchLabels": {"jg.tenant": t["name"]}})
+               {"matchLabels": {"jg.tenant": t["name"]},
+                "matchExpressions": [{"key": "io.kubernetes.service.namespace",
+                                      "operator": "In", "values": nss}]})
         if t["kind"] == "agent":
             wk = get("Secret", "claudecode", "im-apps-write-key").get("stringData", {})
             eq("im-apps-write-key keys", sorted(wk), ["identity"])
