@@ -65,6 +65,9 @@ RUN = [
     # and a throwaway key;
     # the `--against <ref>` mode is not run here, see its docstring (jgct#214).
     "check-tenant-render.py",
+    # Same tools and fixtures: extras come from jg-extras, the secretRef
+    # resolves, clusters without extras are untouched (jgct#217).
+    "check-extras-source.py",
 ]
 
 # Cannot see their subject from a bare template checkout. The reason is the

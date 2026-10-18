@@ -160,6 +160,10 @@ _PLACEHOLDERS = {
         "AccountTag": "placeholder", "TunnelSecret": "cGxhY2Vob2xkZXI=",
         "TunnelID": "00000000-0000-0000-0000-000000000000"}),
     "github-deploy.key": "placeholder-not-a-key\n",
+    # jg-extras deploy key (jgct#217): carries only the marker line
+    # plugin.py's extras_deploy_key() checks for. Never a real key.
+    "jg-extras.deploy.key": "-----BEGIN OPENSSH PRIVATE KEY-----\nplaceholder-jg-extras-ro\n"
+                            "-----END OPENSSH PRIVATE KEY-----\n",
     "github-push-token.txt": "placeholder-not-a-token\n",
     "auth0.json": json.dumps({
         "domain": "example.invalid", "client_id": "placeholder",

@@ -199,6 +199,32 @@ def tenant_key(name: str, kind: str, directory: str = 'tenants') -> str:
     return text
 
 
+# Apps that graduated from extras to base. Dates and reasons are in the
+# comment above the extras loop in ks.yaml.j2.
+EXTRAS_NOW_BASE = ['claudecode/claude-code', 'monitoring/daily-check',
+                   'storage/local-path-provisioner', 'default/echo']
+
+
+# This cluster's read-only deploy key for jg-extras (jgct#217), git-ignored in
+# the cluster repo directory and carried by the escrow bundle like the others.
+# Refuses a missing file or a public half under the private name, and never
+# puts the content in a message.
+def extras_deploy_key(file_path: str = 'jg-extras.deploy.key') -> str:
+    path = Path(file_path)
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"{file_path} not found: this cluster lists extras, which come from "
+            f"the private repo ferry133/jg-extras. Generate a read-only deploy "
+            f"key here (ssh-keygen -t ed25519 -N '' -f {file_path}), register "
+            f"{file_path}.pub on ferry133/jg-extras, then re-run.")
+    text = path.read_text().strip()
+    if 'PRIVATE KEY-----' not in text:
+        raise ValueError(
+            f"{file_path} does not look like a private SSH key (no "
+            f"'PRIVATE KEY-----' line) — a public half under the private name?")
+    return text
+
+
 # Return the Flux / GitHub push token from github-push-token.txt
 def github_push_token(file_path: str = 'github-push-token.txt') -> str:
     try:
@@ -611,6 +637,21 @@ class Plugin(makejinja.plugin.Plugin):
         data.setdefault('base_repo_url', 'https://github.com/ferry133/jg-base')
         data.setdefault('base_repo_ref', 'main')
         data.setdefault('base_repo_ref_kind', 'branch')
+        # Where the optional apps come from (jgct#217, fleet-ops root
+        # `split-extras-repo`). Defaulted here for the same reason as the three
+        # lines above. SSH, because jg-extras is private.
+        data.setdefault('extras_repo_url', 'ssh://git@github.com/ferry133/jg-extras.git')
+        data.setdefault('extras_repo_ref', 'main')
+        data.setdefault('extras_repo_ref_kind', 'branch')
+        # The extras that actually render a Kustomization: `extras` minus the
+        # apps that graduated to base (a cluster.yaml still listing one must not
+        # point at a path jg-extras does not have). One list, read by BOTH
+        # ks.yaml.j2 (the loop and GitRepository jg-extras) and the deploy-key
+        # Secret template: two copies of this filter would drift, and a Secret
+        # rendered without its GitRepository, or the reverse, is the jgct#56
+        # shape (a credential nothing references / `unable to list remote`).
+        data['extras_from_repo'] = [
+            e for e in (data.get('extras') or []) if e not in EXTRAS_NOW_BASE]
         # The same repo as a directory next to this one, for bootstrap's helmfile
         # — it reads HelmRelease values off disk before the cluster can fetch
         # anything. Derived from the URL rather than declared: two fields for one
@@ -1170,4 +1211,5 @@ class Plugin(makejinja.plugin.Plugin):
             github_push_token,
             talos_patches,
             tenant_key,
+            extras_deploy_key,
         ]
