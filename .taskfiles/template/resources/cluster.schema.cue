@@ -829,6 +829,13 @@ import (
 		//   agent   written by the cluster's own im (write deploy key, D5)
 		//   vendor  written by a third party added as a collaborator
 		kind: "agent" | "vendor"
+		// The agent's name is fixed, not chosen: im's own instructions (k8scc
+		// im-policy.md) reconcile `kustomization tenant-im-apps`, so an agent
+		// by any other name renders fine and leaves im pointing at a
+		// Kustomization that does not exist (root task 3.11).
+		if kind == "agent" {
+			name: "im-apps"
+		}
 		namespaces: *[name] | [...#TenantNamespace] & list.MinItems(1)
 		branch?: string & !=""
 		// Defaults (4 / 8Gi / 50, design D4) are applied in plugin.py — a CUE

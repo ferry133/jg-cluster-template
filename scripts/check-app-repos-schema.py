@@ -56,10 +56,10 @@ VENDOR = """\
 """
 
 AGENT_FULL = """\
-  - name: "shop"
-    repository: "fixture/shop-app"
+  - name: "im-apps"
+    repository: "fixture/im-apps"
     kind: "agent"
-    namespaces: ["shop", "shop-db"]
+    namespaces: ["im-apps", "im-apps-db"]
     branch: "main"
     quota: {cpu: "2", memory: "4Gi", pods: 20}
     grants: {baseline: true, lan_ip: 2}
@@ -121,9 +121,9 @@ def main() -> int:
          with_repos(VENDOR + '    pod_security: "privileged"\n'),
          False, must_name="app_repos.0.pod_security: field not allowed")
     case("two entries claiming one namespace are refused",
-         with_repos(VENDOR + AGENT_FULL.replace('["shop", "shop-db"]',
-                                                '["shop", "acme"]')),
-         False, must_name='_app_repos_check.namespaces: invalid value ["acme","shop","acme"]')
+         with_repos(VENDOR + AGENT_FULL.replace('["im-apps", "im-apps-db"]',
+                                                '["im-apps", "acme"]')),
+         False, must_name='_app_repos_check.namespaces: invalid value ["acme","im-apps","acme"]')
 
     # The rest of the boundary.
     case("duplicate name is refused",
@@ -131,10 +131,16 @@ def main() -> int:
                     .replace('kind: "vendor"', 'kind: "vendor"\n    namespaces: ["other"]')),
          False, must_name="_app_repos_check.name:")
     case("a second agent is refused (one im-apps-write-key, one IM_APPS_REPO)",
-         with_repos(AGENT_FULL + AGENT_FULL.replace('"shop"', '"till"')
-                    .replace('"shop-db"', '"till-db"')
-                    .replace("shop-app", "till-app")),
+         with_repos(AGENT_FULL + AGENT_FULL.replace('["im-apps", "im-apps-db"]',
+                                                    '["till", "till-db"]')
+                    .replace("fixture/im-apps", "fixture/till")),
          False, must_name="_app_repos_check.agents:")
+    # Root task 3.11: im's own instructions name `tenant-im-apps`.
+    case("an agent not named im-apps is refused, naming the required name",
+         with_repos(AGENT_FULL.replace('name: "im-apps"', 'name: "shop"')),
+         False, must_name='app_repos.0.name: conflicting values "im-apps" and "shop"')
+    case("a vendor named anything else still passes (the rule is agent-only)",
+         with_repos(VENDOR.replace('"acme"', '"shop"')), True)
     case("lan_ip > 0 without lan_ip_range is refused AND names it",
          with_repos(VENDOR + '    grants: {lan_ip: 1}\n'),
          False, must_name="app_repos.0.lan_ip_range: field is required")

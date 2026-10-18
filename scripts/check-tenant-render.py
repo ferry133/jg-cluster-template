@@ -163,10 +163,10 @@ _PLACEHOLDERS = {
     "tenants/acme.age.key": "# placeholder\nAGE-SECRET-KEY-1PLACEHOLDERACME\n",
     "tenants/acme.deploy.key": "-----BEGIN OPENSSH PRIVATE KEY-----\nplaceholder-acme-ro\n"
                                "-----END OPENSSH PRIVATE KEY-----\n",
-    "tenants/shop.age.key": "# placeholder\nAGE-SECRET-KEY-1PLACEHOLDERSHOP\n",
-    "tenants/shop.deploy.key": "-----BEGIN OPENSSH PRIVATE KEY-----\nplaceholder-shop-ro\n"
+    "tenants/im-apps.age.key": "# placeholder\nAGE-SECRET-KEY-1PLACEHOLDERIM-APPS\n",
+    "tenants/im-apps.deploy.key": "-----BEGIN OPENSSH PRIVATE KEY-----\nplaceholder-im-apps-ro\n"
                                "-----END OPENSSH PRIVATE KEY-----\n",
-    "tenants/shop.write.key": "-----BEGIN OPENSSH PRIVATE KEY-----\nplaceholder-shop-rw\n"
+    "tenants/im-apps.write.key": "-----BEGIN OPENSSH PRIVATE KEY-----\nplaceholder-im-apps-rw\n"
                               "-----END OPENSSH PRIVATE KEY-----\n",
 }
 
@@ -270,8 +270,8 @@ def checkout(ref: str, dest: Path) -> None:
 TENANT_BASE = "full-omni-extras"
 TENANTS = [
     dict(name="acme", repository="fixture/acme-app", kind="vendor"),
-    dict(name="shop", repository="fixture/shop-app", kind="agent",
-         namespaces=["shop", "shop-db"], branch="prod",
+    dict(name="im-apps", repository="fixture/im-apps", kind="agent",
+         namespaces=["im-apps", "im-apps-db"], branch="prod",
          grants=dict(baseline=True, lan_ip=1),
          lan_ip_range=dict(start="192.0.2.200", stop="192.0.2.200")),
 ]
