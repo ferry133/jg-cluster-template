@@ -279,7 +279,7 @@ class TenantRenderGuard(unittest.TestCase):
         self.assertNotIn("io.kubernetes.service.namespace\n", path.read_text())
         rc, out = self.run_guard()
         self.assertEqual(rc, 1, out)
-        self.assertIn("pool tenant-shop selector", out)
+        self.assertIn("pool tenant-im-apps selector", out)
 
 
 if __name__ == "__main__":
