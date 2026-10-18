@@ -39,6 +39,9 @@ RUN = [
     # its fixtures in a temp dir and never reads a real cluster.yaml, because
     # `cue vet` echoes the values it rejects.
     "check-api-addr-scope.py",
+    # Same needs and same temp-dir fixtures; the `app_repos` boundary
+    # (jgct#214 task 3.1).
+    "check-app-repos-schema.py",
     "check-claude-config-storage-default.py",
     "check-claudecode-postgres-derive.py",
     "check-claudecode-factory-auth.py",
