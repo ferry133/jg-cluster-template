@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[2]
 GUARD = ROOT / "scripts" / "check-tenant-render.py"
 KS = Path("templates/config/kubernetes/flux/cluster/ks.yaml.j2")
 SCHEMA = Path(".taskfiles/template/resources/cluster.schema.cue")
+PLUGIN = Path("templates/scripts/plugin.py")
 COPY = ["templates", "makejinja.toml", "trello-notifier.sample.yaml",
         ".taskfiles/template/resources"]
 
@@ -75,6 +76,14 @@ class TenantRenderGuard(unittest.TestCase):
 
     # 1 ---------------------------------------------------------------------
     def test_1_render_that_reacts_to_empty_app_repos_fails(self):
+        # Since task 3.2 plugin.py sets `app_repos` to `[]` when it is absent,
+        # so a template alone can no longer tell the two apart and the
+        # template half below would be a mutation that cannot fail. The
+        # defect it stands for is now "plugin.py stops normalising AND a
+        # template reacts to the key", so the case mutates both.
+        self.edit(PLUGIN, "        data['app_repos'] = app_repos(data)\n",
+                  "        if 'app_repos' in data:\n"
+                  "            data['app_repos'] = app_repos(data)\n")
         self.append(KS, "\n#% if app_repos is defined %#\n---\n# reacts to app_repos: []\n#% endif %#\n")
         rc, out = self.run_guard()
         self.assertEqual(rc, 1, out)

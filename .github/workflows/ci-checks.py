@@ -42,6 +42,9 @@ RUN = [
     # Same needs and same temp-dir fixtures; the `app_repos` boundary
     # (jgct#214 task 3.1).
     "check-app-repos-schema.py",
+    # Needs age-keygen; runs the real Plugin.data() from a temp dir with a
+    # throwaway key of its own (jgct#214 task 3.2).
+    "check-app-repos-plugin.py",
     "check-claude-config-storage-default.py",
     "check-claudecode-postgres-derive.py",
     "check-claudecode-factory-auth.py",
