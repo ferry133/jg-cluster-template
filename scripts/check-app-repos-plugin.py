@@ -223,10 +223,10 @@ def run_cases() -> int:
     # Grants with no platform component yet.
     refuses("l2 is refused, naming the missing component",
             {"app_repos": [vendor(grants={"l2": True})]},
-            "grants.l2", "task 8.1")
+            "grants.l2", "jg-base#187", "task 8.1")
     refuses("devices is refused, naming the missing component",
             {"app_repos": [vendor(grants={"devices": ["/dev/ttyUSB0"]})]},
-            "grants.devices", "task 8.2")
+            "grants.devices", "jg-base#188", "task 8.2")
 
     # tenant_key(): the file-name contract with the provisioning skill.
     def key_case(label, files, kind, must, forbid=""):
