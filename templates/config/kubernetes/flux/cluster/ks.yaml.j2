@@ -563,8 +563,36 @@ spec:
 
    storage/nfs-subdir is likewise a base app, but it IS conditional, so it is
    disabled by the suspend patch on cluster-apps-base above rather than here. #|
-#% set _now_base = ['claudecode/claude-code', 'monitoring/daily-check', 'storage/local-path-provisioner', 'default/echo'] %#
-#% for extra in extras | default([]) if extra not in _now_base %#
+#| The filtered list is computed once in plugin.py (`extras_from_repo`,
+   `EXTRAS_NOW_BASE`): the deploy-key Secret template needs the same answer,
+   and two copies of a filter drift.
+
+   Since jgct#217 (fleet-ops root `split-extras-repo`) the extras come from
+   their own private repo, ferry133/jg-extras, which keeps the
+   `kubernetes/apps/extras/<ns>/<app>` layout so every `path:` below is
+   unchanged. Only `sourceRef.name` moves. The jg-base GitRepository above is
+   not renamed or touched (see its comment for why). #|
+#% if extras_from_repo %#
+---
+# ── GitRepository — the optional apps (private; per-cluster deploy key) ──────
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: jg-extras
+  namespace: flux-system
+spec:
+  interval: 1h
+  # Quoted for the reason the jg-base GitRepository gives.
+  url: "#{ extras_repo_url }#"
+  ref:
+    #{ extras_repo_ref_kind }#: "#{ extras_repo_ref }#"
+  # Rendered by components/sops/jg-extras-deploy-key.sops.yaml.j2 from this
+  # directory's jg-extras.deploy.key; keys identity / known_hosts, the same
+  # shape as the root sync's github-deploy-key.
+  secretRef:
+    name: jg-extras-deploy-key
+#% endif %#
+#% for extra in extras_from_repo %#
 #% set _app = extra.split('/')[1] %#
 ---
 # ── extras/#{extra}# ─────────────────────────────────────────────────────────
@@ -582,7 +610,7 @@ spec:
   prune: true
   sourceRef:
     kind: GitRepository
-    name: jg-base
+    name: jg-extras
     namespace: flux-system
   postBuild:
     substituteFrom:

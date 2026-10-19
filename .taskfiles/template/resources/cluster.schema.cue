@@ -450,6 +450,15 @@ import (
 	// produces a GitRepository that reconciles something other than what the
 	// operator named — which reads exactly like it worked.
 	base_repo_ref_kind: *"branch" | "tag" | "semver" | "commit"
+	// Where the OPTIONAL apps (`extras`) come from, since they moved out of
+	// jg-base into their own repo (fleet-ops root `split-extras-repo`, D1/D4/D6;
+	// jgct#217). Same shape and defaulting as base_repo_*, pinned separately so
+	// an extras release never moves the base. The default is SSH: jg-extras is
+	// private (ferry133, 2026-10-18), so Flux authenticates with a per-cluster
+	// read-only deploy key (`jg-extras.deploy.key` in this directory).
+	extras_repo_url: *"ssh://git@github.com/ferry133/jg-extras.git" | string & !=""
+	extras_repo_ref: *"main" | string & !=""
+	extras_repo_ref_kind: *"branch" | "tag" | "semver" | "commit"
 	cloudflare_domain: net.FQDN
 	cloudflare_token: string
 	// How cloudflared reaches Cloudflare's edge.

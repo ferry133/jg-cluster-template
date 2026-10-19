@@ -65,6 +65,7 @@ SUFFIXES = (".bak", ".orig", ".20260919")
 SECRET_BASES = (
     "age.key", "x.agekey", "agex.txt",
     "github-deploy.key", "github-deploy.key.pub", "github-push-token.txt",
+    "jg-extras.deploy.key", "jg-extras.deploy.key.pub", "x.deploy.key",
     "cloudflare-tunnel.json", "auth0.json",
     "kubeconfigx", "talosconfigx", "omniconfigx", "acme.age.key",
     "talsecretx.yaml", "secrets.yaml", ".sops.yaml",
