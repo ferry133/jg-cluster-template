@@ -862,6 +862,23 @@ cluster_name: "xxxxxx"
 #   - default/trello-notifier
 #   - default/mqtt
 
+# ── Where the extras come from ────────────────────────────────────────────────
+# The extras above live in their own private repo, ferry133/jg-extras (they used
+# to be part of jg-base). Leave these three out unless you have been told to
+# pin a release or use a fork; the defaults are the fleet's.
+# extras_repo_url: "ssh://git@github.com/ferry133/jg-extras.git"
+# extras_repo_ref: "main"
+# extras_repo_ref_kind: "branch"   # branch | tag | semver | commit
+#
+# ⚠️ A cluster with ANY extra needs a read-only deploy key for that repo in this
+# directory, or `task configure` stops and says so:
+#   ssh-keygen -t ed25519 -N '' -C '<cluster>-jg-extras' -f jg-extras.deploy.key
+#   then register jg-extras.deploy.key.pub on ferry133/jg-extras as a
+#   READ-ONLY deploy key titled with this cluster's name.
+# The private half is git-ignored (*.deploy.key*) and must reach escrow: run
+# `escrow-refresh` after creating it. One key per cluster, so one cluster can
+# be cut off without touching the others. A cluster with no extras needs none.
+
 # ── network/cloudflare-tunnel-lan ─────────────────────────────────────────────
 # cloudflare_lan_tunnel_token: ""     # `cloudflared tunnel token <name>` output
 
