@@ -19,7 +19,13 @@
    An `im/disabled` cluster (claudecode_auth0: false) is the one this matters
    most for: its only terminal is an extra, and `kubectl exec` (monitoring's
    offsite-backup) cannot reach an extra at 0 replicas -- which is how extras
-   sit by default. #|
+   sit by default.
+
+   The YAML comment below is outside the loop on purpose (jgct#229): with no
+   instances the loop renders nothing, makejinja does not write an empty
+   render, and kustomization.yaml would list a file that does not exist.
+   kustomize accepts a comment-only resource file. #|
+# Archive CronJobs for the extra instances in claude_instances; none if it is empty.
 #% for instance in claude_instances %#
 ---
 apiVersion: batch/v1
