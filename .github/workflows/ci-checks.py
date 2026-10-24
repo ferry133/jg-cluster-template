@@ -68,6 +68,11 @@ RUN = [
     # Same tools and fixtures: extras come from jg-extras, the secretRef
     # resolves, clusters without extras are untouched (jgct#217).
     "check-extras-source.py",
+    # Not a bare-checkout check: reads jg-base and jg-extras, which the
+    # workflow clones into $RUNNER_TEMP before this step (jgct#235). Without
+    # them it exits 2, which fails the run — on purpose, since not seeing
+    # jg-extras is the exact gap it exists to close.
+    "check-reserved-namespaces.py",
 ]
 
 # Cannot see their subject from a bare template checkout. The reason is the
