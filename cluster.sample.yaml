@@ -845,7 +845,8 @@ cluster_name: "xxxxxx"
 #                                  trello_api_key, trello_api_token,
 #                                  linebot_auth0_* (3), linebot_admin_session_secret (all four required)
 #   default/mariadb              → mariadb_lb_ip
-#   default/mqtt                 → mqtt_lb_ip
+#   default/mqtt                 → mqtt_lb_ip (not on appliance: it uses lan_shared_addr,
+#                                  and the schema refuses mqtt_lb_ip there)
 #   default/postgres             → postgres_password
 #   default/synophoto            → synophoto_auth0_* (3),
 #                                  synophoto_allowed_emails, synophoto_flask_secret_key,
@@ -894,6 +895,9 @@ cluster_name: "xxxxxx"
 # Every *_lb_ip below is added to this cluster's LoadBalancer pool. The pool
 # contains only the addresses listed here plus the three gateway addresses in
 # §1 — an address that is not listed is one the Service cannot be given.
+#
+# Not on appliance: there mqtt shares lan_shared_addr (§1), and `task configure`
+# refuses mqtt_lb_ip with "does not satisfy matchN". Leave it out.
 # mqtt_lb_ip: "10.9.x.x"
 
 # ── default/trello-notifier ───────────────────────────────────────────────────
