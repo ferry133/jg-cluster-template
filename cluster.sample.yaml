@@ -842,7 +842,8 @@ cluster_name: "xxxxxx"
 #   default/homebridge           → (no extra params)
 #   default/linebot              → anthropic_api_key, database_url,
 #                                  line_channel_access_token, line_channel_secret, line_notify_group_id,
-#                                  trello_api_key, trello_api_token
+#                                  trello_api_key, trello_api_token,
+#                                  linebot_auth0_* (3), linebot_admin_session_secret (all four required)
 #   default/mariadb              → mariadb_lb_ip
 #   default/mqtt                 → mqtt_lb_ip
 #   default/postgres             → postgres_password
@@ -919,6 +920,18 @@ cluster_name: "xxxxxx"
 # line_notify_group_id: ""            # shared with trello-notifier if both enabled
 # trello_api_key: ""                  # shared with trello-notifier if both enabled
 # trello_api_token: ""                # shared with trello-notifier if both enabled
+#
+# linebot-admin login (Auth0) and its session cookie. All four are REQUIRED when
+# extras includes default/linebot — `cue vet` refuses an empty one, because an
+# admin page without them has no login.
+# Auth0: a Regular Web App at manage.auth0.com
+#   Allowed Callback URLs: https://linebot-admin.<cloudflare_domain>/callback
+#   Allowed Logout URLs:   https://linebot-admin.<cloudflare_domain>/   (trailing slash: the app
+#                          returns to url_for("index"), linebot agents/admin_server.py)
+# linebot_auth0_domain: ""            # e.g. "your-tenant.us.auth0.com"
+# linebot_auth0_client_id: ""
+# linebot_auth0_client_secret: ""
+# linebot_admin_session_secret: ""    # python3 -c "import secrets; print(secrets.token_hex(32))"
 
 # ── default/synophoto ─────────────────────────────────────────────────────────
 # Auth0: create a Regular Web App at manage.auth0.com
