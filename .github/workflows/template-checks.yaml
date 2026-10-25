@@ -51,6 +51,36 @@ jobs:
       - name: Every check script is accounted for
         run: python3 .github/workflows/ci-checks.py --audit
 
+      # check-reserved-namespaces.py compares #ReservedNamespaces with every
+      # namespace jg-base and jg-extras deploy into (jgct#235), so it needs
+      # both. Cloned outside the workspace so no other guard walks them.
+      # jg-base is public. jg-extras is private: a read-only deploy key on it,
+      # stored here as JG_EXTRAS_READ_KEY. Without the secret the clone is
+      # skipped and the guard exits 2 — red, not a silent pass. The host key is
+      # pinned (`gh api meta`), not learned from ssh-keyscan on every run.
+      # Only in the template repo: a repo made from this template inherits
+      # this workflow but not the secret, and ci-checks.py reports the guard as
+      # not run there (TEMPLATE_ONLY / TEMPLATE_REPO, which a test keeps equal
+      # to the name in this `if:`).
+      - name: Clone jg-base and jg-extras for the namespace guard
+        if: github.repository == 'ferry133/jg-cluster-template'
+        env:
+          JG_EXTRAS_READ_KEY: ${{ secrets.JG_EXTRAS_READ_KEY }}
+        run: |
+          git clone -q --depth 1 https://github.com/ferry133/jg-base.git "$RUNNER_TEMP/jg-base"
+          echo "JG_BASE_DIR=$RUNNER_TEMP/jg-base" >> "$GITHUB_ENV"
+          if [ -z "$JG_EXTRAS_READ_KEY" ]; then
+            echo "::warning::secret JG_EXTRAS_READ_KEY is not set; jg-extras not cloned"
+            exit 0
+          fi
+          umask 077
+          printf '%s\n' "$JG_EXTRAS_READ_KEY" > "$RUNNER_TEMP/jg-extras.key"
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$RUNNER_TEMP/known_hosts"
+          GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/jg-extras.key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts -o StrictHostKeyChecking=yes" \
+            git clone -q --depth 1 ssh://git@github.com/ferry133/jg-extras.git "$RUNNER_TEMP/jg-extras"
+          rm -f "$RUNNER_TEMP/jg-extras.key"
+          echo "JG_EXTRAS_DIR=$RUNNER_TEMP/jg-extras" >> "$GITHUB_ENV"
+
       - name: Run the checks that do not need a cluster
         run: python3 .github/workflows/ci-checks.py --run
 

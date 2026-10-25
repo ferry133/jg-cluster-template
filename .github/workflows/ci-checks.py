@@ -27,6 +27,7 @@ to be rediscovered.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -70,6 +71,29 @@ RUN = [
     "check-extras-source.py",
 ]
 
+#: The one repository TEMPLATE_ONLY runs in. The clone step in
+#: template-checks.yaml carries the same name in its `if:`; a unit test holds
+#: the two equal.
+TEMPLATE_REPO = "ferry133/jg-cluster-template"
+
+# Run here, and nowhere else. A repo made from this template inherits
+# `.github/` and runs this workflow on every push (`CLUSTER_REPO_TOPLEVEL` in
+# scripts/provision.py; jg-jcc1 and jg-jcc3 have runs). Such a repo has no
+# JG_EXTRAS_READ_KEY, so a check that needs it would exit 2 there and turn
+# every customer push red — a guard that is always red gets switched off
+# (jgct#236 review, fleet-ops-65 [69d6d7]). In any other repo these are
+# reported as not run, with the repository named, so a renamed template shows
+# up as a skip line rather than as silence.
+TEMPLATE_ONLY = {
+    # Reads jg-base and jg-extras, which the workflow clones into $RUNNER_TEMP
+    # before this step (jgct#235). Without them it exits 2, which fails the
+    # run — on purpose, since not seeing jg-extras is the exact gap it exists
+    # to close.
+    "check-reserved-namespaces.py":
+        "compares the template's #ReservedNamespaces with jg-base and jg-extras; "
+        "needs JG_EXTRAS_READ_KEY, which only the template repo holds",
+}
+
 # Cannot see their subject from a bare template checkout. The reason is the
 # point: "not run" with a reason is a third outcome, and dropping these from
 # the report would make the run look complete.
@@ -112,7 +136,7 @@ def scripts_present() -> set[str]:
 
 
 def audit() -> int:
-    present, known = scripts_present(), set(RUN) | set(SKIP)
+    present, known = scripts_present(), set(RUN) | set(SKIP) | set(TEMPLATE_ONLY)
     unclassified = sorted(present - known)
     missing = sorted(known - present)
     for name in unclassified:
@@ -129,13 +153,29 @@ def audit() -> int:
     if unclassified or missing:
         return 1
     print(f"ok    {len(present)} guards found in scripts/, {len(RUN)} run here, "
+          f"{len(TEMPLATE_ONLY)} only in {TEMPLATE_REPO}, "
           f"{len(SKIP)} cannot see their subject from a bare checkout")
     return 0
 
 
+def plan(repository: str | None) -> tuple[list[str], dict[str, str]]:
+    """What runs and what is reported as not run, in `repository`.
+
+    `repository` is `$GITHUB_REPOSITORY`. Unset means a local run, which is a
+    maintainer in a template checkout, so the template-only checks run.
+    """
+    if repository is None or repository == TEMPLATE_REPO:
+        return RUN + list(TEMPLATE_ONLY), dict(SKIP)
+    skip = dict(SKIP)
+    for name, reason in TEMPLATE_ONLY.items():
+        skip[name] = f"only runs in {TEMPLATE_REPO}, this is {repository}: {reason}"
+    return list(RUN), skip
+
+
 def run() -> int:
     failed = []
-    for name in RUN:
+    to_run, to_skip = plan(os.environ.get("GITHUB_REPOSITORY") or None)
+    for name in to_run:
         path = ROOT / "scripts" / name
         cmd = (["bash", str(path)] if path.suffix == ".sh"
                else ["python3", str(path)])
@@ -146,7 +186,7 @@ def run() -> int:
             failed.append((name, rc))
 
     print("\n" + "=" * 60)
-    for name, reason in sorted(SKIP.items()):
+    for name, reason in sorted(to_skip.items()):
         print(f"not run  {name} — {reason}")
     print("=" * 60)
 
@@ -154,7 +194,7 @@ def run() -> int:
         for name, rc in failed:
             print(f"::error::{name} exited {rc}")
         return 1
-    print(f"ok — {len(RUN)} check scripts passed, {len(SKIP)} not run (above)")
+    print(f"ok — {len(to_run)} check scripts passed, {len(to_skip)} not run (above)")
     return 0
 
 
