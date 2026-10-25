@@ -595,6 +595,100 @@ class TestOmniTemplateBindsLocalPath(unittest.TestCase):
         self.assertIn("WOULD", out)
 
 
+class TestOmniTemplateCarriesCriCustomization(unittest.TestCase):
+    """jgct#238 (jg-base#188): the Omni template must write the containerd
+    customization the talhelper path writes from `machine-files.yaml.j2`, or an
+    Omni cluster gets neither key — measured on jg-jiahd (0-byte part file).
+    The required lines are read from that file, so these cases build their
+    templates from it too, and one case changes the source to prove it is
+    the source."""
+
+    def write(self, d, text, name="omni-cluster.yaml"):
+        p = os.path.join(d, name)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, "w").write(text)
+        return p
+
+    def patch(self, source=prov.CRI_CUSTOMIZATION_SOURCE):
+        required, patch, why = prov.cri_customization(source)
+        self.assertIsNotNone(required, why)
+        return required, "  patches:\n" + patch + "\n"
+
+    def check(self, text, source=prov.CRI_CUSTOMIZATION_SOURCE):
+        with tempfile.TemporaryDirectory() as d:
+            return prov.template_cri_customization(self.write(d, text), source)
+
+    def test_the_source_yields_both_keys(self):
+        # Gate: if this reads nothing, every "missing" case below is vacuous.
+        required, _ = self.patch()
+        self.assertIn("discard_unpacked_layers = false", required)
+        self.assertIn("device_ownership_from_security_context = true", required)
+
+    def test_the_patch_it_prints_passes(self):
+        _, patch = self.patch()
+        self.assertEqual(self.check("kind: Cluster\nname: jg-a\n" + patch), (True, ""))
+
+    def test_a_template_without_it_is_refused_and_says_what_to_add(self):
+        ok_, why = self.check("kind: Cluster\nname: jg-a\n")
+        self.assertIs(ok_, False)
+        for needle in (prov.CRI_CUSTOMIZATION_PATH, "device_ownership_from_security_context = true",
+                       "discard_unpacked_layers = false", "jgct#238", "idOverride: 400-<cluster>-cri-customization"):
+            self.assertIn(needle, why)
+
+    def test_dropping_any_one_line_fails(self):
+        required, patch = self.patch()
+        for line in required:
+            with self.subTest(line=line):
+                cut = "\n".join(l for l in patch.splitlines() if l.strip() != line) + "\n"
+                self.assertNotEqual(cut, patch, "the line was not removed")
+                self.assertIs(self.check("kind: Cluster\nname: jg-a\n" + cut)[0], False)
+
+    def test_a_commented_out_patch_does_not_pass(self):
+        _, patch = self.patch()
+        commented = "".join("#" + l + "\n" for l in patch.splitlines())
+        self.assertIs(self.check("kind: Cluster\nname: jg-a\n" + commented)[0], False)
+
+    def test_every_machine_set_or_none(self):
+        _, patch = self.patch()
+        cp = "kind: ControlPlane\nmachines: [a]\n" + patch
+        self.assertIs(self.check(f"kind: Cluster\nname: jg-a\n---\n{cp}---\nkind: Workers\nmachines: [b]\n" + patch)[0], True)
+        self.assertIs(self.check(f"kind: Cluster\nname: jg-a\n---\n{cp}---\nkind: Workers\nmachines: [b]\n")[0], False)
+        self.assertIs(self.check("kind: Cluster\nname: jg-a\n---\nkind: Machine\nname: u\n" + patch)[0], False)
+
+    def test_a_key_added_to_the_source_is_then_required(self):
+        _, patch = self.patch()
+        text = open(prov.CRI_CUSTOMIZATION_SOURCE).read()
+        added = text.rstrip("\n") + "\n          snapshotter_test_key = 1\n"
+        self.assertNotEqual(added, text)
+        with tempfile.TemporaryDirectory() as d:
+            src = self.write(d, added, "machine-files.yaml.j2")
+            self.assertIs(self.check("kind: Cluster\nname: jg-a\n" + patch, src)[0], False)
+            _, patch2 = self.patch(src)
+            self.assertIs(self.check("kind: Cluster\nname: jg-a\n" + patch2, src)[0], True)
+
+    def test_an_unreadable_source_is_not_a_pass(self):
+        ok_, why = self.check("kind: Cluster\nname: jg-a\n", "/nonexistent/machine-files.yaml.j2")
+        self.assertIsNone(ok_)
+        self.assertIn("/nonexistent/machine-files.yaml.j2", why)
+        with tempfile.TemporaryDirectory() as d:
+            src = self.write(d, "machine:\n  files: []\n", "m.j2")
+            ok_, why = self.check("kind: Cluster\nname: jg-a\n", src)
+        self.assertIsNone(ok_)
+        self.assertIn(prov.CRI_CUSTOMIZATION_PATH, why)
+
+    def test_the_step_reports_it_beside_the_local_path_check(self):
+        _, patch = self.patch()
+        lp = TestOmniTemplateBindsLocalPath.INLINE.replace("  patches:\n", "")
+        with tempfile.TemporaryDirectory() as d:
+            only_lp = self.write(d, "kind: Cluster\nname: jg-a\n" + TestOmniTemplateBindsLocalPath.INLINE, "a.yaml")
+            both = self.write(d, "kind: Cluster\nname: jg-a\n" + patch + lp, "b.yaml")
+            step = prov.OmniClusterStep()
+            found = step.input_problems({"omni_template": only_lp})
+            self.assertEqual(len(found), 1)
+            self.assertIn("jgct#238", found[0])
+            self.assertEqual(step.input_problems({"omni_template": both}), [])
+
+
 class TestOmniClusterIdentity(unittest.TestCase):
     """4.3 + #128. `PRESENT` is documented as "it is there, and it is the one
     this ticket says". Matching the name alone cannot say the second half, and
