@@ -502,16 +502,19 @@ def template_cluster_name(path: str) -> tuple[str | None, str]:
 
 
 LOCAL_PATH_DIR = "/var/local-path-provisioner"
-LOCAL_PATH_MOUNT_PATCH = f"""  patches:
-    - idOverride: 400-<cluster>-kubelet-local-path
-      inline: |
-        machine:
-          kubelet:
-            extraMounts:
-              - destination: {LOCAL_PATH_DIR}
-                type: bind
-                source: {LOCAL_PATH_DIR}
-                options: [bind, rshared, rw]"""
+# Both patches below are list items at the indent of the runbook's
+# `patches:` list (a top-level key, items at two spaces): pasted as printed,
+# the template must still pass `omnictl cluster template validate` (jgct#239
+# review — the first version was indented two more and failed it at rc 1).
+LOCAL_PATH_MOUNT_PATCH = f"""  - idOverride: 400-<cluster>-kubelet-local-path
+    inline: |
+      machine:
+        kubelet:
+          extraMounts:
+            - destination: {LOCAL_PATH_DIR}
+              type: bind
+              source: {LOCAL_PATH_DIR}
+              options: [bind, rshared, rw]"""
 
 
 def _template_bodies(path: str) -> tuple[dict[str, list[str]] | None, str]:
@@ -596,8 +599,8 @@ def template_local_path_mount(path: str) -> tuple[bool | None, str]:
                    f"(no `extraMounts` for it on the Cluster, nor on every "
                    f"ControlPlane/Workers set). A local-path PVC mounted by "
                    f"subPath — im's keyrings — would land on kubelet's own "
-                   f"rootfs (jg-base#150, jgct#207). Add to the `kind: Cluster` "
-                   f"document:\n{LOCAL_PATH_MOUNT_PATCH}")
+                   f"rootfs (jg-base#150, jgct#207). Add to the `patches:` list of "
+                   f"the `kind: Cluster` document:\n{LOCAL_PATH_MOUNT_PATCH}")
 
 
 # The talhelper path's containerd customization. It is the single source: the
@@ -639,9 +642,9 @@ def cri_customization(source: str = CRI_CUSTOMIZATION_SOURCE) -> tuple[list[str]
     required = [l.strip() for l in block if l.strip()]
     if not required:
         return None, "", f"{source}: the {CRI_CUSTOMIZATION_PATH} content block is empty"
-    patch = ("    - idOverride: 400-<cluster>-cri-customization\n"
-             "      inline: |\n"
-             + "\n".join("        " + l for l in lines if l.strip()))
+    patch = ("  - idOverride: 400-<cluster>-cri-customization\n"
+             "    inline: |\n"
+             + "\n".join("      " + l for l in lines if l.strip()))
     return required, patch, ""
 
 

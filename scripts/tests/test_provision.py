@@ -25,6 +25,7 @@ import io
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import types
@@ -612,7 +613,7 @@ class TestOmniTemplateCarriesCriCustomization(unittest.TestCase):
     def patch(self, source=prov.CRI_CUSTOMIZATION_SOURCE):
         required, patch, why = prov.cri_customization(source)
         self.assertIsNotNone(required, why)
-        return required, "  patches:\n" + patch + "\n"
+        return required, "patches:\n" + patch + "\n"
 
     def check(self, text, source=prov.CRI_CUSTOMIZATION_SOURCE):
         with tempfile.TemporaryDirectory() as d:
@@ -678,7 +679,7 @@ class TestOmniTemplateCarriesCriCustomization(unittest.TestCase):
 
     def test_the_step_reports_it_beside_the_local_path_check(self):
         _, patch = self.patch()
-        lp = TestOmniTemplateBindsLocalPath.INLINE.replace("  patches:\n", "")
+        lp = prov.LOCAL_PATH_MOUNT_PATCH + "\n"
         with tempfile.TemporaryDirectory() as d:
             only_lp = self.write(d, "kind: Cluster\nname: jg-a\n" + TestOmniTemplateBindsLocalPath.INLINE, "a.yaml")
             both = self.write(d, "kind: Cluster\nname: jg-a\n" + patch + lp, "b.yaml")
@@ -687,6 +688,67 @@ class TestOmniTemplateCarriesCriCustomization(unittest.TestCase):
             self.assertEqual(len(found), 1)
             self.assertIn("jgct#238", found[0])
             self.assertEqual(step.input_problems({"omni_template": both}), [])
+
+
+class TestPrintedPatchesPasteIntoTheRunbookTemplate(unittest.TestCase):
+    """jgct#239 review (fleet-ops-65 [69d6d7]): the CRI patch was printed two
+    spaces deeper than the runbook's `patches:` items. Pasted as printed, the
+    text checks still passed and `omnictl cluster template validate` failed
+    at rc 1 — so 4.3 would accept a template that `template sync` rejects.
+    These cases paste both printed patches into a runbook-shaped template."""
+
+    RUNBOOK = (
+        "kind: Cluster\n"
+        "name: jg-a\n"
+        "kubernetes:\n  version: v1.36.0\n"
+        "talos:\n  version: v1.13.11\n"
+        "patches:\n"
+        "  - idOverride: 200-jg-a\n"
+        "    inline: |-\n"
+        "      cluster:\n"
+        "        network:\n"
+        "          cni:\n"
+        "            name: none\n"
+        "{pasted}"
+        "---\n"
+        "kind: ControlPlane\n"
+        "machines:\n"
+        "  - 00000000-0000-0000-0000-000000000001\n"
+    )
+
+    def pasted(self):
+        _, cri, why = prov.cri_customization()
+        self.assertTrue(cri, why)
+        patches = (prov.LOCAL_PATH_MOUNT_PATCH, cri)
+        return self.RUNBOOK.format(pasted="".join(
+            p.replace("<cluster>", "jg-a") + "\n" for p in patches))
+
+    def test_items_sit_at_the_runbook_list_indent(self):
+        text = self.pasted()
+        items = [l for l in text.splitlines() if l.lstrip().startswith("- idOverride:")]
+        self.assertEqual(len(items), 3, items)
+        self.assertEqual({len(l) - len(l.lstrip()) for l in items}, {2}, items)
+        for patch in (prov.LOCAL_PATH_MOUNT_PATCH, prov.cri_customization()[1]):
+            body = patch.splitlines()[1:]
+            with self.subTest(patch=patch.splitlines()[0]):
+                self.assertTrue(body[0].startswith("    inline: |"), body[0])
+                self.assertTrue(all(l.startswith("      ") for l in body[1:] if l.strip()))
+
+    def test_the_pasted_template_passes_both_checks(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "omni-cluster.yaml")
+            open(p, "w").write(self.pasted())
+            self.assertEqual(prov.template_local_path_mount(p), (True, ""))
+            self.assertEqual(prov.template_cri_customization(p), (True, ""))
+
+    @unittest.skipUnless(shutil.which("omnictl"), "omnictl not installed: the real-engine case is not measured here")
+    def test_omnictl_validates_the_pasted_template(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "omni-cluster.yaml")
+            open(p, "w").write(self.pasted())
+            r = subprocess.run(["omnictl", "cluster", "template", "validate", "-f", p],
+                               capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
 
 class TestOmniClusterIdentity(unittest.TestCase):
