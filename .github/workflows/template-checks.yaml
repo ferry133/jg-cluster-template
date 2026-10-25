@@ -58,7 +58,12 @@ jobs:
       # stored here as JG_EXTRAS_READ_KEY. Without the secret the clone is
       # skipped and the guard exits 2 — red, not a silent pass. The host key is
       # pinned (`gh api meta`), not learned from ssh-keyscan on every run.
+      # Only in the template repo: a repo made from this template inherits
+      # this workflow but not the secret, and ci-checks.py reports the guard as
+      # not run there (TEMPLATE_ONLY / TEMPLATE_REPO, which a test keeps equal
+      # to the name in this `if:`).
       - name: Clone jg-base and jg-extras for the namespace guard
+        if: github.repository == 'ferry133/jg-cluster-template'
         env:
           JG_EXTRAS_READ_KEY: ${{ secrets.JG_EXTRAS_READ_KEY }}
         run: |
