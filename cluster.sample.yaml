@@ -1030,11 +1030,46 @@ cluster_name: "xxxxxx"
 #                   must carry the label `jg.tenant: <name>` and set
 #                   `allocateLoadBalancerNodePorts: false` (NodePorts are
 #                   capped at 0).
-#     l2, devices   refused for now: the platform components are not shipped
-#                   (ferry133/jg-base#187, #188).
+#     l2            the tenant's pods may join the LAN directly with a
+#                   second interface (Multus + macvlan), for software that
+#                   finds devices by broadcast or multicast — HomeKit, mDNS,
+#                   UPnP. Needs `l2_network` below and the cluster-level
+#                   `lan_routed_cidrs`. Turning it on also switches Multus on
+#                   for the whole cluster. ⚠️ Network policy does NOT apply to
+#                   that second interface: anything on the LAN can reach the
+#                   pod there, and the pod can reach anything on the LAN.
+#                   A pod asks for one address by name, in the tenant's FIRST
+#                   namespace only:
+#                     metadata.annotations:
+#                       k8s.v1.cni.cncf.io/networks: lan-10-9-x-20
+#     devices       refused for now: the platform component is not shipped
+#                   (ferry133/jg-base#188).
 #   lan_ip_range  {start, stop}: at least `lan_ip` addresses, outside the
 #                 shared LoadBalancer pool and every other tenant's range.
 #                 `task configure` refuses an overlap, naming both ranges.
+#   l2_network    {interface, start, stop}: required with `grants.l2`. One
+#                 named address per IP in the range, at most 16.
+#                   interface  the node network card on node_cidr, e.g. enp1s0
+#                              (`talosctl get links`). Every node a tenant pod
+#                              can run on must have a card by that name.
+#                   start/stop inside node_cidr and OUTSIDE the router's DHCP
+#                              pool — `task configure` cannot see the DHCP
+#                              pool, so check it in the router. It refuses a
+#                              range that holds the gateway, a node, the
+#                              network or broadcast address, a LoadBalancer
+#                              address or another tenant's range, and on an
+#                              appliance anything from .200 up (where the
+#                              appliance looks for its own addresses).
+#
+# lan_routed_cidrs (cluster-level, not per tenant): every OTHER subnet the
+# customer's router connects to this LAN, e.g. a separate Wi-Fi or office
+# segment. Required as soon as any tenant holds `grants.l2`; write [] when the
+# LAN is a single subnet. A device on a subnet left out here can reach the
+# tenant's pod but never gets an answer, and nothing reports it. Replies go
+# back through node_default_gateway. Check from a machine on the LAN with
+# `scripts/delivery-check.py l2-route --node <node address>`.
+#
+# lan_routed_cidrs: ["10.9.y.0/24"]
 #
 # ⚠️ Removing an entry is destructive: Flux prunes the tenant's namespaces and
 # everything in them, PVCs included. Use fleet-ops' `tenant-repo-revoke`
@@ -1049,6 +1084,12 @@ cluster_name: "xxxxxx"
 #       baseline: true
 #       lan_ip: 1
 #     lan_ip_range: {start: "10.9.x.200", stop: "10.9.x.200"}
+#   - name: homekit
+#     repository: your-org/homekit-bridge
+#     kind: vendor
+#     grants:
+#       l2: true
+#     l2_network: {interface: enp1s0, start: "10.9.x.20", stop: "10.9.x.21"}
 #   - name: im-apps
 #     repository: your-org/your-cluster-im-apps
 #     kind: agent

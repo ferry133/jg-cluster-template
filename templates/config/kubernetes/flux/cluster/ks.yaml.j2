@@ -333,6 +333,25 @@ spec:
      'the default im.<domain> web terminal from jg-base, gated on this cluster accepting the Auth0 OIDC front'
         if claudecode_auth0_enabled
         else 'claudecode_auth0 is false and the base im hardwires the Auth0 sidecar: an empty path so Flux prunes it, while the basic-auth instance renders from claude_instances')) %#
+#|   multus: Multus + macvlan from jg-base (ferry133/jg-base#187), the CNI that
+     gives a `grants.l2` tenant's pod a second interface on the LAN. On exactly
+     when some app_repos entry holds grants.l2, because the NADs that render
+     with it (tenants/l2-networks.yaml) are a kind only Multus serves.
+
+     Emitted always, in one of two positions, for the reason longhorn-backup
+     gives: dropping the patch would bring back jg-base's `suspend: true`,
+     which leaves the DaemonSet and its 00-multus.conf on every node. The
+     `disabled` path empties the inventory and Flux prunes them; the daemon
+     deletes the CNI config it wrote on SIGTERM (jg-base multus/ks.yaml).
+     Boolean hoisted for check-ks-position-labels.py, as above. #|
+#% set _tenant_l2 = (app_repos | selectattr('grants.l2') | list | length) > 0 %#
+#% set _ = _enabled.append((
+     'multus',
+     './kubernetes/apps/base/kube-system/multus',
+     'enabled' if _tenant_l2 else 'disabled',
+     'an app_repos entry holds grants.l2, so its pods need a second interface on the LAN'
+        if _tenant_l2
+        else 'no tenant holds grants.l2: an empty path so Flux prunes the Multus DaemonSet, rather than a suspend that would leave it on every node')) %#
 #|   claudecode-db: the explicit-memory PostgreSQL from jg-base (jgct#85), one
      per default im. Base Kustomization is named claudecode-db (NOT -postgres:
      that collides with the extras copy and would fight it on a cluster still
