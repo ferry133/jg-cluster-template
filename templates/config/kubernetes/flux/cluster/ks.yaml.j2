@@ -439,6 +439,38 @@ spec:
         kind: Kustomization
         name: envoy-gateway
 #% endif %#
+#% if app_repos %#
+#| jg-base's tenant hostname policy (#191) admits a tenant HTTPRoute only under
+   `.<tenant>.<domain>`, and the gateway certificate covers `*.<domain>`: a TLS
+   wildcard matches exactly one label, so every tenant hostname failed TLS
+   (ferry133/jg-base#229, measured rc 60 on jg-jcc2). One extra dnsName per
+   tenant on the same certificate. It covers `<app>.<tenant>.<domain>`, which
+   is the naming the policy and the sample use; a deeper name the policy also
+   admits (`a.b.<tenant>.<domain>`) is still not covered.
+
+   The certificate is jg-base's only one in envoy-gateway, so it is targeted
+   by kind: its name is `${SECRET_DOMAIN/./-}-production` before substitution,
+   which a kustomize target cannot match as a regex. Adding a tenant changes
+   the dnsNames, and cert-manager reissues the certificate. #|
+    # tenants: the gateway certificate also covers *.<tenant>.<domain>
+    - patch: |-
+        - op: add
+          path: /spec/patches/-
+          value:
+            patch: |-
+#% for tenant in app_repos %#
+              - op: add
+                path: /spec/dnsNames/-
+                value: "*.#{ tenant.name }#.${SECRET_DOMAIN}"
+#% endfor %#
+            target:
+              group: cert-manager.io
+              kind: Certificate
+      target:
+        group: kustomize.toolkit.fluxcd.io
+        kind: Kustomization
+        name: envoy-gateway
+#% endif %#
 #% if deployment_profile == 'appliance' %#
 #| An appliance discovers its addresses, so it must never ask for a specific
    one. jg-base asks by annotation, falling back to `0.0.0.0` when the cluster

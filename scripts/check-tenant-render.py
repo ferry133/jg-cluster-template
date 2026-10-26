@@ -374,6 +374,15 @@ CS = "kubernetes/components/sops/cluster-secrets.sops.yaml"
 TD = "kubernetes/tenants/"
 
 
+def yq_value(text: str):
+    """One YAML document of any shape (a JSON patch is a list), via yq."""
+    proc = subprocess.run([tool("yq"), "-o=json", "."], input=text.encode(),
+                          capture_output=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"yq could not parse: {proc.stderr.decode().strip()}")
+    return json.loads(proc.stdout or b"null")
+
+
 def docs(body: bytes) -> list[dict]:
     """Every YAML document as a dict, via yq (CI's python has no PyYAML)."""
     proc = subprocess.run([tool("yq"), "-o=json", "-I=0", "."], input=body,
@@ -571,6 +580,34 @@ def tenant_shape(with_t: dict[str, bytes], without: dict[str, bytes],
         if f"path: {prefix}disabled" not in base_text:
             bad.append(f"{KS}: the tenant-free render has no {prefix} switch at disabled")
     rest = json.loads(rest_text)
+    # The other non-tenant change (ferry133/jg-base#229): one patch on the
+    # envoy-gateway Kustomization adding `*.<tenant>.${SECRET_DOMAIN}` to the
+    # gateway certificate per tenant, in app_repos order. Asserted exactly,
+    # then removed from the copy like a switch.
+    want_wild = [{"op": "add", "path": "/spec/dnsNames/-",
+                  "value": f"*.{t['name']}.${{SECRET_DOMAIN}}"} for t in tenants]
+    found_wild = 0
+    for d in rest:
+        pats = (d.get("spec") or {}).get("patches")
+        if not isinstance(pats, list):
+            continue
+        keep = []
+        for p in pats:
+            tgt = p.get("target") or {}
+            outer = yq_value(p.get("patch") or "") if tgt.get("name") == "envoy-gateway" else None
+            inner = outer[0].get("value", {}) if isinstance(outer, list) and outer else {}
+            if (inner.get("target") or {}).get("kind") == "Certificate":
+                found_wild += 1
+                got_ops = yq_value(inner.get("patch") or "")
+                if got_ops != want_wild:
+                    bad.append(f"{KS}: certificate dnsNames patch = {got_ops!r}, expected {want_wild!r}")
+                if inner["target"] != {"group": "cert-manager.io", "kind": "Certificate"}:
+                    bad.append(f"{KS}: certificate patch target = {inner['target']!r}")
+                continue
+            keep.append(p)
+        d["spec"]["patches"] = keep
+    if found_wild != 1:
+        bad.append(f"{KS}: {found_wild} certificate dnsNames patches on envoy-gateway, expected 1")
     if rest != base:
         bad.append(f"{KS}: the non-tenant documents differ from the tenant-free render "
                    f"({len(rest)} vs {len(base)} documents)")
