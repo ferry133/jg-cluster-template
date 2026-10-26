@@ -831,10 +831,11 @@ import (
 	// every `kind: Namespace` name and every `namespace:`/`targetNamespace:`
 	// value in jg-base main `6600713` and jgct main `791ec14`, plus the three
 	// Kubernetes creates on its own). A namespace added to jg-base later is NOT
-	// covered until it is added here.
+	// covered until it is added here. `home-assistant` added 2026-10-26 for the
+	// jg-extras Home Assistant extra (jg-extras#13), before the extra moves in.
 	#ReservedNamespaces: [
 		"cert-manager", "claudecode", "db", "default", "factory",
-		"flux-system", "freepbx", "ingress-nginx", "kube-node-lease",
+		"flux-system", "freepbx", "home-assistant", "ingress-nginx", "kube-node-lease",
 		"kube-public", "kube-system", "lan-address", "linebot",
 		"longhorn-system", "monitoring", "mqtt", "network", "observability",
 		"omni", "storage",
