@@ -70,6 +70,7 @@ RUN = [
     # resolves, clusters without extras are untouched (jgct#217).
     "check-extras-source.py",
     "check-netdev-render.py",
+    "check-ha-mcp-render.py",
 ]
 
 #: The one repository TEMPLATE_ONLY runs in. The clone step in

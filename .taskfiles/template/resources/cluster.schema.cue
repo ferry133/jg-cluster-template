@@ -696,6 +696,12 @@ import (
 	// depends on the site -- minio.janncot.com does not resolve from FAC1's LAN
 	// (split horizon), the same reason backup_r2_endpoint is per cluster.
 	netdev_outside_probes?: [#NetdevProbe, #NetdevProbe, #NetdevProbe]
+	// The base im's long-lived Home Assistant access token (jgct#237), minted
+	// inside HA for its `im` user by the fleet-ops skill `ha-im-credential`.
+	// Needs an app_repos entry with ha_app (plugin.py), and is meant to be
+	// added only after that HA runs. No format constraint: cue vet echoes the
+	// value it rejects.
+	ha_im_token?: string & !=""
 	// factory provisioning credentials (extras/factory/factory in jg-base).
 	// Only the cluster that hosts factory sets these -- jcom today. Every one is
 	// optional and renders empty elsewhere, which is what the consuming Secret
@@ -855,6 +861,7 @@ import (
 		// render a second Secret of the same name and one of the two keys
 		// would silently win.
 		agents: list.MaxItems(1) & [for r in app_repos if r.kind == "agent" {r.name}]
+		ha_apps: list.MaxItems(1) & [for r in app_repos if r.ha_app != _|_ {r.name}]
 	}
 
 	// A tenant is bound to `tenant-admin` in every namespace it declares, and
@@ -903,6 +910,11 @@ import (
 		}
 		namespaces: *[name] | [...#TenantNamespace] & list.MinItems(1)
 		branch?: string & !=""
+		// The label of this tenant's Home Assistant app, when it runs one
+		// (jgct#237): its public name is <ha_app>.<name>.<domain>, and the
+		// base im reaches HA's MCP endpoint there once ha_im_token is set.
+		// At most one tenant (the check below); plugin.py derives the URL.
+		ha_app?: =~"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
 		// Defaults (4 / 8Gi / 50, design D4) are applied in plugin.py — a CUE
 		// default would never reach the template. Strings, because they go into
 		// a ResourceQuota verbatim and `4` vs `"4"` changes nothing there while

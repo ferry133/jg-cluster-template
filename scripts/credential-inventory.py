@@ -186,6 +186,12 @@ KNOWN: dict[str, tuple[str, str, str, str]] = {
         "Open, comment on and close issues in that repo: forge or bury the record of a change",
         "Revoke and reissue in GitHub (fine-grained, that one repo, Issues read/write), put it in cluster.yaml, `task configure --yes`, commit, push, restart `im`; then `escrow-refresh` — cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop",
     ),
+    "ha_im_token": (
+        "The base im's long-lived Home Assistant token, for the ha_app tenant's MCP endpoint (Secret ha-im-token, jgct#237)",
+        "That Home Assistant, as its `im` user -- a non-admin user, but MCP exposes whatever entities HA exposes to the assistant",
+        "Read and control the exposed devices of the customer's home or site: locks, alarms, cameras, climate",
+        "Revoke the token in HA (the `im` user's profile, Long-lived access tokens) and mint a new one with fleet-ops `ha-im-credential`, `task configure --yes`, commit, push; then `escrow-refresh` -- cluster.yaml is git-ignored, so the escrow bundle is the only copy that leaves the laptop. The mount is a directory, so im reads the new token without a restart",
+    ),
     # ── classified 2026-09-26 (`FO-runbook [5fe39a]`). Consumers were MEASURED by
     # grepping jg-base `origin/main` for each rendered variable — two of them have
     # none, and that is recorded rather than smoothed over. Where a third-party
