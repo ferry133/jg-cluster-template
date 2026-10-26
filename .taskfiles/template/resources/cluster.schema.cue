@@ -803,6 +803,12 @@ import (
 	// makejinja (plugin.py reads cluster.yaml, not CUE's value), so absent and
 	// `[]` must, and do, render the same — check-tenant-render.py asserts it.
 	app_repos: *[] | [...#AppRepo]
+	// The customer LAN's other subnets, routed back to from every tenant NAD
+	// through node_default_gateway (jgct#240). No default here and none in
+	// plugin.py: required once any tenant holds grants.l2, and `[]` is how to
+	// say there is no other subnet. Overlap with node_cidr and with each other
+	// is refused in plugin.py, which also has node_cidr's parsed form.
+	lan_routed_cidrs?: [...net.IPCIDR]
 
 	_app_repos_check: {
 		name: list.UniqueItems() & [for r in app_repos {r.name}]
@@ -889,11 +895,25 @@ import (
 		if grants != _|_ if grants.lan_ip != _|_ if grants.lan_ip > 0 {
 			lan_ip_range!: _
 		}
+		// The tenant's LAN addresses for `grants.l2` (jg-base#187): one
+		// macvlan NAD per address on `interface`, the node NIC that carries
+		// node_cidr (Talos: `talosctl get links`). It must exist under that
+		// name on every node a tenant pod can land on. Range checks (inside
+		// node_cidr, clear of the gateway, the nodes, every LoadBalancer pool
+		// and the appliance probe's window) are in plugin.py.
+		l2_network?: {
+			interface: =~"^[A-Za-z0-9_.-]{1,15}$"
+			start:     net.IPv4
+			stop:      net.IPv4
+		}
+		if grants != _|_ if grants.l2 != _|_ if grants.l2 {
+			l2_network!: _
+		}
 	}
 
-	// All off by default. `l2` and `devices` are accepted here and refused in
-	// plugin.py until their platform component ships, so the refusal can name
-	// the component instead of reading as a typo.
+	// All off by default. `devices` is accepted here and refused in plugin.py
+	// until its platform component ships, so the refusal can name the
+	// component instead of reading as a typo.
 	#Grants: {
 		baseline?:     bool
 		host_network?: bool

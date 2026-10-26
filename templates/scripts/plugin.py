@@ -352,11 +352,145 @@ APP_REPO_QUOTA_DEFAULTS = {'cpu': '4', 'memory': '8Gi', 'pods': 50}
 # rather than in cluster.schema.cue so the refusal can say what is missing; a
 # schema rejection would read as a typo.
 APP_REPO_UNSERVED_GRANTS = {
-    'l2': "an L2 discovery component (mDNS reflector or Multus+macvlan) — "
-          "ferry133/jg-base#187 (fleet-ops root `standalone-app-repos` task 8.1)",
     'devices': "a device plugin exposing /dev/* as extended resources — "
                "ferry133/jg-base#188 (fleet-ops root `standalone-app-repos` task 8.2)",
 }
+
+
+# `grants.l2` (ferry133/jg-base#187, jgct#240). jg-base ships Multus + macvlan
+# behind the `multus` switch and admits a pod's secondary network only in a
+# namespace labelled `jg.tenant-l2: granted`, naming a NAD in its own namespace.
+# This renders those NADs: one per address in the tenant's `l2_network` range,
+# static IPAM, because host-local IPAM keeps its allocations per NODE and two
+# nodes would hand out the same LAN address. One NAD per address makes the
+# address the thing a pod asks for, so a collision is two pods naming the same
+# NAD rather than two allocators disagreeing.
+#
+# Capped: every address is an object in the tenant namespace, and a range wide
+# enough to need more is a different design (a cluster-wide allocator).
+L2_MAX_ADDRESSES = 16
+# lan-address-probe scans this window of the node's /24, from the top, for the
+# appliance's LoadBalancer addresses (jg-base network/lan-address/app,
+# SCAN_FROM / SCAN_TO, not overridden anywhere). An l2 address inside it is one
+# the probe can take for envoy whenever the tenant pod happens to be down.
+L2_APPLIANCE_PROBE_WINDOW = (200, 254)
+
+
+def _l2_nad_name(addr: Any) -> str:
+    return 'lan-' + str(addr).replace('.', '-')
+
+
+def _tenant_l2(data: dict[str, Any], repo: dict[str, Any], pool: list,
+               pool_text: str, claimed: list) -> None:
+    """Refuse an `l2_network` that would collide with something on the LAN the
+    render can see, and fill `repo['l2_nads']` for the template."""
+    name = repo['name']
+    l2 = repo.get('l2_network')
+    if l2 is None:
+        raise KeyError(
+            f"app_repos[{name}].grants.l2 is set without l2_network. The pod's "
+            f"LAN address comes from that range; there is no default for an "
+            f"address on someone else's LAN.")
+    start = ipaddress.ip_address(l2['start'])
+    stop = ipaddress.ip_address(l2['stop'])
+    span = f"{start}-{stop}"
+    if stop < start:
+        raise KeyError(f"app_repos[{name}].l2_network {span}: stop is below start.")
+    size = int(stop) - int(start) + 1
+    if size > L2_MAX_ADDRESSES:
+        raise KeyError(
+            f"app_repos[{name}].l2_network {span} holds {size} addresses; at most "
+            f"{L2_MAX_ADDRESSES} (one NetworkAttachmentDefinition each).")
+    node_net = ipaddress.ip_network(str(data.get('node_cidr')), strict=False)
+    if start not in node_net or stop not in node_net:
+        raise KeyError(
+            f"app_repos[{name}].l2_network {span} is not inside node_cidr "
+            f"{node_net}. macvlan puts the pod on the node's own LAN segment.")
+    if start in (node_net.network_address, node_net.broadcast_address) or \
+            stop in (node_net.network_address, node_net.broadcast_address):
+        raise KeyError(
+            f"app_repos[{name}].l2_network {span} includes the network or "
+            f"broadcast address of {node_net}.")
+    gw = ipaddress.ip_address(data['node_default_gateway'])
+    if start <= gw <= stop:
+        raise KeyError(
+            f"app_repos[{name}].l2_network {span} includes node_default_gateway {gw}.")
+    for node in data.get('nodes') or []:
+        addr = ipaddress.ip_address(node['address'])
+        if start <= addr <= stop:
+            raise KeyError(
+                f"app_repos[{name}].l2_network {span} includes node "
+                f"{node.get('name', addr)} ({addr}).")
+    if data.get('deployment_profile') == 'appliance':
+        lo, hi = L2_APPLIANCE_PROBE_WINDOW
+        prefix = int(start) & ~0xFF
+        window = (ipaddress.ip_address(prefix + lo), ipaddress.ip_address(prefix + hi))
+        if start <= window[1] and window[0] <= stop:
+            raise KeyError(
+                f"app_repos[{name}].l2_network {span} overlaps {window[0]}-{window[1]}, "
+                f"where lan-address-probe looks for this appliance's LoadBalancer "
+                f"addresses. It would take an l2 address whenever the tenant pod "
+                f"is down. Choose addresses below .{lo}.")
+    for lo, hi in pool:
+        if start <= hi and lo <= stop:
+            raise KeyError(
+                f"app_repos[{name}].l2_network {span} overlaps lb_pool_blocks "
+                f"({pool_text}). Cilium would announce the same address the pod "
+                f"answers ARP for.")
+    for lo, hi, other in claimed:
+        if start <= hi and lo <= stop:
+            raise KeyError(
+                f"app_repos[{name}].l2_network {span} overlaps {other} {lo}-{hi}.")
+    claimed.append((start, stop, f"app_repos[{name}].l2_network"))
+    repo['l2_nads'] = [
+        {'name': _l2_nad_name(ipaddress.ip_address(int(start) + i)),
+         'address': f"{ipaddress.ip_address(int(start) + i)}/{node_net.prefixlen}"}
+        for i in range(size)]
+
+
+def lan_routed_cidrs(data: dict[str, Any]) -> list[str]:
+    """The customer LAN's OTHER subnets, which every tenant NAD routes back to
+    through node_default_gateway (jgct#240, ferry133 chose explicit routes).
+
+    Without them a client on another subnet reaches the pod and never gets an
+    answer: the reply leaves through the pod's default route on eth0 (Cilium),
+    not through net1. Measured on jg-jcc2 2026-10-26 (jg-base#187
+    issuecomment-6404527846; the route fixed it, jgct#240
+    issuecomment-6404752339).
+
+    Required, with no default, as soon as any tenant holds grants.l2: whether a
+    subnet was left out depends on the router's tables, which nothing in the
+    render or the cluster can read. An explicit `[]` is the way to say "this
+    LAN has one subnet", so the omission is always a decision someone wrote.
+    """
+    if 'lan_routed_cidrs' not in data:
+        raise KeyError(
+            "lan_routed_cidrs is not set, and an app_repos entry holds grants.l2. "
+            "List every other subnet the customer's router connects to this LAN "
+            "(for example a separate Wi-Fi or office segment), or [] if there is "
+            "none. A subnet left out cannot reach the tenant's pods, and nothing "
+            "reports it.")
+    node_net = ipaddress.ip_network(str(data.get('node_cidr')), strict=False)
+    gw = ipaddress.ip_address(data['node_default_gateway'])
+    if gw not in node_net:
+        raise KeyError(
+            f"node_default_gateway {gw} is outside node_cidr {node_net}; the "
+            f"tenant NAD routes through it from the node's segment.")
+    seen: list[Any] = []
+    for cidr in data['lan_routed_cidrs']:
+        try:
+            net = ipaddress.ip_network(cidr, strict=True)
+        except ValueError as e:
+            raise KeyError(f"lan_routed_cidrs entry {cidr!r}: {e}.") from None
+        if net.overlaps(node_net):
+            raise KeyError(
+                f"lan_routed_cidrs entry {net} overlaps node_cidr {node_net}; the "
+                f"node's own segment is reached directly, not through a route.")
+        for other in seen:
+            if net.overlaps(other):
+                raise KeyError(f"lan_routed_cidrs entries {other} and {net} overlap.")
+        seen.append(net)
+    return [str(n) for n in seen]
 
 
 def _block_range(block: dict[str, str]) -> tuple[Any, Any]:
@@ -409,6 +543,13 @@ def app_repos(data: dict[str, Any]) -> list[dict[str, Any]]:
         else:
             repo['psa_level'] = 'restricted'
 
+        if grants.get('l2'):
+            _tenant_l2(data, repo, pool, pool_text, claimed)
+        elif 'l2_network' in repo:
+            raise KeyError(
+                f"app_repos[{name}].l2_network is set but grants.l2 is not. "
+                f"Nothing would render from it.")
+
         if not grants['lan_ip']:
             continue
         # An appliance's shared pool is discovered at runtime by
@@ -451,8 +592,23 @@ def app_repos(data: dict[str, Any]) -> list[dict[str, Any]]:
             if start <= hi and lo <= stop:
                 raise KeyError(
                     f"app_repos[{name}].lan_ip_range {start}-{stop} overlaps "
-                    f"app_repos[{other}].lan_ip_range {lo}-{hi}.")
-        claimed.append((start, stop, name))
+                    f"{other} {lo}-{hi}.")
+        claimed.append((start, stop, f"app_repos[{name}].lan_ip_range"))
+    if any(r['grants'].get('l2') for r in repos):
+        data['lan_routed_cidrs'] = lan_routed_cidrs(data)
+        routes = [{'dst': c, 'gw': data['node_default_gateway']}
+                  for c in data['lan_routed_cidrs']]
+        # The CNI config is a JSON string inside YAML. Built here, not in the
+        # template, so it is json.dumps output and never hand-quoted; the
+        # template wraps it in single quotes, which compact JSON cannot contain.
+        for repo in repos:
+            for nad in repo.get('l2_nads', []):
+                nad['config'] = json.dumps({
+                    'cniVersion': '0.3.1', 'name': nad['name'], 'type': 'macvlan',
+                    'master': repo['l2_network']['interface'], 'mode': 'bridge',
+                    'ipam': {'type': 'static',
+                             'addresses': [{'address': nad['address']}],
+                             'routes': routes}}, separators=(',', ':'))
     return repos
 
 
