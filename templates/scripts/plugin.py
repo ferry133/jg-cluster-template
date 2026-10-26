@@ -348,13 +348,14 @@ DEFAULT_CLAUDE_INSTANCES = []
 # ResourceQuota verbatim.
 APP_REPO_QUOTA_DEFAULTS = {'cpu': '4', 'memory': '8Gi', 'pods': 50}
 
-# Grants the schema accepts but no platform component serves yet. Refused here
-# rather than in cluster.schema.cue so the refusal can say what is missing; a
-# schema rejection would read as a typo.
-APP_REPO_UNSERVED_GRANTS = {
-    'devices': "a device plugin exposing /dev/* as extended resources — "
-               "ferry133/jg-base#188 (fleet-ops root `standalone-app-repos` task 8.2)",
-}
+# `grants.devices` (ferry133/jg-base#188): the device classes jg-base's
+# generic-device-plugin advertises, each as the extended resource
+# `devic.es/<class>` (kube-system/generic-device-plugin/enabled/daemonset.yaml,
+# its `--device` args). A class named here that jg-base does not ship would
+# render a quota for a resource no node ever has: the pod stays Pending with
+# nothing saying why. Refused here, not in the schema, so the refusal can list
+# what exists.
+DEVICE_CLASSES = ('serial',)
 
 
 # `grants.l2` (ferry133/jg-base#187, jgct#240). jg-base ships Multus + macvlan
@@ -526,12 +527,18 @@ def app_repos(data: dict[str, Any]) -> list[dict[str, Any]]:
         grants = repo.setdefault('grants', {})
         grants.setdefault('lan_ip', 0)
 
-        for grant, component in APP_REPO_UNSERVED_GRANTS.items():
-            if grants.get(grant):
-                raise KeyError(
-                    f"app_repos[{name}].grants.{grant} is set, but the platform "
-                    f"does not ship {component} yet. Remove the grant; a tenant "
-                    f"that relied on it would deploy and then not work.")
+        devices = grants.setdefault('devices', {})
+        unknown = sorted(set(devices) - set(DEVICE_CLASSES))
+        if unknown:
+            raise KeyError(
+                f"app_repos[{name}].grants.devices names {', '.join(unknown)}, which "
+                f"jg-base's device plugin does not advertise (it has: "
+                f"{', '.join(DEVICE_CLASSES)}). A quota for it would admit a pod "
+                f"no node can ever run.")
+        # Every class gets a quota line, 0 where not granted: a second fence
+        # behind jg-base's tenant-device-requests policy, on a different
+        # premise (the quota counts resources; the policy reads a label).
+        repo['device_quota'] = {c: devices.get(c, 0) for c in DEVICE_CLASSES}
 
         # The level is a consequence of the grants, never an input (design
         # D9): the schema has no field for it, so nothing in cluster.yaml can
