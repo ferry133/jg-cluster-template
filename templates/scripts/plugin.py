@@ -318,6 +318,54 @@ def netdev_config(data: dict) -> None:
                 "and after a write.")
 
 
+# The base im's Home Assistant MCP connection (jgct#237, fleet-ops
+# im-home-automation; jg-base#221/#232). jg-base reads two things: HA_MCP_URL
+# from cluster-secrets (empty = unset, nothing registered) and Secret
+# `ha-im-token` (key `token`) in claudecode, mounted optional on the app
+# container.
+#
+# The URL is derived, never typed: under ferry133's ruling on jgct#245 (A) im
+# reaches a tenant's API only through the tenant's own HTTPRoute, so it is
+# https://<ha_app>.<tenant>.<domain>/api/mcp -- the hostname the tenant
+# hostname policy admits and the gateway certificate covers (jg-base#229).
+# `ha_app` on the app_repos entry names the HA app's label; it is the one fact
+# the template cannot see, because the vendor writes the HTTPRoute.
+#
+# Rendered only with ha_im_token. The token is minted inside HA after HA runs
+# (fleet-ops skill `ha-im-credential`), so the first render of a cluster with
+# an HA tenant has none, and the URL stays empty until it does -- the order
+# "deploy HA, then mint the token" is the only one that works, and it must not
+# be refused (the claim on jgct#237).
+#
+# The jg-extras HA extra gets no URL: it has no tenant HTTPRoute, and whether
+# it gets a public route or none is not ruled yet (k8scc-c7 on jgct#237,
+# 2026-10-26 20:04). A token with only the extra is therefore refused rather
+# than rendered into a Secret nothing would read.
+def ha_mcp_config(data: dict) -> None:
+    ha = [r for r in (data.get('app_repos') or []) if r.get('ha_app')]
+    data['ha_mcp_url'] = ''
+    token = data.get('ha_im_token')
+    if not token:
+        return
+    if '\n' in str(token).strip():
+        raise ValueError("ha_im_token spans more than one line; it is a single "
+                         "long-lived access token.")
+    if not ha:
+        extra = 'default/home-assistant' in (data.get('extras') or [])
+        raise KeyError(
+            "ha_im_token is set but no app_repos entry declares ha_app, so there "
+            "is no Home Assistant URL for im to use the token against"
+            + (" (the default/home-assistant extra gets none until it has a "
+               "ruled public route -- jgct#237)" if extra else "")
+            + ". Declare ha_app on the tenant that runs HA, or remove the token.")
+    if len(ha) > 1:
+        raise KeyError(
+            f"app_repos entries {', '.join(r['name'] for r in ha)} all declare "
+            "ha_app; im takes one Home Assistant. Keep ha_app on one of them.")
+    data['ha_mcp_url'] = (f"https://{ha[0]['ha_app']}.{ha[0]['name']}."
+                          f"{data['cloudflare_domain']}/api/mcp")
+
+
 # Return the Flux / GitHub push token from github-push-token.txt
 def github_push_token(file_path: str = 'github-push-token.txt') -> str:
     try:
@@ -1249,6 +1297,7 @@ class Plugin(makejinja.plugin.Plugin):
                 for name in instances
             }
         netdev_config(data)
+        ha_mcp_config(data)
         # Backups are encrypted to the cluster's own age public key, taken from
         # .sops.yaml rather than added as another field to fill in. The key is
         # already there, it is already the thing that travels with the cluster
