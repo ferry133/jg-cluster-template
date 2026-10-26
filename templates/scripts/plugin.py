@@ -46,7 +46,9 @@ def b64encode(value: str) -> str:
 # names after. Recorded in one line rather than deleted silently, because the
 # next person adding a position will look for precedent on how one leaves.
 EMPTY_POSITIONS = frozenset({'disabled'})
-LIVE_POSITIONS = frozenset({'enabled', 'app'})
+# 'netdev' (jgct#249): claude-code-im's third position, jg-base's im/netdev
+# overlay -- im/enabled plus the netdev-mcp sidecar, so it renders resources.
+LIVE_POSITIONS = frozenset({'enabled', 'app', 'netdev'})
 
 DISABLED_LABEL = 'disabled (empty path, so anything previously applied is pruned)'
 
@@ -223,6 +225,97 @@ def extras_deploy_key(file_path: str = 'jg-extras.deploy.key') -> str:
             f"{file_path} does not look like a private SSH key (no "
             f"'PRIVATE KEY-----' line) — a public half under the private name?")
     return text
+
+
+# The im/netdev position of claude-code-im (jgct#249, the jgct half of
+# ferry133/jg-base#222): im plus the netdev-mcp sidecar, which reads this
+# cluster's UniFi console. jg-base's contract is in
+# kubernetes/apps/base/claudecode/claude-code/im/netdev/netdev-mcp.yaml: three
+# optional Secrets in `claudecode` (unifi-reader: ca.crt + reader-key;
+# unifi-operator: operator, two lines; im-fac-ticket: token) and four
+# cluster-secrets values.
+#
+# Two groups, and each is all-or-nothing:
+#   reader  unifi_controller_url + unifi_ca_cert + unifi_reader_key
+#   writer  unifi_operator_user + unifi_operator_password +
+#           im_fac_ticket_repo + im_fac_ticket_token + netdev_outside_probes
+# The server registers write tools only when every writer input is usable, so
+# a half-set writer is safe on the cluster -- but it renders a cluster.yaml
+# that reads as "operator on" while the tools are absent, and the startup line
+# that would say why is in a pod log nobody reads at render time. So a half-set
+# is refused here, before any file is written, naming the missing FIELDS and
+# never a value.
+#
+# The recorded console is what selects the path: no separate on/off switch,
+# because two fields for one fact diverge (base_repo_dir's reasoning).
+NETDEV_READER = ('unifi_controller_url', 'unifi_ca_cert', 'unifi_reader_key')
+NETDEV_WRITER = ('unifi_operator_user', 'unifi_operator_password',
+                 'im_fac_ticket_repo', 'im_fac_ticket_token',
+                 'netdev_outside_probes')
+
+
+def netdev_config(data: dict) -> None:
+    def present(f):
+        return bool(data.get(f))
+
+    reader = [f for f in NETDEV_READER if present(f)]
+    writer = [f for f in NETDEV_WRITER if present(f)]
+    data['netdev_enabled'] = bool(reader)
+    data['netdev_writer'] = bool(writer)
+    if not reader and not writer:
+        return
+    if writer and not reader:
+        raise KeyError(
+            f"cluster.yaml sets {', '.join(writer)} but no UniFi console "
+            f"({', '.join(NETDEV_READER)}). The write release is an addition to "
+            "the reader, not a substitute for it -- record the console first.")
+    if len(reader) != len(NETDEV_READER):
+        missing = [f for f in NETDEV_READER if f not in reader]
+        raise KeyError(
+            f"cluster.yaml records a UniFi console but is missing "
+            f"{', '.join(missing)}. All three are needed for the netdev-mcp "
+            "reader: the URL, the console's certificate (or its CA) as PEM, "
+            "and the Integration API key.")
+    if writer and len(writer) != len(NETDEV_WRITER):
+        missing = [f for f in NETDEV_WRITER if f not in writer]
+        raise KeyError(
+            f"cluster.yaml sets part of the netdev-mcp write release "
+            f"({', '.join(writer)}) and is missing {', '.join(missing)}. "
+            "Set all five, or none for a reader-only cluster. A half-set "
+            "renders a cluster that reads as 'operator on' while the server "
+            "registers no write tool.")
+    if not data['claudecode_auth0_enabled']:
+        # im/disabled has no im for the sidecar to join. Ignoring the console
+        # would be a field that renders nothing and says nothing.
+        raise KeyError(
+            "cluster.yaml records a UniFi console but claudecode_auth0 is "
+            "false, so the base im is on its empty im/disabled path and there "
+            "is no pod for the netdev-mcp sidecar to run in. Remove the unifi_* "
+            "fields, or turn the base im on.")
+    # Shapes the server would refuse, caught here. Messages name the field and
+    # what is wrong with it, never the value: several of these are credentials.
+    if '-----BEGIN CERTIFICATE-----' not in data['unifi_ca_cert']:
+        raise ValueError(
+            "unifi_ca_cert has no '-----BEGIN CERTIFICATE-----' line: it must "
+            "be the console's certificate or its CA, as PEM.")
+    single = ['unifi_reader_key']
+    if writer:
+        single += ['unifi_operator_user', 'unifi_operator_password',
+                   'im_fac_ticket_token']
+    multi = [f for f in single if '\n' in str(data[f]).strip()]
+    if multi:
+        raise ValueError(
+            f"{', '.join(multi)} span more than one line; each is a single "
+            "value. (unifi-operator's file is user and password on two lines, "
+            "and the template builds it from the two fields.)")
+    if writer:
+        probes = data['netdev_outside_probes']
+        if len(probes) != 3 or len(set(probes)) != 3:
+            raise ValueError(
+                "netdev_outside_probes must name exactly three DIFFERENT "
+                f"targets (got {len(probes)}, {len(set(probes))} distinct): the "
+                "server checks outside reachability on three paths before "
+                "and after a write.")
 
 
 # Return the Flux / GitHub push token from github-push-token.txt
@@ -1155,6 +1248,7 @@ class Plugin(makejinja.plugin.Plugin):
                 name: by_instance.get(name, data.get('claudecode_allowed_emails', ''))
                 for name in instances
             }
+        netdev_config(data)
         # Backups are encrypted to the cluster's own age public key, taken from
         # .sops.yaml rather than added as another field to fill in. The key is
         # already there, it is already the thing that travels with the cluster

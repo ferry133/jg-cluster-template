@@ -69,6 +69,7 @@ RUN = [
     # Same tools and fixtures: extras come from jg-extras, the secretRef
     # resolves, clusters without extras are untouched (jgct#217).
     "check-extras-source.py",
+    "check-netdev-render.py",
 ]
 
 #: The one repository TEMPLATE_ONLY runs in. The clone step in
@@ -92,6 +93,10 @@ TEMPLATE_ONLY = {
     "check-reserved-namespaces.py":
         "compares the template's #ReservedNamespaces with jg-base and jg-extras; "
         "needs JG_EXTRAS_READ_KEY, which only the template repo holds",
+    "check-netdev-contract.py":
+        "compares check-netdev-render.py's copy of the netdev contract with "
+        "jg-base's im/netdev overlay; needs the jg-base clone, which only the "
+        "template repo's CI makes",
 }
 
 # Cannot see their subject from a bare template checkout. The reason is the
