@@ -92,7 +92,11 @@ class TestRun(unittest.TestCase):
     def test_template_repo_executes_the_guard(self):
         m = load()
         rc, called, _ = run_with(m, m.TEMPLATE_REPO)
-        self.assertEqual((rc, called), (0, [GUARD]))
+        # Every template-only guard, and nothing else (RUN is emptied above).
+        # Was `[GUARD]` while it was the only one; jgct#249 added
+        # check-netdev-contract.py, which needs the same jg-base clone.
+        self.assertIn(GUARD, called)
+        self.assertEqual((rc, called), (0, list(m.TEMPLATE_ONLY)))
 
     def test_customer_repo_does_not_execute_it_and_prints_the_skip(self):
         m = load()

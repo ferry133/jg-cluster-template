@@ -326,11 +326,27 @@ spec:
      'an appliance lands on a LAN nobody has surveyed, so it discovers its address at runtime'
         if _probe_discovers
         else 'this profile declares its LAN addresses in cluster.yaml: an empty path so Flux prunes the probe and the pools it owns, rather than a suspend that would leave the pod recreating them')) %#
+#|   Third position, `netdev` (jgct#249): jg-base's im/netdev overlay, the same
+     HelmRelease plus the netdev-mcp sidecar, chosen when cluster.yaml records
+     a UniFi console. plugin.py refuses a console on an im/disabled cluster, so
+     netdev_enabled implies claudecode_auth0_enabled. Switching between enabled
+     and netdev is an upgrade of one release, not a prune; switching back
+     deletes the snapshot claim (no retain), which for a pile of router
+     secrets is the right default (jg-base netdev-mcp.yaml).
+
+     The position is split over two short lines on purpose: one line starting
+     with a quote and longer than 60 characters is where
+     check-ks-position-labels.py stops reading (it takes that for the `why`
+     prose), and the first draft of this entry was exactly that -- the guard
+     passed without ever seeing 'netdev'. #|
 #% set _ = _enabled.append((
      'claude-code-im',
      './kubernetes/apps/base/claudecode/claude-code/im',
-     'enabled' if claudecode_auth0_enabled else 'disabled',
-     'the default im.<domain> web terminal from jg-base, gated on this cluster accepting the Auth0 OIDC front'
+     'netdev' if netdev_enabled
+        else 'enabled' if claudecode_auth0_enabled else 'disabled',
+     'the default im.<domain> web terminal from jg-base with the netdev-mcp sidecar, because this cluster records a UniFi console'
+        if netdev_enabled
+        else 'the default im.<domain> web terminal from jg-base, gated on this cluster accepting the Auth0 OIDC front'
         if claudecode_auth0_enabled
         else 'claudecode_auth0 is false and the base im hardwires the Auth0 sidecar: an empty path so Flux prunes it, while the basic-auth instance renders from claude_instances')) %#
 #|   multus: Multus + macvlan from jg-base (ferry133/jg-base#187), the CNI that
@@ -685,6 +701,46 @@ spec:
   dependsOn:
     - name: cluster-apps-base
 #% endfor %#
+#| ── netdev-mcp credentials (jgct#249) ───────────────────────────────────────
+   The Secrets jg-base's im/netdev mounts (unifi-reader; with the write release
+   also unifi-operator and im-fac-ticket), in `claudecode`. Rendered only when
+   a console is recorded, so a cluster without one is byte-identical.
+
+   Their own Kustomization and not components/sops: cluster-secrets has no
+   dependsOn and is what every other Kustomization substitutes from, so a
+   Secret in a namespace that does not exist yet would fail THAT apply --
+   cluster-secrets is applied atomically. Here the failure is confined and
+   heals on retry, and dependsOn cluster-apps-base (which applies the
+   claudecode namespace) makes it not happen at all. Same shape as
+   cluster-tenants and its im-apps-write-key.
+
+   Removing the console stops rendering this object; Flux prunes it, and its
+   prune takes the Secrets. Each Secret is optional in jg-base, so their
+   arriving after im started is a missing file to the server (reader
+   credential: missing), not a crash -- but a running pod does not pick up a
+   Secret that first appears later (70 s measured on jg-jcc2 for
+   im-apps-write-key), so the first apply is followed by an im restart. #|
+#% if netdev_enabled %#
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: claude-code-netdev-secrets
+  namespace: flux-system
+spec:
+  decryption:
+    provider: sops
+  interval: 1h
+  retryInterval: 5m
+  path: ./kubernetes/netdev
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+  dependsOn:
+    - name: cluster-apps-base
+#% endif %#
 #| ── Standalone app repos (tenants) ──────────────────────────────────────────
    jgct#214 task 3.3, fleet-ops root `standalone-app-repos` design D1/D5.
    Rendered only when app_repos is non-empty: with none declared this file must

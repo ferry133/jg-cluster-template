@@ -742,6 +742,49 @@ cluster_name: "xxxxxx"
 #     ...
 
 
+# ── The site's UniFi console (optional) — netdev-mcp on the base im ───────────
+# Gives the agent a read view of THIS site's UniFi network (devices, clients,
+# networks, Wi-Fi), through its own sidecar next to the terminal: the key
+# below is mounted there and nowhere else -- not in the terminal, which is the
+# customer's root shell. Leave the whole section commented out on a site
+# without a UniFi console; nothing changes for such a cluster.
+#
+# Recording the console moves the base im onto jg-base's `im/netdev` path
+# (the same release plus the sidecar). Remove these fields again and it
+# returns to `im/enabled`, deleting the sidecar's snapshot volume with it.
+#
+# Reader -- all three, or none:
+# unifi_controller_url: "https://10.9.1.1"   # https only; the sidecar has no http mode
+# unifi_ca_cert: |                           # the console's certificate, or its CA, as PEM
+#   -----BEGIN CERTIFICATE-----
+#   ...
+#   -----END CERTIFICATE-----
+# unifi_reader_key: ""                       # the console's Integration API key (read-only)
+# unifi_site: "default"                      # only for a site other than `default`
+#
+# Writer -- the agent may also CHANGE the network, after the person at the
+# terminal confirms each change, filing a ticket and taking a snapshot first.
+# All five, or none; and only on top of the reader above. Leave these out
+# until the operator company says this site gets them: a throwaway cluster
+# first, an existing site only after a reader-only week and ferry133's nod.
+# unifi_operator_user: ""        # a RESTRICTED local admin on the console, not the owner
+# unifi_operator_password: ""
+# im_fac_ticket_repo: ""         # owner/repo, the private repo the tickets go to
+# im_fac_ticket_token: ""        # can only open, comment on and close issues THERE
+# netdev_outside_probes:         # exactly three, on three different paths:
+#   - "https://api.github.com/zen"                         #   GitHub API
+#   - "https://<company minio this site can resolve>/minio/health/live"
+#                                                          #   company MinIO
+#   - "1.1.1.1:53"                                         #   public DNS
+# Each probe is `https://host/path` or `host:port`. The MinIO one is per site:
+# pick a name this site's LAN resolves -- minio.janncot.com does not resolve
+# from FAC1's LAN (split horizon), so on a FAC1 cluster use the endpoint its
+# off-site backup already reaches (backup_r2_endpoint, minio.jiahd.cc there).
+#
+# The render refuses a half-set group, a writer without a reader, and a console
+# on a cluster with claudecode_auth0: false (there is no base im to join).
+
+
 # ── extras/factory/factory — provisioning credentials (one cluster only) ──────
 # Consumed by jg-base `kubernetes/apps/extras/factory/factory/app/
 # credentials-secret.yaml`. Set these ONLY on the cluster that hosts factory
