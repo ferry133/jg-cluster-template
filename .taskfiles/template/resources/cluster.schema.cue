@@ -911,15 +911,16 @@ import (
 		}
 	}
 
-	// All off by default. `devices` is accepted here and refused in plugin.py
-	// until its platform component ships, so the refusal can name the
-	// component instead of reading as a typo.
+	// All off by default. `devices` maps a device class to how many of it each
+	// of the tenant's namespaces may request (jg-base#188). Which classes exist
+	// is checked in plugin.py against what jg-base's device plugin advertises,
+	// so the refusal can list them.
 	#Grants: {
 		baseline?:     bool
 		host_network?: bool
 		lan_ip?:       int & >=0
 		l2?:           bool
-		devices?:      [...string]
+		devices?:      {[=~"^[a-z0-9-]+$"]: int & >0}
 	}
 }
 

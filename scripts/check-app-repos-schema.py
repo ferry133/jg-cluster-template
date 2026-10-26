@@ -163,6 +163,15 @@ def main() -> int:
     case("a non-CIDR lan_routed_cidrs entry is refused",
          BASE + 'lan_routed_cidrs: ["198.51.100.1"]\napp_repos: []\n',
          False, must_name="lan_routed_cidrs.0")
+    # grants.devices (jg-base#188): class -> positive count.
+    case("devices {serial: 1} passes",
+         with_repos(VENDOR + '    grants: {devices: {serial: 1}}\n'), True)
+    case("devices as the old list shape is refused",
+         with_repos(VENDOR + '    grants: {devices: ["/dev/ttyUSB0"]}\n'),
+         False, must_name="app_repos.0.grants.devices")
+    case("a device count of 0 is refused (leave the class out instead)",
+         with_repos(VENDOR + '    grants: {devices: {serial: 0}}\n'),
+         False, must_name="app_repos.0.grants.devices.serial")
     case("a reserved namespace is refused AND named",
          with_repos(VENDOR + '    namespaces: ["acme", "claudecode"]\n'),
          False, must_name='invalid value "claudecode"')

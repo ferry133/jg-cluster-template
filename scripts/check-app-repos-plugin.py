@@ -161,7 +161,8 @@ def run_cases() -> int:
             {"app_repos": [vendor()]},
             lambda d: expect(d, 0, branch="main", namespaces=["acme"],
                              quota={"cpu": "4", "memory": "8Gi", "pods": 50},
-                             grants={"lan_ip": 0}, psa_level="restricted"))
+                             grants={"lan_ip": 0, "devices": {}}, psa_level="restricted",
+                             device_quota={"serial": 0}))
     accepts("a partial quota keeps what it set and fills the rest",
             {"app_repos": [vendor(quota={"cpu": "2"})]},
             lambda d: expect(d, 0, quota={"cpu": "2", "memory": "8Gi", "pods": 50}))
@@ -327,10 +328,17 @@ def run_cases() -> int:
                  app_repos=[l2("192.0.2.195", "192.0.2.200")]),
             "192.0.2.200-192.0.2.254", "lan-address-probe")
 
-    # Grants with no platform component yet.
-    refuses("devices is refused, naming the missing component",
-            {"app_repos": [vendor(grants={"devices": ["/dev/ttyUSB0"]})]},
-            "grants.devices", "jg-base#188", "task 8.2")
+    # grants.devices (jg-base#188): a class -> count map, every class quoted
+    # in the quota (0 without the grant), and only classes jg-base advertises.
+    accepts("devices {serial: 2} -> device_quota serial 2, PSA unchanged",
+            {"app_repos": [vendor(grants={"devices": {"serial": 2}})]},
+            lambda d: expect(d, 0, device_quota={"serial": 2}, psa_level="restricted"))
+    accepts("no devices grant -> device_quota serial 0 (the second fence)",
+            {"app_repos": [vendor(grants={"baseline": True})]},
+            lambda d: expect(d, 0, device_quota={"serial": 0}))
+    refuses("a device class jg-base does not advertise is refused, listing what exists",
+            {"app_repos": [vendor(grants={"devices": {"zigbee": 1}})]},
+            "grants.devices names zigbee", "it has: serial")
 
     # tenant_key(): the file-name contract with the provisioning skill.
     def key_case(label, files, kind, must, forbid=""):

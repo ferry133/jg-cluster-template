@@ -1042,8 +1042,16 @@ cluster_name: "xxxxxx"
 #                   namespace only:
 #                     metadata.annotations:
 #                       k8s.v1.cni.cncf.io/networks: lan-10-9-x-20
-#     devices       refused for now: the platform component is not shipped
-#                   (ferry133/jg-base#188).
+#     devices       {<class>: <count>}: the tenant's pods may request that
+#                   many of a device class in EACH of its namespaces, e.g.
+#                   {serial: 1} for a Zigbee / Z-Wave stick or a USB serial
+#                   adapter (/dev/ttyUSB*, /dev/ttyACM*). The only class today
+#                   is `serial`. A pod asks for one with
+#                     resources.limits: {devic.es/serial: 1}
+#                   and gets the device without privileged or hostPath; it is
+#                   scheduled only onto a node that has one plugged in.
+#                   Turning it on also switches the device plugin on for the
+#                   whole cluster.
 #   lan_ip_range  {start, stop}: at least `lan_ip` addresses, outside the
 #                 shared LoadBalancer pool and every other tenant's range.
 #                 `task configure` refuses an overlap, naming both ranges.
@@ -1083,6 +1091,7 @@ cluster_name: "xxxxxx"
 #     grants:
 #       baseline: true
 #       lan_ip: 1
+#       devices: {serial: 1}
 #     lan_ip_range: {start: "10.9.x.200", stop: "10.9.x.200"}
 #   - name: homekit
 #     repository: your-org/homekit-bridge

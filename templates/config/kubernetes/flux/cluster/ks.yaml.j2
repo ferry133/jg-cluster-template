@@ -352,6 +352,21 @@ spec:
      'an app_repos entry holds grants.l2, so its pods need a second interface on the LAN'
         if _tenant_l2
         else 'no tenant holds grants.l2: an empty path so Flux prunes the Multus DaemonSet, rather than a suspend that would leave it on every node')) %#
+#|   generic-device-plugin: exposes the node's serial devices as `devic.es/*`
+     extended resources (ferry133/jg-base#188). On exactly when some app_repos
+     entry holds grants.devices. Two positions for the reason longhorn-backup
+     gives, measured on THIS component: jg-jcc2 2026-10-26, the patch was
+     dropped, the Kustomization went back to suspend:true and the DaemonSet
+     kept running and advertising devic.es/serial-test until it was deleted by
+     hand (jg-base#188 issuecomment-6405530585). #|
+#% set _tenant_devices = (app_repos | selectattr('grants.devices') | list | length) > 0 %#
+#% set _ = _enabled.append((
+     'generic-device-plugin',
+     './kubernetes/apps/base/kube-system/generic-device-plugin',
+     'enabled' if _tenant_devices else 'disabled',
+     'an app_repos entry holds grants.devices, so its pods request devic.es/* resources'
+        if _tenant_devices
+        else 'no tenant holds grants.devices: an empty path so Flux prunes the device plugin, rather than a suspend that would leave it advertising')) %#
 #|   claudecode-db: the explicit-memory PostgreSQL from jg-base (jgct#85), one
      per default im. Base Kustomization is named claudecode-db (NOT -postgres:
      that collides with the extras copy and would fight it on a cluster still

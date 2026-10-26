@@ -306,7 +306,19 @@ TENANTS_L2 = [
          l2_network=dict(interface="enp1s0", start="192.0.2.20", stop="192.0.2.21")),
 ]
 L2_EXTRA = {"lan_routed_cidrs": ["198.51.100.0/24"]}
-MULTUS = "./kubernetes/apps/base/kube-system/multus/"
+# grants.devices (jg-base#188): the label on EVERY namespace, the quota line in
+# each, and the device-plugin switch at `enabled`.
+TENANTS_DEVICES = [
+    dict(name="zwave", repository="fixture/zwave", kind="vendor",
+         namespaces=["zwave", "zwave-db"], grants=dict(devices={"serial": 1})),
+]
+# The two-position switches a tenant grant flips, each with the predicate that
+# turns it on. These are the only non-tenant lines a tenant may change.
+GRANT_SWITCHES = [
+    ("./kubernetes/apps/base/kube-system/multus/", lambda g: bool(g.get("l2"))),
+    ("./kubernetes/apps/base/kube-system/generic-device-plugin/",
+     lambda g: bool(g.get("devices"))),
+]
 SAMPLE = "cluster.sample.yaml"
 BOOTSTRAP_KEY = "templates/config/bootstrap/github-deploy-key.sops.yaml.j2"
 
@@ -434,6 +446,8 @@ def tenant_objects(files: dict[str, bytes], tenants: list[dict],
                 want["jg.tenant-privileged"] = "granted"
             if g.get("lan_ip"):
                 want["jg.tenant-lan-ip"] = "granted"
+            if g.get("devices"):
+                want["jg.tenant-devices"] = "granted"
             if g.get("l2") and ns == nss[0]:
                 want["jg.tenant-l2"] = "granted"
             eq(f"Namespace/{ns} labels", labels, want)
@@ -448,7 +462,8 @@ def tenant_objects(files: dict[str, bytes], tenants: list[dict],
                {"hard": {"requests.cpu": str(q["cpu"]), "requests.memory": str(q["memory"]),
                          "pods": str(q["pods"]),
                          "services.loadbalancers": str(g.get("lan_ip", 0)),
-                         "services.nodeports": "0"}})
+                         "services.nodeports": "0",
+                         "requests.devic.es/serial": str((g.get("devices") or {}).get("serial", 0))}})
             lr = get("LimitRange", ns, "tenant-defaults")
             eq(f"LimitRange {ns} type", [l.get("type") for l in lr.get("spec", {}).get("limits", [])],
                ["Container"])
@@ -543,15 +558,18 @@ def tenant_shape(with_t: dict[str, bytes], without: dict[str, bytes],
     base = docs(without[KS])
     tenant_names = {f"tenant-{t['name']}" for t in tenants} | {"cluster-tenants"}
     rest = [d for d in got if ident(d)[1] not in tenant_names]
-    # The multus switch is the one non-tenant line an l2 tenant flips. Assert
-    # the flip, then undo it in a copy so the comparison still covers the rest.
-    want_pos = "enabled" if any((t.get("grants") or {}).get("l2") for t in tenants) else "disabled"
+    # A grant's switch is the one non-tenant line it flips. Assert each flip,
+    # then undo it in a copy so the comparison still covers the rest.
     rest_text = dump_yaml(rest)
-    if f"path: {MULTUS}{want_pos}" not in rest_text:
-        bad.append(f"{KS}: multus switch is not at {want_pos}")
-    rest = json.loads(rest_text.replace(f"path: {MULTUS}enabled", f"path: {MULTUS}disabled"))
-    if f"path: {MULTUS}disabled" not in dump_yaml(base):
-        bad.append(f"{KS}: the tenant-free render has no multus switch at disabled")
+    base_text = dump_yaml(base)
+    for prefix, on in GRANT_SWITCHES:
+        want_pos = "enabled" if any(on(t.get("grants") or {}) for t in tenants) else "disabled"
+        if f"path: {prefix}{want_pos}" not in rest_text:
+            bad.append(f"{KS}: {prefix} switch is not at {want_pos}")
+        rest_text = rest_text.replace(f"path: {prefix}enabled", f"path: {prefix}disabled")
+        if f"path: {prefix}disabled" not in base_text:
+            bad.append(f"{KS}: the tenant-free render has no {prefix} switch at disabled")
+    rest = json.loads(rest_text)
     if rest != base:
         bad.append(f"{KS}: the non-tenant documents differ from the tenant-free render "
                    f"({len(rest)} vs {len(base)} documents)")
@@ -697,7 +715,8 @@ def main() -> int:
                     failures.append(f"[sample-example] {e}")
                     example = None
                 scenarios = [("with-tenants", TENANTS, {}), ("vendor-only", VENDOR_ONLY, {}),
-                             ("with-l2", TENANTS_L2, L2_EXTRA)]
+                             ("with-l2", TENANTS_L2, L2_EXTRA),
+                             ("with-devices", TENANTS_DEVICES, {})]
                 if example is not None:
                     scenarios.append(("sample-example", example, L2_EXTRA))
                 without = None
