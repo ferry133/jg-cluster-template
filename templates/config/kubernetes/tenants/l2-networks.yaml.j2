@@ -11,6 +11,14 @@
      subnets back out through net1 (jgct#240) -- without them a client on
      another subnet reaches the pod and never hears back.
 
+     `sbr` after macvlan (jgct#244) moves all of net1's routes into a table
+     used only for traffic sourced from the pod's LAN address. Without it the
+     subnet route sat in the main table, the kubelet's probe replies to the
+     node went out net1, and a macvlan child cannot reach its own parent: every
+     network probe failed. The cost: connections the pod opens itself leave via
+     eth0 (SNAT to the node) unless it binds the LAN address as source. Needs
+     jg-base's multus to install `sbr` (ferry133/jg-base#228).
+
      Platform-owned: tenant-admin has no verbs on k8s.cni.cncf.io, so the
      tenant can use these and change none of them.
 
