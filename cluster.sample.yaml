@@ -1038,6 +1038,10 @@ cluster_name: "xxxxxx"
 #                   for the whole cluster. ⚠️ Network policy does NOT apply to
 #                   that second interface: anything on the LAN can reach the
 #                   pod there, and the pod can reach anything on the LAN.
+#                   Connections the pod opens itself leave through the
+#                   cluster (the node's address), not the LAN interface;
+#                   software a device must see as the LAN address has to
+#                   bind that address as its source.
 #                   A pod asks for one address by name, in the tenant's FIRST
 #                   namespace only:
 #                     metadata.annotations:

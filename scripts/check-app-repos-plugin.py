@@ -234,19 +234,23 @@ def run_cases() -> int:
     def l2_ok(d):
         got = nads(d)
         want_names = ["lan-192-0-2-20", "lan-192-0-2-21"]
-        cfg = got[0][1] if got else {}
+        conf = got[0][1] if got else {}
+        plugins = conf.get("plugins", [])
+        cfg = plugins[0] if plugins else {}
         ok = ([n for n, _ in got] == want_names
-              and cfg.get("type") == "macvlan" and cfg.get("master") == "enp1s0"
+              and conf.get("name") == want_names[0] and "type" not in conf
+              and [p.get("type") for p in plugins] == ["macvlan", "sbr"]
+              and cfg.get("master") == "enp1s0"
               and cfg.get("ipam", {}).get("addresses") == [{"address": "192.0.2.20/24"}]
               and cfg.get("ipam", {}).get("routes") == [{"dst": "198.51.100.0/24",
                                                          "gw": "192.0.2.1"}]
               and "gateway" not in cfg.get("ipam", {}))
         return ok, f"got {got}"
-    accepts("l2 renders one NAD per address, routes via the gateway, no default route",
+    accepts("l2 renders one NAD per address as a macvlan+sbr conflist, routes via the gateway, no default route",
             dict(ROUTED, app_repos=[l2("192.0.2.20", "192.0.2.21")]), l2_ok)
     accepts("l2 with lan_routed_cidrs [] renders NADs with no routes",
             {"lan_routed_cidrs": [], "app_repos": [l2("192.0.2.20", "192.0.2.20")]},
-            lambda d: (nads(d)[0][1]["ipam"]["routes"] == [], f"got {nads(d)}"))
+            lambda d: (nads(d)[0][1]["plugins"][0]["ipam"]["routes"] == [], f"got {nads(d)}"))
     accepts("l2 leaves the PSA level alone (restricted)",
             dict(ROUTED, app_repos=[l2("192.0.2.20", "192.0.2.20")]),
             lambda d: expect(d, 0, psa_level="restricted"))

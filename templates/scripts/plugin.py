@@ -608,14 +608,24 @@ def app_repos(data: dict[str, Any]) -> list[dict[str, Any]]:
         # The CNI config is a JSON string inside YAML. Built here, not in the
         # template, so it is json.dumps output and never hand-quoted; the
         # template wraps it in single quotes, which compact JSON cannot contain.
+        #
+        # A conflist with `sbr` after macvlan (jgct#244): a macvlan child
+        # cannot reach its own parent, so with net1's subnet route in the main
+        # table the kubelet's probe replies to the node address went out net1
+        # and were lost -- every network probe failed. sbr moves net1's routes,
+        # the lan_routed ones included, into a table used only for source
+        # <address>; the main table keeps the eth0 default alone.
         for repo in repos:
             for nad in repo.get('l2_nads', []):
                 nad['config'] = json.dumps({
-                    'cniVersion': '0.3.1', 'name': nad['name'], 'type': 'macvlan',
-                    'master': repo['l2_network']['interface'], 'mode': 'bridge',
-                    'ipam': {'type': 'static',
-                             'addresses': [{'address': nad['address']}],
-                             'routes': routes}}, separators=(',', ':'))
+                    'cniVersion': '0.3.1', 'name': nad['name'],
+                    'plugins': [
+                        {'type': 'macvlan',
+                         'master': repo['l2_network']['interface'], 'mode': 'bridge',
+                         'ipam': {'type': 'static',
+                                  'addresses': [{'address': nad['address']}],
+                                  'routes': routes}},
+                        {'type': 'sbr'}]}, separators=(',', ':'))
     return repos
 
 

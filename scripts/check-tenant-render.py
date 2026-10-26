@@ -511,11 +511,12 @@ def tenant_objects(files: dict[str, bytes], tenants: list[dict],
                     bad.append(f"NAD {nss[0]}/{nad_name}: config is not JSON: {e}")
                     continue
                 eq(f"NAD {nss[0]}/{nad_name} config", cfg,
-                   {"cniVersion": "0.3.1", "name": nad_name, "type": "macvlan",
-                    "master": net["interface"], "mode": "bridge",
-                    "ipam": {"type": "static", "addresses": [{"address": f"{addr}/24"}],
-                             "routes": [{"dst": c, "gw": "192.0.2.1"}
-                                        for c in L2_EXTRA["lan_routed_cidrs"]]}})
+                   {"cniVersion": "0.3.1", "name": nad_name, "plugins": [
+                       {"type": "macvlan", "master": net["interface"], "mode": "bridge",
+                        "ipam": {"type": "static", "addresses": [{"address": f"{addr}/24"}],
+                                 "routes": [{"dst": c, "gw": "192.0.2.1"}
+                                            for c in L2_EXTRA["lan_routed_cidrs"]]}},
+                       {"type": "sbr"}]})
         if t["kind"] == "agent":
             wk = get("Secret", "claudecode", "im-apps-write-key").get("stringData", {})
             eq("im-apps-write-key keys", sorted(wk), ["identity"])
