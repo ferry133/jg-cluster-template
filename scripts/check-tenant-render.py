@@ -472,7 +472,7 @@ def tenant_objects(files: dict[str, bytes], tenants: list[dict],
             ing = np.get("ingress") or [{}, {}]
             eq(f"CiliumNetworkPolicy {ns} namespaces",
                sorted(ing[0].get("fromEndpoints", [{}])[0].get("matchExpressions", [{}])[0]
-                      .get("values", [])), sorted(nss + ["network"]))
+                      .get("values", [])), sorted(nss + ["network", "claudecode"]))
             eq(f"CiliumNetworkPolicy {ns} entities", ing[1].get("fromEntities") if len(ing) > 1 else None,
                ["host", "world"] if g.get("lan_ip") else ["host"])
             if "egress" in np or "egressDeny" in np:

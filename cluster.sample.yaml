@@ -978,6 +978,10 @@ cluster_name: "xxxxxx"
 # tenant: its own private GitHub repo, reconciled by Flux into its own
 # namespaces, as its own ServiceAccount, decrypting with its own age key. It
 # can read nothing else on the cluster and cannot widen its own rights.
+# Inside the cluster its pods accept connections only from its own
+# namespaces, the ingress gateways and this cluster's `im` (namespace
+# claudecode) — im can call every tenant's API; there is no opt-out. Tell a
+# vendor this before they join.
 #
 # Absent or `app_repos: []` renders exactly what a cluster without tenants
 # renders — nothing changes until an entry is added.

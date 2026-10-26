@@ -1,7 +1,9 @@
 #% if app_repos %#
 #| Ingress into a tenant namespace only from the tenant's own namespaces, the
    gateway namespace (`network`: envoy-external/-internal reach HTTPRoute
-   backends from there) and the node itself (kubelet probes); plus the LAN
+   backends from there), `claudecode` (the cluster's im, so it can call a
+   tenant's API -- every tenant, no per-tenant field: ferry133's ruling on
+   jgct#245) and the node itself (kubelet probes); plus the LAN
    (`world`) for a tenant with a lan_ip grant, whose LoadBalancer Services are
    the point of the grant. Egress is deliberately not restricted (spec: "Egress
    SHALL NOT be restricted"). A host_network pod is outside all of this. #|
@@ -21,7 +23,7 @@ spec:
             - key: k8s:io.kubernetes.pod.namespace
               operator: In
               values:
-#% for allowed in repo.namespaces + ['network'] %#
+#% for allowed in repo.namespaces + ['network', 'claudecode'] %#
                 - #{ allowed }#
 #% endfor %#
     - fromEntities:
