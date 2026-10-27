@@ -285,10 +285,12 @@ def checkout(ref: str, dest: Path) -> None:
 # refused as an appliance.
 TENANT_BASE = "full-omni-extras"
 TENANTS = [
-    dict(name="acme", repository="fixture/acme-app", kind="vendor"),
+    # public: false spelled out is the negative control for the label (jgct#250).
+    dict(name="acme", repository="fixture/acme-app", kind="vendor",
+         grants=dict(public=False)),
     dict(name="im-apps", repository="fixture/im-apps", kind="agent",
          namespaces=["im-apps", "im-apps-db"], branch="prod",
-         grants=dict(baseline=True, lan_ip=1),
+         grants=dict(baseline=True, lan_ip=1, public=True),
          lan_ip_range=dict(start="192.0.2.200", stop="192.0.2.200")),
     # host_network: PSA privileged, the granted label, no `world` (root 3.7).
     dict(name="edge", repository="fixture/edge-app", kind="vendor",
@@ -459,6 +461,8 @@ def tenant_objects(files: dict[str, bytes], tenants: list[dict],
                 want["jg.tenant-devices"] = "granted"
             if g.get("l2") and ns == nss[0]:
                 want["jg.tenant-l2"] = "granted"
+            if g.get("public"):
+                want["jg.tenant-public"] = "granted"
             eq(f"Namespace/{ns} labels", labels, want)
             rb = get("RoleBinding", ns, f"tenant-{t['name']}")
             eq(f"RoleBinding {ns} roleRef", rb.get("roleRef"),

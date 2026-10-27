@@ -163,6 +163,12 @@ def main() -> int:
     case("a non-CIDR lan_routed_cidrs entry is refused",
          BASE + 'lan_routed_cidrs: ["198.51.100.1"]\napp_repos: []\n',
          False, must_name="lan_routed_cidrs.0")
+    # grants.public (jgct#250): a bool, nothing required beside it.
+    case("public: true passes",
+         with_repos(VENDOR + '    grants: {public: true}\n'), True)
+    case("public as a string is refused AND names it",
+         with_repos(VENDOR + '    grants: {public: "yes"}\n'),
+         False, must_name="app_repos.0.grants.public")
     # grants.devices (jg-base#188): class -> positive count.
     case("devices {serial: 1} passes",
          with_repos(VENDOR + '    grants: {devices: {serial: 1}}\n'), True)

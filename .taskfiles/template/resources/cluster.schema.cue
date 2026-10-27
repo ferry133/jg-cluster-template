@@ -961,13 +961,16 @@ import (
 	// All off by default. `devices` maps a device class to how many of it each
 	// of the tenant's namespaces may request (jg-base#188). Which classes exist
 	// is checked in plugin.py against what jg-base's device plugin advertises,
-	// so the refusal can list them.
+	// so the refusal can list them. `public` (jgct#250) lets the tenant's
+	// HTTPRoutes attach to envoy-external; without it jg-base admits them on
+	// envoy-internal only (jg-base#235).
 	#Grants: {
 		baseline?:     bool
 		host_network?: bool
 		lan_ip?:       int & >=0
 		l2?:           bool
 		devices?:      {[=~"^[a-z0-9-]+$"]: int & >0}
+		public?:       bool
 	}
 
 	// One netdev_outside_probes target: `https://host[:port]/path` or
