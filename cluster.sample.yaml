@@ -1104,6 +1104,14 @@ cluster_name: "xxxxxx"
 #                   scheduled only onto a node that has one plugged in.
 #                   Turning it on also switches the device plugin on for the
 #                   whole cluster.
+#     public        the tenant's web pages may be reached from the internet
+#                   (an HTTPRoute on envoy-external). Without it they are
+#                   for the LAN only: jg-base's admission policy (jg-base#235)
+#                   admits a tenant route on envoy-internal and refuses any
+#                   other parentRef. Until that policy ships, nothing refuses.
+#                   ⚠️ Not measured: Cloudflare's certificate for the tenant's
+#                   second-level names (<app>.<tenant>.<domain>) may need its
+#                   own arrangement before public works end to end.
 #   lan_ip_range  {start, stop}: at least `lan_ip` addresses, outside the
 #                 shared LoadBalancer pool and every other tenant's range.
 #                 `task configure` refuses an overlap, naming both ranges.
