@@ -776,7 +776,8 @@ cluster_name: "xxxxxx"
 #   - "https://<company minio this site can resolve>/minio/health/live"
 #                                                          #   company MinIO
 #   - "1.1.1.1:53"                                         #   public DNS
-# Each probe is `https://host/path` or `host:port`. The MinIO one is per site:
+# Each probe is `https://host[:port]/path` or `host:port`, ports in digits.
+# The MinIO one is per site:
 # pick a name this site's LAN resolves -- minio.janncot.com does not resolve
 # from FAC1's LAN (split horizon), so on a FAC1 cluster use the endpoint its
 # off-site backup already reaches (backup_r2_endpoint, minio.jiahd.cc there).
