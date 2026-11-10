@@ -49,6 +49,9 @@ RUN = [
     "check-claude-config-storage-default.py",
     "check-claudecode-postgres-derive.py",
     "check-claudecode-factory-auth.py",
+    # Real makejinja renders; exactly one default StorageClass, the block
+    # tier, and sc-nas never the default (jgct#257).
+    "check-default-storage-class.py",
     "check-claude-instances-default.py",
     "check-encrypt-secrets.sh",
     "check-forwarded-header-trust.py",
