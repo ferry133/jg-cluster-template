@@ -1475,9 +1475,14 @@ class Plugin(makejinja.plugin.Plugin):
         # cluster. jg-base reads them as ${NAS_IS_DEFAULT:=true} and
         # ${LONGHORN_IS_DEFAULT:=false}, so a cluster-secrets rendered before
         # #257 keeps sc-nas as its one default, and the first re-render
-        # flips all three keys in one commit. That is why jg-base#242 must
-        # reach main BEFORE this template is used. Against an older jg-base
-        # the false would be ignored and two classes would be default.
+        # flips all three keys in one commit. That is why jg-base#242
+        # (2a4f3d0) must reach each cluster's `gitrepository/jg-base`
+        # artifact BEFORE the re-render is pushed; reaching main is not
+        # enough. The re-render reconciles on push, but jg-base arrives on
+        # its interval. Against an older artifact the false is ignored and
+        # two classes are default: jcom had two from 18:30:35 to 18:31:26 on
+        # 2026-11-10 until `flux reconcile source git jg-base` (measured by
+        # fleet-ops-d9 on jgct#257).
         _db = data.get('db_storage_class')
         _lh_default = data.get('storage_backend') == 'nfs' and _db == 'longhorn'
         data.setdefault('local_path_is_default', 'false' if _lh_default else 'true')
