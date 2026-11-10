@@ -35,9 +35,9 @@
 deployment_profile: "CHOOSE-ONE-appliance-full"
 
 # ── Storage backend ───────────────────────────────────────────────────────────
-# (REQUIRED) Which storage class is the cluster default — what bulk media and
-# file shares land on. Databases are block-backed regardless; this axis does not
-# move them.
+# (REQUIRED) Which storage class bulk media and file shares land on
+# (DEFAULT_STORAGE_CLASS). Databases are block-backed regardless; this axis does
+# not move them.
 #   "local-path"  node-local disk; no NAS needed
 #   "nfs"         NAS-backed; requires nas_server / nas_path below
 #   "replicated"  Longhorn, as the bulk tier as well. To install Longhorn while
@@ -45,9 +45,14 @@ deployment_profile: "CHOOSE-ONE-appliance-full"
 #                 replicated_storage below instead.
 # Forced to "local-path" under the appliance profile.
 #
-# This picks the default, not which provisioners exist: every cluster installs
+# This picks the bulk tier, not which provisioners exist: every cluster installs
 # local-path-provisioner, because a NAS is not somewhere a database can live.
 # Choosing "nfs" additionally enables the NFS provisioner.
+#
+# It does not make the NAS the Kubernetes default StorageClass (jgct#257). A PVC
+# that names no class is app state, and app state belongs on the block tier, so
+# it lands on db_storage_class when that is "longhorn", and on local-path
+# otherwise. sc-nas is used only where a manifest names it.
 # ⚠️ 留著不註解是刻意的。註解掉會讓 `cue vet` 多一則
 # `unresolved disjunction "local-path" | "nfs" | "replicated"`——那是 schema 內部的
 # 求值錯誤，指不出任何一個你寫過的欄位。appliance 會強制成 "local-path" 並與這裡
