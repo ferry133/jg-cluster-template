@@ -503,6 +503,12 @@ import (
 	// fail their next `cue vet` over a value that harms nothing. NAS_CODING_PATH
 	// is still rendered into cluster-secrets and still read by nobody.
 	nas_coding_path?: string & !=""
+	// Turns the database extras' NAS dump OFF while nas_server stays set — a
+	// cluster that keeps its NAS for shared-data static PVs but backs the
+	// database up off-site only (jgct#258). Only "none" can be declared: "nfs"
+	// is derived from nas_server, and declaring it without one would render a
+	// PersistentVolume with an empty nfs.server (jg-base#17).
+	nas_backup?: "none"
 
 	if storage_backend == "nfs" {
 		nas_server: net.IPv4 & !=""

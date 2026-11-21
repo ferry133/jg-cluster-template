@@ -478,6 +478,12 @@ cluster_name: "xxxxxx"
 # nas_coding_path stays optional even on NFS: without it the claude-code
 # workspace uses the profile's default storage class instead.
 # nas_coding_path: "/volume/coding"
+#
+# 資料庫的 NAS 備份（default/postgres 的 pg_dump CronJob）預設跟著 nas_server：
+# 有 NAS 就備到 NAS、沒有就不備。NAS 只留給分享資料（靜態 PV）、資料庫只做異地
+# 備份的叢集，取消註解下一行關掉 NAS 那份（jgct#258）。**只能寫 "none"**；
+# "nfs" 不能宣告，它只由 nas_server 推出來。關掉前先確認異地備份真的有在跑。
+# nas_backup: "none"
 
 # (REQUIRED for appliance) Has age.key been escrowed outside this cluster?
 # Backups are encrypted to the cluster's own public key, so age.key is the only

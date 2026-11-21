@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Assert what `nas_backup` derives to, per whether the cluster has a NAS.
+"""Assert what `nas_backup` derives to, per whether the cluster has a NAS,
+and that the one declaration allowed (`none`, jgct#258) wins while every other
+declaration is refused.
 
 This one word decides whether the database extras render their NAS backup
 CronJob at all (jg-base selects a directory with it:
@@ -116,6 +118,30 @@ CASES = [
         dict(nas_server="10.9.1.12"),
         "nfs",
     ),
+    (
+        "a NAS kept for shared data, database backed up off-site only — "
+        "declared none wins over the derivation (jgct#258, acceptance 1)",
+        dict(storage_backend="nfs", nas_server="10.9.1.12", nas_path="/volume1/k8s",
+             nas_backup="none"),
+        "none",
+    ),
+    (
+        "declared none without a NAS is the same answer the derivation gives",
+        dict(nas_backup="none"),
+        "none",
+    ),
+]
+
+# Declarations that must be REFUSED, not rendered. 'nfs' without a NAS is the
+# stuck-'nfs' failure above (an empty nfs.server, jg-base#17); 'nfs' WITH a NAS
+# is harmless today but is a second copy of nas_server, which is the thing the
+# derivation exists to avoid; anything else is a typo that would select a
+# directory jg-base does not have.
+REFUSED = [
+    ("declared nfs without a NAS", dict(nas_backup="nfs")),
+    ("declared nfs with a NAS", dict(nas_server="10.9.1.12", nas_backup="nfs")),
+    ("a typo", dict(nas_server="10.9.1.12", nas_backup="None")),
+    ("YAML false", dict(nas_server="10.9.1.12", nas_backup=False)),
 ]
 
 
@@ -136,6 +162,24 @@ def main() -> int:
         else:
             print(f"FAIL  {name}\n        expected {expected!r}, got {got!r}")
             failed += 1
+
+    for name, extra in REFUSED:
+        data = dict(BASE, **extra)
+        try:
+            plugin.Plugin(data).data()
+        except KeyError as e:
+            if "nas_backup" in str(e):
+                print(f"PASS  refused: {name}\n        {str(e)[:110]}")
+                continue
+            print(f"FAIL  refused: {name}\n        raised, but not about nas_backup: {e}")
+            failed += 1
+            continue
+        except Exception as e:  # noqa: BLE001
+            print(f"FAIL  refused: {name}\n        raised {type(e).__name__}, not the nas_backup refusal: {e}")
+            failed += 1
+            continue
+        print(f"FAIL  refused: {name}\n        rendered nas_backup = {data.get('nas_backup')!r} instead of refusing")
+        failed += 1
 
     answers = set()
     for _, extra, _ in CASES:
@@ -175,7 +219,7 @@ def main() -> int:
         print("Stuck 'nfs' turns an appliance's database Kustomization red; stuck")
         print("'none' stops every NAS cluster's dumps without anything going red.")
         return 1
-    print(f"ok — {len(CASES)} cases match; the derivation varies and stays a string")
+    print(f"ok — {len(CASES)} cases match, {len(REFUSED)} declarations refused; the derivation varies and stays a string")
     return 0
 
 

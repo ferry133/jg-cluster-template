@@ -1065,9 +1065,18 @@ class Plugin(makejinja.plugin.Plugin):
             f"postgresql://claudecode:{data['claudecode_postgres_password']}"
             f"@postgres.claudecode.svc/claudecode")
         # Whether the database extras render their NAS backup CronJob:
-        # 'nfs' or 'none'. Derived, never declared — it is a restatement of
-        # "is there a NAS", and a second copy of that fact would eventually
-        # disagree with the first.
+        # 'nfs' or 'none'. Derived from "is there a NAS" — a second copy of
+        # that fact would eventually disagree with the first.
+        #
+        # One declaration is accepted, and only in one direction (jgct#258):
+        # `nas_backup: none` turns the NAS dump OFF on a cluster that keeps a
+        # NAS for shared-data static PVs but backs its database up off-site
+        # only. It cannot turn the dump ON without a NAS — 'nfs' with no
+        # nas_server renders a PersistentVolume with an empty nfs.server, which
+        # the API server rejects (ferry133/jg-base#17) — so 'nfs' is never
+        # declared, only derived. The schema says the same (`nas_backup?:
+        # "none"`); this check is here too because the render path is also
+        # driven without cue vet (the scripts/ guards, a hand-run makejinja).
         #
         # It has to be a value rather than a condition because **Flux cannot
         # branch on "is NAS_SERVER set"**. Flux substitutes with drone/envsubst,
@@ -1087,7 +1096,14 @@ class Plugin(makejinja.plugin.Plugin):
         # cluster that has not re-rendered keeps its backup rather than losing
         # it silently. That default is why this can ship without touching every
         # per-user repo at once.
-        data['nas_backup'] = 'nfs' if data.get('nas_server') else 'none'
+        if 'nas_backup' in data and data['nas_backup'] != 'none':
+            raise KeyError(
+                f"nas_backup: {data['nas_backup']!r} — the only value that can be "
+                "declared is 'none' (turn the NAS database dump off). Without the "
+                "line it is derived: 'nfs' when nas_server is set, 'none' when it "
+                "is not (jgct#258).")
+        if data.get('nas_backup') != 'none':
+            data['nas_backup'] = 'nfs' if data.get('nas_server') else 'none'
         # Which claude-code instances stay up. Empty by default: each is a root
         # shell with cluster-admin that the tunnel makes reachable. Named here
         # rather than scaled by hand, which works until the next reconcile.
