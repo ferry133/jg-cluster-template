@@ -174,9 +174,13 @@ import (
 	#BlockTierExtras: [
 		"chamber/chamber",
 		"claudecode/postgres",
+		"default/home-assistant",
+		"default/homebridge",
+		"default/linebot",
 		"default/mariadb",
 		"default/mqtt",
 		"default/postgres",
+		"default/synophoto",
 		"freepbx/freepbx",
 	]
 

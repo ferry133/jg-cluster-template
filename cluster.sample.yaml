@@ -73,9 +73,11 @@ storage_backend: "nfs"
 #
 # Two ways to end up on node-local storage, and both are asked about:
 #   - storage_backend: "local-path"  — everything lands there
-#   - a block-tier extra             — chamber/chamber, claudecode/postgres,
+#   - a block-tier extra             — chamber/chamber, default/home-assistant,
+#                                      default/homebridge, default/linebot,
 #                                      default/mariadb, default/mqtt,
-#                                      default/postgres, freepbx/freepbx. These
+#                                      default/postgres, default/synophoto,
+#                                      freepbx/freepbx. These
 #                                      use the block tier even on a NAS-backed
 #                                      cluster, because NFS does not honour the
 #                                      fsync and lock semantics their state needs
