@@ -352,6 +352,122 @@ def main() -> int:
         print(f"        row: {row12[:1]}")
         failed += 1
 
+    # ---- cell 16 (jgct#265): netdev-mcp sidecar and operator Secret iff declared.
+    # The stand-in kubectl answers four questions from one dict, so each case
+    # names only what differs from jg-jcc2's measured shape (2026-11-21, daily-
+    # check row: netdev-mcp running, operator absent) -- that shape is case
+    # "reader-only" and must PASS, the positive control for every FAIL below.
+    def nd(console=True, writer=0, deploy="ok", spec=("app", "netdev-mcp"),
+           app_running=True, sidecar_running=True, secret=False, reading="absent (/etc/netdev-mcp/operator/operator)"):
+        m._netdev_declared = lambda a: ({"console": console, "writer": writer}, None, None)
+
+        def kc(a, *rest):
+            if rest[2:5] == ("get", "deployment", "im"):
+                if deploy == "notfound":
+                    return False, "", 'Error from server (NotFound): deployments.apps "im" not found'
+                return True, json.dumps({"spec": {
+                    "selector": {"matchLabels": {"app.kubernetes.io/name": "im"}},
+                    "template": {"spec": {"containers": [{"name": n} for n in spec]}}}}), ""
+            if rest[2:4] == ("get", "pods"):
+                st = [{"name": "app", "state": {"running": {}} if app_running else {"waiting": {}}}]
+                if "netdev-mcp" in spec:
+                    st.append({"name": "netdev-mcp",
+                               "state": {"running": {}} if sidecar_running else {"waiting": {}}})
+                return True, json.dumps({"items": [{"metadata": {"name": "im-abc", "creationTimestamp": "t"},
+                                                    "status": {"containerStatuses": st}}]}), ""
+            if rest[2:5] == ("get", "secret", "unifi-operator"):
+                if secret == "forbidden":
+                    return False, "", "Error from server (Forbidden): secrets is forbidden"
+                return (True, "secret/unifi-operator", "") if secret else \
+                    (False, "", 'Error from server (NotFound): secrets "unifi-operator" not found')
+            if rest[2] == "logs" and rest[-2:] == ("-c", "netdev-mcp"):
+                body = "netdev-mcp: reader credential: ok\n"
+                if reading is not None:
+                    body += f"netdev-mcp: operator credential: {reading}\n"
+                return True, body + '{"phase": "token", "ts": "x"}\n', ""
+            raise AssertionError(f"cell 16 asked an unexpected question: {rest}")
+        m._kubectl = kc
+        return m.cell_netdev_sidecar(A())
+
+    real_kubectl, real_decl = m._kubectl, m._netdev_declared
+    m._netdev_declared = lambda a: (None, "cluster.yaml not here", m.NEED_PLACE)
+    check("16 沒有 cluster.yaml", m.cell_netdev_sidecar(A()), 2, m.NEED_PLACE)
+    check("16 沒有 im Deployment（im 沒跑）", nd(deploy="notfound"), 2, m.NEED_PLACE)
+    check("16 正對照：im 沒有 app container", nd(spec=("netdev-mcp",)), 2, m.NEED_PLACE)
+    check("16 im 的 app 沒在跑", nd(app_running=False), 2, m.NEED_PLACE)
+    check("16 Secret 問不到（Forbidden）不是「不存在」", nd(secret="forbidden"), 2, m.NEED_PLACE)
+    check("16 沒宣告、沒 sidecar、沒 Secret → skip", nd(console=False, spec=("app",)), 3)
+    n16 = check("16 reader-only（jg-jcc2 的實測形狀）", nd(), 0)
+    check("16 宣告了 console，im 沒有 netdev-mcp", nd(spec=("app",)), 1)
+    check("16 宣告了 console，netdev-mcp 沒在跑", nd(sidecar_running=False), 1)
+    check("16 沒宣告 console，sidecar 在跑（殘留）", nd(console=False), 1)
+    check("16 沒宣告 console，spec 有 sidecar 但沒跑（殘留）", nd(console=False, sidecar_running=False), 1)
+    check("16 宣告了 write release，沒有 unifi-operator Secret", nd(writer=5), 1)
+    # Reading rotated: the Secret half alone must still catch it, or the
+    # reading above is the only thing standing behind this direction.
+    check("16 宣告了 write release，沒有 Secret，讀數已輪替", nd(writer=5, reading=None), 1)
+    check("16 沒宣告 write release，unifi-operator Secret 在（殘留）", nd(secret=True), 1)
+    check("16 write release 宣告且 Secret 在，sidecar 讀成 invalid", nd(writer=5, secret=True, reading="invalid (HTTP 401)"), 1)
+    check("16 沒宣告 write release，sidecar 卻讀成 ok", nd(reading="ok"), 1)
+    check("16 write release 完整，sidecar 讀成 ok", nd(writer=5, secret=True, reading="ok"), 0)
+    rot = check("16 write release 完整，啟動讀數已輪替", nd(writer=5, secret=True, reading=None), 0)
+    checked += 1
+    if "Secret presence only" in rot and "reader-only" not in rot:
+        print("PASS  16 讀數輪替時，PASS 那一行說它只量了 Secret")
+    else:
+        print("FAIL  16 讀數輪替時沒有說它只量了 Secret——量得比較少的 PASS 讀起來會跟量全的一樣")
+        print(f"        note: {rot[:160]}")
+        failed += 1
+    m._kubectl, m._netdev_declared = real_kubectl, real_decl
+    checked += 1
+    if [c for c in m.HANDOVER_CELLS if c[0] == 16 and c[2] is m.cell_netdev_sidecar]:
+        print("PASS  16 is in HANDOVER_CELLS — the handover table runs it")
+    else:
+        print("FAIL  16 is not in HANDOVER_CELLS: every case above passes and no run of `handover` ever asks it")
+        failed += 1
+
+    # The five-field copy must be plugin.py's tuple. A drift reads as cell 16
+    # calling a correct cluster wrong, or a half-set one right.
+    import ast as _ast
+    plug = _ast.parse((ROOT / "templates" / "scripts" / "plugin.py").read_text())
+    want = [_ast.literal_eval(n.value) for n in plug.body if isinstance(n, _ast.Assign)
+            and any(getattr(t, "id", None) == "NETDEV_WRITER" for t in n.targets)]
+    checked += 1
+    if len(want) == 1 and tuple(want[0]) == tuple(m.NETDEV_WRITER_FIELDS):
+        print(f"PASS  16 NETDEV_WRITER_FIELDS == plugin.py NETDEV_WRITER ({len(want[0])} fields)")
+    else:
+        print(f"FAIL  16 NETDEV_WRITER_FIELDS {m.NETDEV_WRITER_FIELDS} != plugin.py {want}")
+        failed += 1
+
+    # The real yq, on files: the declaration is computed there and nowhere
+    # else, so a stub alone would test the stub. No yq is a 2, not a skip.
+    import shutil as _sh
+    checked += 1
+    if not _sh.which("yq"):
+        print("FAIL  16 yq is not on PATH — the declaration reader was not run "
+              "(run under `mise exec --`); counted as a failure, not a pass")
+        failed += 1
+    else:
+        bad16 = []
+        with tempfile.TemporaryDirectory() as td:
+            for name, body, want16 in [
+                ("none", "cluster_name: x\n", {"console": False, "writer": 0}),
+                ("reader", "unifi_controller_url: https://u\nunifi_reader_user: RDRVAL\n", {"console": True, "writer": 0}),
+                ("empty", 'unifi_controller_url: ""\nim_fac_ticket_repo: ""\nnetdev_outside_probes: []\n', {"console": False, "writer": 0}),
+                ("writer", "unifi_controller_url: https://u\nunifi_operator_user: OPVAL\nnetdev_outside_probes: [a, b, c]\n", {"console": True, "writer": 2}),
+            ]:
+                d16 = pathlib.Path(td) / name
+                d16.mkdir()
+                (d16 / "cluster.yaml").write_text(body)
+                got16, e16, _ = m._netdev_declared(A(dir=str(d16)))
+                if got16 != want16:
+                    bad16.append(f"{name}: got {got16} ({e16}), wanted {want16}")
+        if bad16:
+            print("FAIL  16 yq declaration reader: " + "; ".join(bad16))
+            failed += 1
+        else:
+            print("PASS  16 yq declaration reader: none / reader / empty strings / writer count")
+
     print()
     if failed:
         print(f"{failed} of {checked} cases did not match.")
