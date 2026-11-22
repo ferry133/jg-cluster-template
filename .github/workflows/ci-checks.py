@@ -74,6 +74,7 @@ RUN = [
     "check-extras-source.py",
     "check-netdev-render.py",
     "check-ha-mcp-render.py",
+    "check-chamber-render.py",
 ]
 
 #: The one repository TEMPLATE_ONLY runs in. The clone step in

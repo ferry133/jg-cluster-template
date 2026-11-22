@@ -1198,3 +1198,24 @@ cluster_name: "xxxxxx"
 # tenant and the extra: im takes one Home Assistant.
 #
 # ha_im_token: ""
+
+# chamber_mode (cluster-level): connects this cluster's base im to chamber, the
+# agents' chat server, as the account im-<cluster_name> (jgct#263, jg-base#248).
+#   off      (default) nothing changes.
+#   observe  im joins its rooms and reads; it does not announce itself or
+#            deliver work to the terminal session.
+#   deliver  im also delivers what arrives to its terminal session.
+# Turning it on changes the running im pod (one more container, one more
+# Secret mounted), so on a production cluster it is the operator's decision,
+# not a re-render's. Refused when claudecode_auth0 is false: that im is off.
+#
+# chamber_token / chamber_url: the login credential for that account and the
+# server's https:// address. Do NOT make them by hand: fleet-ops'
+# `chamber-members mint` creates the account and writes both here. Both or
+# neither; with neither and a mode set, im runs and its chamber bridge idles
+# and says so. Rendered into Secret im-chamber, which only the bridge container
+# mounts.
+#
+# chamber_mode: "off"
+# chamber_token: ""
+# chamber_url: ""
