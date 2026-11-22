@@ -165,10 +165,22 @@ import (
 	// needs, so these land on `local-path` even when the cluster has a NAS —
 	// which is the same node-pinning exposure as choosing `local-path` for
 	// everything, arriving by a different route.
+	//
+	// The criterion is the class, not the word "database" (ferry133
+	// 2026-11-22, jgct#266): an extra whose PVC names `${DB_STORAGE_CLASS}` is
+	// on this list. So `default/mqtt` (the broker's persistence) and
+	// `chamber/chamber` (Synapse's SQLite) are here too; leaving one off
+	// waves a node-local volume past the acknowledgement below.
 	#BlockTierExtras: [
+		"chamber/chamber",
 		"claudecode/postgres",
+		"default/home-assistant",
+		"default/homebridge",
+		"default/linebot",
 		"default/mariadb",
+		"default/mqtt",
 		"default/postgres",
+		"default/synophoto",
 		"freepbx/freepbx",
 	]
 
@@ -887,8 +899,10 @@ import (
 	// Kubernetes creates on its own). A namespace added to jg-base later is NOT
 	// covered until it is added here. `home-assistant` added 2026-10-26 for the
 	// jg-extras Home Assistant extra (jg-extras#13), before the extra moves in.
+	// `chamber` added 2026-11-22 for the jg-extras Matrix server (jg-extras#27,
+	// jgct#266), after it was already in jg-extras main.
 	#ReservedNamespaces: [
-		"cert-manager", "claudecode", "db", "default", "factory",
+		"cert-manager", "chamber", "claudecode", "db", "default", "factory",
 		"flux-system", "freepbx", "home-assistant", "ingress-nginx", "kube-node-lease",
 		"kube-public", "kube-system", "lan-address", "linebot",
 		"longhorn-system", "monitoring", "mqtt", "network", "observability",
