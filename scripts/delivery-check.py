@@ -2884,6 +2884,169 @@ def cell_tenants(args) -> tuple[int, str, str | None]:
     return PASS, summary + ": every Kustomization Ready, keys registered as declared, policies present", None
 
 
+# The write release's five fields, the same tuple plugin.py's netdev_config
+# refuses a half-set of. Repeated here rather than imported: this file ships
+# to every customer repo and runs without templates/ on its path. A drift
+# between the two shows as cell 16 calling a correct cluster wrong, and
+# check-handover-cells.py pins the copy against plugin.py.
+NETDEV_WRITER_FIELDS = ('unifi_operator_user', 'unifi_operator_password',
+                        'im_fac_ticket_repo', 'im_fac_ticket_token',
+                        'netdev_outside_probes')
+
+
+def _netdev_declared(args) -> tuple[dict | None, str | None, str | None]:
+    """{"console": bool, "writer": int}: is a UniFi console recorded, and how
+    many of the write release's five fields are set.
+
+    yq computes the booleans and the count itself, so no value of any of these
+    fields (four are credentials) ever reaches this process.
+    """
+    path = pathlib.Path(args.dir) / "cluster.yaml"
+    if not path.is_file():
+        return None, f"{path} not here — run this in the cluster's directory", NEED_PLACE
+    if not shutil.which("yq"):
+        return None, "yq is not on PATH", NEED_TOOL
+    fields = ", ".join(f".{f}" for f in NETDEV_WRITER_FIELDS)
+    expr = ('{"console": ((.unifi_controller_url // "") != ""), '
+            f'"writer": ([{fields}] | map(select(. != null and length > 0)) | length)}}')
+    r = run(["yq", "-o=json", expr, str(path)])
+    if r.returncode != 0:
+        return None, f"yq could not read {path.name}: {r.stderr.strip()[:120]}", NEED_TOOL
+    try:
+        got = json.loads(r.stdout)
+        return {"console": got["console"] is True, "writer": int(got["writer"])}, None, None
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+        return None, f"yq output was not the expected shape: {e}", NEED_TOOL
+
+
+def cell_netdev_sidecar(args) -> tuple[int, str, str | None]:
+    """16. The netdev-mcp sidecar is there exactly when cluster.yaml says so.
+
+    jgct#265 (fleet-ops root `im-unifi-management` 4.2). Both directions, twice:
+
+      - `unifi_controller_url` set  ⇔  the running im pod has a running
+        `netdev-mcp` container. Declared and missing is a render or a Flux
+        apply that did not land; present and undeclared is a leftover.
+      - the write release set  ⇔  Secret claudecode/unifi-operator exists, and
+        (when the sidecar's startup reading is still in its log) the sidecar
+        reads `operator credential: ok`.
+
+    Why the operator half asks for the Secret and not for the mount: jg-base's
+    im/netdev mounts `unifi-operator` into the sidecar on EVERY netdev cluster
+    (optional: true, so a reader-only cluster starts). The mount is present
+    whether or not the write release is, so it cannot tell the two apart. What
+    jg-cluster-template renders only for a write release is the Secret itself
+    (templates/config/kubernetes/netdev/kustomization.yaml.j2), and what tells
+    "rendered" from "usable" is the sidecar's own startup line.
+
+    Nothing declared, nothing live, no leftover Secret: SKIP, as with cell 15.
+    The absence is still measured, against a positive control: the im
+    Deployment must have its `app` container and a running pod, or an empty
+    answer would be the wrong question. im not running at all is 2, not a
+    pass and not a fail: there is no pod to compare the declaration with.
+
+    Nothing here prints a value: the declaration is two booleans and a count,
+    the Secret is asked for by name only, and the only log text quoted is the
+    sidecar's own state word for the operator credential.
+    """
+    decl, err, why = _netdev_declared(args)
+    if decl is None:
+        return UNKNOWN, err, why
+    console, writer = decl["console"], decl["writer"] > 0
+
+    okd, out, err = _kubectl(args, "-n", "claudecode", "get", "deployment", "im", "-o", "json")
+    if not okd:
+        if "NotFound" in err or "not found" in err:
+            return UNKNOWN, ("no Deployment claudecode/im — im is not running here "
+                             "(im/disabled, or not reconciled yet), so there is no "
+                             "pod to compare cluster.yaml with"), NEED_PLACE
+        return UNKNOWN, err, NEED_PLACE
+    dep = json.loads(out)
+    spec_containers = [c.get("name") for c in
+                       dep.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])]
+    if "app" not in spec_containers:
+        return UNKNOWN, (f"Deployment claudecode/im has no `app` container "
+                         f"({', '.join(map(str, spec_containers)) or 'none'}) — not "
+                         f"jg-base's im, or the query is wrong; its other containers "
+                         f"would mean nothing"), NEED_PLACE
+    sel = ",".join(f"{k}={v}" for k, v in
+                   (dep.get("spec", {}).get("selector", {}).get("matchLabels") or {}).items())
+    if not sel:
+        return UNKNOWN, "Deployment claudecode/im has no matchLabels selector", NEED_PLACE
+    okp, pout, perr = _kubectl(args, "-n", "claudecode", "get", "pods", "-l", sel, "-o", "json")
+    if not okp:
+        return UNKNOWN, f"im pods could not be listed: {perr}", NEED_PLACE
+
+    def running(pod, name):
+        return any(s.get("name") == name and (s.get("state") or {}).get("running") is not None
+                   for s in (pod.get("status", {}).get("containerStatuses") or []))
+
+    live = [p for p in json.loads(pout).get("items", []) if running(p, "app")]
+    if not live:
+        return UNKNOWN, ("no im pod has a running `app` container — im is not "
+                         "running, so there is no pod to compare cluster.yaml with"), NEED_PLACE
+    pod = max(live, key=lambda p: p.get("metadata", {}).get("creationTimestamp", ""))
+    pname = pod.get("metadata", {}).get("name", "?")
+    in_spec = "netdev-mcp" in spec_containers
+    sidecar = running(pod, "netdev-mcp")
+
+    oks, _, serr = _kubectl(args, "-n", "claudecode", "get", "secret", "unifi-operator", "-o", "name")
+    if oks:
+        op_secret = True
+    elif "NotFound" in serr or "not found" in serr:
+        op_secret = False
+    else:
+        return UNKNOWN, f"Secret claudecode/unifi-operator could not be asked for: {serr}", NEED_PLACE
+
+    reading = None
+    if sidecar:
+        okl, lout, _ = _kubectl(args, "-n", "claudecode", "logs", pname, "-c", "netdev-mcp")
+        if okl:
+            hits = [ln.split(": ", 2)[2] for ln in lout.splitlines()
+                    if ln.startswith("netdev-mcp: operator credential: ")]
+            reading = hits[-1] if hits else None
+
+    fails = []
+    if console and not sidecar:
+        fails.append("cluster.yaml records a UniFi console, but " + (
+            f"{pname}'s netdev-mcp container is not running" if in_spec else
+            "im has no netdev-mcp container — the netdev path was not rendered "
+            "or Flux has not applied it"))
+    if not console and (sidecar or in_spec):
+        fails.append(f"no UniFi console in cluster.yaml, but im {'runs' if sidecar else 'declares'} "
+                     f"a netdev-mcp container — a leftover, or a cluster.yaml that "
+                     f"is not this cluster's")
+    if writer and not op_secret:
+        fails.append("cluster.yaml sets the write release, but Secret "
+                     "claudecode/unifi-operator does not exist")
+    if not writer and op_secret:
+        fails.append("Secret claudecode/unifi-operator exists, but cluster.yaml sets "
+                     "no write release — a leftover operator credential the sidecar "
+                     "would sign in with")
+    if reading is not None:
+        word = reading.split(" ", 1)[0]
+        if writer and word != "ok":
+            fails.append(f"the write release is set, but the sidecar reads its "
+                         f"operator credential as `{word}` — write tools not registered")
+        if not writer and word == "ok":
+            fails.append("no write release in cluster.yaml, but the sidecar reads "
+                         "its operator credential as `ok`")
+
+    shown = (f"console {'declared' if console else 'not declared'}, write release "
+             f"{'declared' if writer else 'not declared'}; {pname}: netdev-mcp "
+             f"{'running' if sidecar else ('declared, not running' if in_spec else 'absent')}, "
+             f"Secret unifi-operator {'present' if op_secret else 'absent'}")
+    if sidecar:
+        shown += (f", operator reading `{reading.split(' ', 1)[0]}`" if reading is not None
+                  else ", operator startup reading no longer in the log (Secret presence only)")
+    if fails:
+        return FAIL, shown + ": " + "; ".join(fails), None
+    if not console and not writer:
+        return SKIP, (shown + " — no UniFi console declared and nothing of netdev live "
+                      "(positive control: im's app container is running)"), None
+    return PASS, shown + ": declaration and pod agree in both directions", None
+
+
 def _not_implemented(cell: int, needs: str):
     """A cell nobody has written yet, which is NOT the same as one that cannot
     reach its subject from here. The phase number deliberately does not appear:
@@ -2925,6 +3088,9 @@ HANDOVER_CELLS = [
     # 15 is standalone-app-repos (jgct#214 task 3.8): the runbook's Step 5 table
     # gains the row from fleet-ops's side, as with 14.
     (15, "tenants: Ready, deploy keys registered as declared, policies present", cell_tenants),
+    # 16 is im-unifi-management 4.2 (jgct#265); the runbook's Step 5 table gains
+    # the row from fleet-ops's side, as with 14 and 15.
+    (16, "netdev-mcp sidecar and operator Secret present iff cluster.yaml declares them", cell_netdev_sidecar),
 ]
 
 
