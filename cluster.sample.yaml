@@ -73,11 +73,12 @@ storage_backend: "nfs"
 #
 # Two ways to end up on node-local storage, and both are asked about:
 #   - storage_backend: "local-path"  — everything lands there
-#   - a database extra               — claudecode/postgres, default/mariadb,
+#   - a block-tier extra             — chamber/chamber, claudecode/postgres,
+#                                      default/mariadb, default/mqtt,
 #                                      default/postgres, freepbx/freepbx. These
 #                                      use the block tier even on a NAS-backed
 #                                      cluster, because NFS does not honour the
-#                                      fsync and lock semantics a database needs
+#                                      fsync and lock semantics their state needs
 # So a three-node cluster with a NAS still has to answer this if it runs a
 # database. It is pinned just as hard; only the route there is different.
 # Setting db_storage_class to a non-node-local class below removes the second
