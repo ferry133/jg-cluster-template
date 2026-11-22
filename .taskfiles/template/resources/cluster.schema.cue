@@ -160,43 +160,23 @@ import (
 		single_node: true
 	}
 
-	// Extras that put a database on the node-local block tier rather than on
-	// bulk storage. NFS does not honour the fsync and lock semantics a database
-	// needs, so these land on `local-path` even when the cluster has a NAS —
-	// which is the same node-pinning exposure as choosing `local-path` for
-	// everything, arriving by a different route.
+	// Which class the block tier uses: every PVC that names
+	// `${DB_STORAGE_CLASS}` — jg-base's base `claudecode/postgres`, which every
+	// cluster runs, and the jg-extras extras that hold application state.
 	//
-	// The criterion is the class, not the word "database" (ferry133
-	// 2026-11-22, jgct#266): an extra whose PVC names `${DB_STORAGE_CLASS}` is
-	// on this list. So `default/mqtt` (the broker's persistence) and
-	// `chamber/chamber` (Synapse's SQLite) are here too; leaving one off
-	// waves a node-local volume past the acknowledgement below.
-	#BlockTierExtras: [
-		"chamber/chamber",
-		"claudecode/postgres",
-		"default/home-assistant",
-		"default/homebridge",
-		"default/linebot",
-		"default/mariadb",
-		"default/mqtt",
-		"default/postgres",
-		"default/synophoto",
-		"freepbx/freepbx",
-	]
-
-	// Which class the block tier uses. Node-local by default, but `longhorn`
-	// once the cluster has replicated storage — that is the whole point of
-	// running it, and leaving the database on local-path would keep it pinned.
+	// Only two answers (ferry133 2026-11-22, jgct#268): "the DB is never on the
+	// NAS, so it is on local-path (single-node cluster) or longhorn (multi-node
+	// cluster)". A NAS class is refused here, not warned about: NFS does not
+	// honour the fsync and lock semantics this state needs. On a multi-node
+	// cluster `local-path` remains possible only as the explicit exception
+	// below (`accept_node_pinning`), which ferry133 kept the same day.
 	//
-	// A cluster whose database is still on NFS names that class here until it
-	// can be dumped and restored — a PVC's storageClassName is immutable, so
-	// the move is not something a re-render can perform.
 	// Deliberately one default, not one per backend. Deploying Longhorn does
 	// not move the database onto it — that is an explicit `db_storage_class:
-	// "longhorn"`. Forgetting is not silent: the database is still on a
-	// node-local class, so the pinning acknowledgement below fires and asks
-	// about exactly the thing that was forgotten.
-	db_storage_class: *"local-path" | string & !=""
+	// "longhorn"`. Forgetting is not silent on a multi-node cluster: the
+	// database is still on a node-local class, so the pinning acknowledgement
+	// below fires and asks about exactly the thing that was forgotten.
+	db_storage_class: *"local-path" | "longhorn"
 	// claude-code's config PVC — ~/.claude and the keyring it holds, one volume
 	// because a token and the keyring holding it have no reason to be apart.
 	//
@@ -249,17 +229,23 @@ import (
 	claudecode_workspace_storage_class?: string & !=""
 
 	// Whether anything in this cluster lands on a node-local class. This, and
-	// not `storage_backend`, is what the acknowledgement below has to be keyed
-	// on: a NAS-backed cluster running a database is pinned just as hard, and
-	// asking about the default class would wave it through. Equally, a cluster
-	// that has deliberately parked its database on NFS is pinning nothing, and
-	// should not be asked to acknowledge what is not happening.
+	// not `storage_backend` alone, is what the acknowledgement below has to be
+	// keyed on: a NAS-backed cluster with its database on local-path is pinned
+	// just as hard, and asking about the default class would wave it through.
+	//
+	// Keyed on the class, not on `extras` (jgct#268). Until 2026-11-22 the
+	// second term also required an extra from a hand-kept list, and that list
+	// could not see jg-base's base `claudecode/postgres`: it runs on EVERY
+	// cluster on `${DB_STORAGE_CLASS}`, so a multi-node cluster with
+	// `db_storage_class: "local-path"` and no listed extra was pinned and
+	// never asked. The list had also drifted twice (jgct#266: mqtt, chamber,
+	// then four more). With the base app always present, "db_storage_class is
+	// local-path" already means "something is node-local".
 	// `longhorn` is block-backed AND replicated, so it is the one block class
 	// that does not pin. Deploying replicated storage is therefore what lifts
 	// the acknowledgement, which is the correct incentive.
 	_uses_node_local: (storage_backend == "local-path") ||
-		(db_storage_class == "local-path" &&
-			len([for e in extras if list.Contains(#BlockTierExtras, e) {e}]) > 0)
+		(db_storage_class == "local-path")
 
 	if _uses_node_local {
 		single_node: bool

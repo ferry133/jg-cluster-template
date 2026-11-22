@@ -73,17 +73,16 @@ storage_backend: "nfs"
 #
 # Two ways to end up on node-local storage, and both are asked about:
 #   - storage_backend: "local-path"  — everything lands there
-#   - a block-tier extra             — chamber/chamber, default/home-assistant,
-#                                      default/homebridge, default/linebot,
-#                                      default/mariadb, default/mqtt,
-#                                      default/postgres, default/synophoto,
-#                                      freepbx/freepbx. These
-#                                      use the block tier even on a NAS-backed
-#                                      cluster, because NFS does not honour the
-#                                      fsync and lock semantics their state needs
-# So a three-node cluster with a NAS still has to answer this if it runs a
-# database. It is pinned just as hard; only the route there is different.
-# Setting db_storage_class to a non-node-local class below removes the second
+#   - db_storage_class: "local-path" — the database tier (the default). Every
+#                                      cluster has something on it: the base
+#                                      claudecode/postgres always, plus any
+#                                      extra that keeps application state.
+#                                      It never goes on a NAS, because NFS does
+#                                      not honour the fsync and lock semantics
+#                                      that state needs
+# So a three-node cluster with a NAS still has to answer this unless its
+# database is on longhorn. It is pinned just as hard; only the route there is
+# different. Setting db_storage_class: "longhorn" below removes the second
 # route, and with it the question.
 # accept_node_pinning: true
 
@@ -149,14 +148,13 @@ storage_backend: "nfs"
 # 拿掉這一行之後 render 出來的是一個指向空目錄、但仍在 reconcile 的 Kustomization，
 # Flux 才會把它 prune 掉（ferry133/jg-base#29）。
 
-# (OPTIONAL) Which storage class databases use. Defaults to "local-path" and
-# deliberately does not follow storage_backend — NFS is never a correct answer
-# for something that needs fsync durability and file locking.
-#
-# Name an NFS class instead (e.g. "sc-nas") only to record that a cluster's
-# database has not been moved yet: a PVC's storageClassName is immutable, so the
-# move is a dump and restore, not a re-render. Writing it down keeps "not yet
-# moved" visible instead of silent.
+# (OPTIONAL) Which storage class databases use. Exactly two answers
+# (ferry133 2026-11-22, #268): "local-path" (the default) on a single-node
+# cluster, "longhorn" on a multi-node one. A multi-node cluster may stay on
+# "local-path" only by setting accept_node_pinning above. It deliberately does
+# not follow storage_backend, and a NAS class ("sc-nas") is refused: NFS is
+# never a correct answer for something that needs fsync durability and file
+# locking.
 # db_storage_class: "local-path"
 # ── claude-code storage ───────────────────────────────────────────────────────
 # (OPTIONAL) Which class holds ~/.claude and the keyring (one PVC, two mounts).
@@ -242,10 +240,9 @@ storage_backend: "nfs"
 # and names the thing that was missed.
 #
 # The opposite mistake — naming a class this cluster will not install — is
-# caught by `task configure` before it renders anything (issue #1). "longhorn"
-# without Longhorn and "sc-nas" without the NFS provisioner both stop the run
-# and name the missing field. A class this repo does not install is accepted in
-# silence: an out-of-band CSI driver is legitimate and unknowable here.
+# caught by `task configure` before it renders anything (issue #1): "longhorn"
+# without Longhorn stops the run and names the missing field. Any class other
+# than "local-path" or "longhorn" is refused by the schema (#268).
 #
 # Why it needs a check at all: a PVC naming a class that does not exist does not
 # fail. It sits Pending, every Kustomization reports Ready, and the only symptom
