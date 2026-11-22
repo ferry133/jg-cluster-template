@@ -241,8 +241,9 @@ storage_backend: "nfs"
 #
 # The opposite mistake — naming a class this cluster will not install — is
 # caught by `task configure` before it renders anything (issue #1): "longhorn"
-# without Longhorn stops the run and names the missing field. Any class other
-# than "local-path" or "longhorn" is refused by the schema (#268).
+# without Longhorn stops the run and names the missing field. For
+# db_storage_class, any class other than "local-path" or "longhorn" is refused
+# by the schema (#268).
 #
 # Why it needs a check at all: a PVC naming a class that does not exist does not
 # fail. It sits Pending, every Kustomization reports Ready, and the only symptom
