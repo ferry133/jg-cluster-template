@@ -1235,7 +1235,8 @@ cluster_name: "xxxxxx"
 #               and a node that does not cannot pull.
 #   namespaces  where the Secret is created. The namespace must already exist
 #               (the extra or tenant creates it); until it does, Flux retries
-#               every 5 minutes.
+#               every 5 minutes. Every entry is applied in one step: plan as
+#               if one missing namespace holds back all of them.
 # Leave it out and nothing is rendered.
 #
 # registry_pull_secrets:

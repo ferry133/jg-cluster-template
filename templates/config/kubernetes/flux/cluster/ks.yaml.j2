@@ -811,7 +811,10 @@ spec:
 
    The Secret lands in a namespace this Kustomization does not create (an
    extra's, a tenant's). Until that namespace exists the apply fails and is
-   retried every 5 minutes; nothing here orders it after the extra.
+   retried every 5 minutes; nothing here orders it after the extra. All
+   entries share this one Kustomization. Whether one missing namespace holds
+   back the Secrets for the others has not been measured (jgct#273); the
+   sample tells the operator to plan as if it does.
 
    A pod that already failed its pull retries by itself once the Secret
    exists; a running pod is not restarted. #|
