@@ -1219,3 +1219,28 @@ cluster_name: "xxxxxx"
 # chamber_mode: "off"
 # chamber_token: ""
 # chamber_url: ""
+
+# registry_pull_secrets (cluster-level): credentials for pulling images from a
+# private registry (jgct#272). Each entry becomes one Secret of type
+# kubernetes.io/dockerconfigjson, named `name`, in every namespace listed. A
+# workload uses it by naming the Secret under imagePullSecrets; this only
+# creates the Secret.
+#   name        the Secret's name. The manifest that pulls the image names it,
+#               so it must match (jg-extras' freepbx expects `ghcr-pull`).
+#   registry    the host only: ghcr.io. No https://, no path.
+#   username    the account the token belongs to.
+#   token       a token that can only read packages (GitHub: a classic token
+#               with the single scope read:packages). It expires; when it
+#               does, a node that still has the image cached keeps running it,
+#               and a node that does not cannot pull.
+#   namespaces  where the Secret is created. The namespace must already exist
+#               (the extra or tenant creates it); until it does, Flux retries
+#               every 5 minutes.
+# Leave it out and nothing is rendered.
+#
+# registry_pull_secrets:
+#   - name: ghcr-pull
+#     registry: ghcr.io
+#     username: ""
+#     token: ""
+#     namespaces: [freepbx]
