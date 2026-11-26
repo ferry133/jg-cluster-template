@@ -76,6 +76,7 @@ RUN = [
     "check-ha-mcp-render.py",
     "check-chamber-render.py",
     "check-im-session-keep-render.py",
+    "check-nfs-provisioner-render.py",
     "check-registry-pull-render.py",
 ]
 
