@@ -1220,6 +1220,22 @@ cluster_name: "xxxxxx"
 # chamber_token: ""
 # chamber_url: ""
 
+# im_session_keep (cluster-level): keeps the base im's terminal session running
+# when nobody has the terminal open (jgct#276).
+#   absent / false  (default) a session exists only after someone opens
+#                   im.<domain>.
+#   true            the session is started at boot and restarted if it ends.
+# It matters with chamber_mode "deliver": a room message is delivered into the
+# session, so with no session the bridge reports online=no and the message
+# waits until someone opens the terminal. It is a separate field because
+# connecting, delivering and staying up are three decisions.
+# Turning it on or off replaces the running im pod once. Refused when
+# claudecode_auth0 is false: that im is off.
+# Needs a jg-base that reads IM_SESSION_KEEP (ferry133/jg-base#277); against an
+# older one the key is rendered and nothing reads it.
+#
+# im_session_keep: false
+
 # registry_pull_secrets (cluster-level): credentials for pulling images from a
 # private registry (jgct#272). Each entry becomes one Secret of type
 # kubernetes.io/dockerconfigjson, named `name`, in every namespace listed. A
